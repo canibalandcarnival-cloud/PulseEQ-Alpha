@@ -142,3 +142,30 @@ dependencies {
   // "ksp"(libs.androidx.room.compiler)
   // "ksp"(libs.moshi.kotlin.codegen)
 }
+
+abstract class CopyDebugApkTask : DefaultTask() {
+  @get:InputFile
+  @get:PathSensitive(PathSensitivity.RELATIVE)
+  abstract val sourceApk: RegularFileProperty
+
+  @get:OutputFile
+  abstract val destinationApk: RegularFileProperty
+
+  @TaskAction
+  fun copyApk() {
+    val src = sourceApk.get().asFile
+    val dst = destinationApk.get().asFile
+    dst.parentFile?.mkdirs()
+    src.copyTo(dst, overwrite = true)
+  }
+}
+
+val copyDebugApkToRoot = tasks.register<CopyDebugApkTask>("copyDebugApkToRoot") {
+  sourceApk.set(layout.buildDirectory.file("outputs/apk/debug/app-debug.apk"))
+  destinationApk.set(rootProject.layout.projectDirectory.file("app-debug.apk"))
+  mustRunAfter("packageDebug", "createDebugApkListingFileRedirect")
+}
+
+tasks.matching { it.name == "assembleDebug" }.configureEach {
+  finalizedBy(copyDebugApkToRoot)
+}
