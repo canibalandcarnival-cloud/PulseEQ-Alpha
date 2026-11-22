@@ -89,7 +89,12 @@ class EqualizerService : Service() {
                     spatialMode = audioEngine.currentSpatialMode,
                     spatialDepth = audioEngine.currentSpatialDepth,
                     heightPresence = audioEngine.currentHeightPresence,
-                    vocalAnchor = audioEngine.currentVocalAnchor
+                    vocalAnchor = audioEngine.currentVocalAnchor,
+                    soundCheckEnabled = audioEngine.currentSoundCheckEnabled,
+                    conversationAwarenessEnabled = audioEngine.currentConversationAwarenessEnabled,
+                    bgSoundPreset = audioEngine.currentBgSoundPreset,
+                    bgSoundVolume = audioEngine.currentBgSoundVolume,
+                    voiceIsolationEnabled = audioEngine.currentVoiceIsolationEnabled
                 )
             }
 

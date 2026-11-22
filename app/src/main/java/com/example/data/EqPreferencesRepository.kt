@@ -46,6 +46,12 @@ class EqPreferencesRepository(private val context: Context) {
         fun spatialDepthKey(target: OutputTarget) = floatPreferencesKey("spatial_depth_${target.id}")
         fun heightPresenceKey(target: OutputTarget) = floatPreferencesKey("height_presence_${target.id}")
         fun vocalAnchorKey(target: OutputTarget) = booleanPreferencesKey("vocal_anchor_${target.id}")
+        fun soundCheckKey(target: OutputTarget) = booleanPreferencesKey("sound_check_${target.id}")
+        fun conversationAwarenessKey(target: OutputTarget) = booleanPreferencesKey("conv_awareness_${target.id}")
+        fun bgSoundPresetKey(target: OutputTarget) = stringPreferencesKey("bg_sound_preset_${target.id}")
+        fun bgSoundVolumeKey(target: OutputTarget) = floatPreferencesKey("bg_sound_volume_${target.id}")
+        fun voiceIsolationKey(target: OutputTarget) = booleanPreferencesKey("voice_isolation_${target.id}")
+        fun audiogramCurveKey(target: OutputTarget) = stringPreferencesKey("audiogram_curve_${target.id}")
     }
 
     val preferencesFlow: Flow<StoredEqPreferences> = context.eqDataStore.data.map { prefs ->
@@ -78,6 +84,15 @@ class EqPreferencesRepository(private val context: Context) {
                 it.name == prefs[Keys.spatialModeKey(target)]
             } ?: com.example.model.SpatialMode.OFF
 
+            val bgPreset = com.example.model.BackgroundSoundPreset.entries.firstOrNull {
+                it.name == prefs[Keys.bgSoundPresetKey(target)]
+            } ?: com.example.model.BackgroundSoundPreset.OFF
+
+            val parsedAudiogram = prefs[Keys.audiogramCurveKey(target)]
+                ?.split(",")
+                ?.mapNotNull { it.toFloatOrNull()?.coerceIn(EqPresetsCatalog.MIN_GAIN_DB, EqPresetsCatalog.MAX_GAIN_DB) }
+                ?.takeIf { it.size == 10 }
+
             OutputEqProfile(
                 target = target,
                 bandGainsDb = parsedGains,
@@ -95,7 +110,13 @@ class EqPreferencesRepository(private val context: Context) {
                     .coerceIn(0f, 1f),
                 heightPresence = (prefs[Keys.heightPresenceKey(target)] ?: com.example.model.SpatialMode.ATMOS_MUSIC.defaultHeight)
                     .coerceIn(0f, 1f),
-                vocalAnchor = prefs[Keys.vocalAnchorKey(target)] ?: true
+                vocalAnchor = prefs[Keys.vocalAnchorKey(target)] ?: true,
+                soundCheckEnabled = prefs[Keys.soundCheckKey(target)] ?: false,
+                conversationAwarenessEnabled = prefs[Keys.conversationAwarenessKey(target)] ?: false,
+                backgroundSoundPreset = bgPreset,
+                backgroundSoundVolume = (prefs[Keys.bgSoundVolumeKey(target)] ?: 0.28f).coerceIn(0f, 1f),
+                voiceIsolationEnabled = prefs[Keys.voiceIsolationKey(target)] ?: false,
+                audiogramGainsDb = parsedAudiogram
             )
         }
 
@@ -146,6 +167,17 @@ class EqPreferencesRepository(private val context: Context) {
             prefs[Keys.spatialDepthKey(profile.target)] = profile.spatialDepth
             prefs[Keys.heightPresenceKey(profile.target)] = profile.heightPresence
             prefs[Keys.vocalAnchorKey(profile.target)] = profile.vocalAnchor
+            prefs[Keys.soundCheckKey(profile.target)] = profile.soundCheckEnabled
+            prefs[Keys.conversationAwarenessKey(profile.target)] = profile.conversationAwarenessEnabled
+            prefs[Keys.bgSoundPresetKey(profile.target)] = profile.backgroundSoundPreset.name
+            prefs[Keys.bgSoundVolumeKey(profile.target)] = profile.backgroundSoundVolume
+            prefs[Keys.voiceIsolationKey(profile.target)] = profile.voiceIsolationEnabled
+            val audiogram = profile.audiogramGainsDb
+            if (audiogram != null && audiogram.size == 10) {
+                prefs[Keys.audiogramCurveKey(profile.target)] = audiogram.joinToString(",")
+            } else {
+                prefs.remove(Keys.audiogramCurveKey(profile.target))
+            }
         }
     }
 }

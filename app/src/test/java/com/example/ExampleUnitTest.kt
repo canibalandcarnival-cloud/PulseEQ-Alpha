@@ -207,4 +207,75 @@ class ExampleUnitTest {
         assertTrue("Phone Speaker XTC should differ distinctly from Headphone HRTF", diffHrtfVsXtc > 10.0)
         assertTrue("Phone Speaker XTC should project wide L/R separation", stereoWidthXtc > 50.0)
     }
+
+    @Test
+    fun sound_check_normalizes_loud_and_quiet_tracks_toward_minus_16_lufs() {
+        val sampleRate = 44100
+        val hotNormalizer = com.example.audio.SoundCheckNormalizer(sampleRate).apply { enabled = true }
+        val quietNormalizer = com.example.audio.SoundCheckNormalizer(sampleRate).apply { enabled = true }
+
+        // Feed loud (-3 dBFS) 1kHz sine for 1.5s and quiet (-28 dBFS) 1kHz sine for 1.5s
+        for (i in 0 until (sampleRate * 1.5).toInt()) {
+            val loudSample = 0.707 * kotlin.math.sin(2.0 * Math.PI * 1000.0 * i / sampleRate)
+            val quietSample = 0.040 * kotlin.math.sin(2.0 * Math.PI * 1000.0 * i / sampleRate)
+            hotNormalizer.processStereoSample(loudSample, loudSample)
+            quietNormalizer.processStereoSample(quietSample, quietSample)
+        }
+
+        assertTrue("Loud track should receive negative trim toward -16 LUFS", hotNormalizer.latestTrimDb < -6.0f)
+        assertTrue("Quiet track should receive positive boost toward -16 LUFS", quietNormalizer.latestTrimDb > 5.0f)
+    }
+
+    @Test
+    fun voice_isolation_attenuates_noise_below_threshold_and_preserves_speech_band() {
+        val sampleRate = 44100
+        val iso = com.example.audio.VoiceIsolationProcessor(sampleRate).apply { enabled = true }
+
+        // Feed quiet 60Hz rumble / hiss at -48 dBFS (< -38dB threshold)
+        var quietOutRms = 0.0
+        for (i in 0 until 8820) { // 200ms
+            val quietRumble = 0.004 * kotlin.math.sin(2.0 * Math.PI * 60.0 * i / sampleRate)
+            val (oL, _) = iso.processStereoSample(quietRumble, quietRumble)
+            if (i > 4410) quietOutRms += oL * oL
+        }
+        quietOutRms = kotlin.math.sqrt(quietOutRms / 4410)
+        assertTrue("Signals below -38dB + <120Hz rumble should be heavily gated", quietOutRms < 0.0008)
+
+        // Feed clear 1.5kHz voice tone at -14 dBFS (> -38dB threshold)
+        var speechOutRms = 0.0
+        for (i in 0 until 4410) {
+            val speech = 0.2 * kotlin.math.sin(2.0 * Math.PI * 1500.0 * i / sampleRate)
+            val (oL, _) = iso.processStereoSample(speech, speech)
+            if (i > 2205) speechOutRms += oL * oL
+        }
+        speechOutRms = kotlin.math.sqrt(speechOutRms / 2205)
+        assertTrue("Speech in 120Hz-6.5kHz above -38dB should pass clearly", speechOutRms > 0.10)
+    }
+
+    @Test
+    fun background_sounds_and_audiogram_eq_generator_produce_valid_outputs() {
+        val synth = com.example.audio.BackgroundSoundsSynthesizer(44100)
+        listOf(
+            com.example.model.BackgroundSoundPreset.BALANCED_NOISE,
+            com.example.model.BackgroundSoundPreset.DARK_NOISE,
+            com.example.model.BackgroundSoundPreset.RAIN,
+            com.example.model.BackgroundSoundPreset.OCEAN
+        ).forEach { preset ->
+            var energy = 0.0
+            for (i in 0 until 1000) {
+                val (l, r) = synth.nextStereoSample(preset, 0.5f)
+                assertTrue("Sample bounded in -1..1", l in -1.0..1.0 && r in -1.0..1.0)
+                energy += l * l + r * r
+            }
+            assertTrue("Preset ${preset.label} must produce non-silent audio", energy > 0.001)
+        }
+
+        val thresholds = listOf(-38f, -36f, -30f, -22f, -18f) // High-frequency roll-off hearing profile
+        val curve = com.example.audio.AudiogramCheckEngine.computeCompensationEqFromThresholds(thresholds)
+        assertEquals(10, curve.size)
+        assertTrue("Higher threshold at 8kHz should yield higher boost than 500Hz", curve[8] > curve[4])
+        curve.forEach { gain ->
+            assertTrue("Gain $gain within -12..+12 dB", gain in -12f..12f)
+        }
+    }
 }

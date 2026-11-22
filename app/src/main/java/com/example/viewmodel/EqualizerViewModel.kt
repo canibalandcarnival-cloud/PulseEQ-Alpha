@@ -7,9 +7,12 @@ import com.example.AudioSessionRegistry
 import com.example.EqualizerService
 import com.example.audio.EqualizerEngineHolder
 import com.example.data.EqPreferencesRepository
+import com.example.model.AudioLabTelemetry
+import com.example.model.BackgroundSoundPreset
 import com.example.model.ConnectedDeviceState
 import com.example.model.EqPreset
 import com.example.model.EqPresetsCatalog
+import com.example.model.HearingCheckUiState
 import com.example.model.NightIntensity
 import com.example.model.OutputEqProfile
 import com.example.model.OutputTarget
@@ -40,7 +43,10 @@ data class EqualizerUiState(
     val connectedDevices: ConnectedDeviceState = ConnectedDeviceState(),
     val visualizerFrame: VisualizerFrame = VisualizerFrame(),
     val dspStatusLabel: String = "10-Band Studio DSP",
-    val hasAudioPermission: Boolean = false
+    val hasAudioPermission: Boolean = false,
+    val audioLabTelemetry: AudioLabTelemetry = AudioLabTelemetry(),
+    val hearingCheckState: HearingCheckUiState = HearingCheckUiState(),
+    val abCompareHeld: Boolean = false
 ) {
     val activeProfile: OutputEqProfile
         get() = profiles[selectedTarget] ?: OutputEqProfile(target = selectedTarget)
@@ -93,29 +99,52 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
         combine(
             audioEngine.globalMixFallbackEnabled,
             EqualizerService.isRunning,
-            AudioSessionRegistry.activeSessions
-        ) { globalMix, running, sessions ->
-            Triple(globalMix, running, sessions)
+            AudioSessionRegistry.activeSessions,
+            audioEngine.audioLabTelemetry,
+            audioEngine.hearingCheckState,
+            audioEngine.abCompareHeld
+        ) { arr ->
+            @Suppress("UNCHECKED_CAST")
+            RoutingAndLabState(
+                globalMix = arr[0] as Boolean,
+                serviceRunning = arr[1] as Boolean,
+                sessions = arr[2] as Map<Int, String>,
+                labTelemetry = arr[3] as AudioLabTelemetry,
+                hearingCheck = arr[4] as HearingCheckUiState,
+                abHeld = arr[5] as Boolean
+            )
         }
     ) { core, engine, routing ->
         EqualizerUiState(
             selectedTarget = core.target,
             autoSwitchByDevice = core.autoSwitch,
-            globalMixFallbackEnabled = routing.first,
-            serviceRunning = routing.second,
-            activeAudioSessions = routing.third,
+            globalMixFallbackEnabled = routing.globalMix,
+            serviceRunning = routing.serviceRunning,
+            activeAudioSessions = routing.sessions,
             visualizerMode = core.visMode,
             testAudioSource = engine.testSource,
             profiles = core.profiles,
             connectedDevices = engine.devices,
             visualizerFrame = engine.frame,
             dspStatusLabel = engine.status,
-            hasAudioPermission = engine.hasPerm
+            hasAudioPermission = engine.hasPerm,
+            audioLabTelemetry = routing.labTelemetry,
+            hearingCheckState = routing.hearingCheck,
+            abCompareHeld = routing.abHeld
         )
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = EqualizerUiState()
+    )
+
+    private data class RoutingAndLabState(
+        val globalMix: Boolean,
+        val serviceRunning: Boolean,
+        val sessions: Map<Int, String>,
+        val labTelemetry: AudioLabTelemetry,
+        val hearingCheck: HearingCheckUiState,
+        val abHeld: Boolean
     )
 
     private data class CorePrefState(
@@ -351,6 +380,70 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
         commitProfile(updated)
     }
 
+    fun toggleSoundCheck() {
+        val current = currentProfile()
+        val updated = current.copy(soundCheckEnabled = !current.soundCheckEnabled)
+        commitProfile(updated)
+    }
+
+    fun toggleConversationAwareness() {
+        val current = currentProfile()
+        val updated = current.copy(conversationAwarenessEnabled = !current.conversationAwarenessEnabled)
+        commitProfile(updated)
+    }
+
+    fun selectBackgroundSound(preset: BackgroundSoundPreset) {
+        val current = currentProfile()
+        val updated = current.copy(backgroundSoundPreset = preset)
+        commitProfile(updated)
+    }
+
+    fun updateBackgroundVolume(volume: Float) {
+        val current = currentProfile()
+        val clamped = ((volume * 100f).roundToInt() / 100f).coerceIn(0f, 1f)
+        val updated = current.copy(backgroundSoundVolume = clamped)
+        commitProfile(updated)
+    }
+
+    fun toggleVoiceIsolation() {
+        val current = currentProfile()
+        val updated = current.copy(voiceIsolationEnabled = !current.voiceIsolationEnabled)
+        commitProfile(updated)
+    }
+
+    fun setAbCompareHeld(held: Boolean) {
+        audioEngine.setAbCompareHeld(held)
+    }
+
+    fun startHearingCheck() {
+        audioEngine.audiogramEngine.startCheck()
+    }
+
+    fun recordHearingCheckTap() {
+        audioEngine.audiogramEngine.recordHeardCurrentTone()
+    }
+
+    fun skipHearingCheckStep() {
+        audioEngine.audiogramEngine.skipCurrentTone()
+    }
+
+    fun cancelHearingCheck() {
+        audioEngine.audiogramEngine.cancelCheck()
+    }
+
+    fun applyAudiogramCurve(curveDb: List<Float>) {
+        if (curveDb.size != 10) return
+        val current = currentProfile()
+        val updated = current.copy(
+            bandGainsDb = curveDb,
+            isBypassed = false,
+            selectedPresetId = EqPresetsCatalog.CUSTOM_ID,
+            audiogramGainsDb = curveDb
+        )
+        commitProfile(updated)
+        audioEngine.audiogramEngine.cancelCheck()
+    }
+
     fun toggleBypass() {
         val current = currentProfile()
         val updated = current.copy(isBypassed = !current.isBypassed)
@@ -385,6 +478,10 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun onAudioPermissionResult(granted: Boolean) {
         audioEngine.onPermissionResult(granted)
+        if (!granted && currentProfile().conversationAwarenessEnabled) {
+            val updated = currentProfile().copy(conversationAwarenessEnabled = false)
+            commitProfile(updated)
+        }
     }
 
     private fun currentProfile(): OutputEqProfile {
@@ -405,7 +502,12 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             spatialMode = profile.spatialMode,
             spatialDepth = profile.spatialDepth,
             heightPresence = profile.heightPresence,
-            vocalAnchor = profile.vocalAnchor
+            vocalAnchor = profile.vocalAnchor,
+            soundCheckEnabled = profile.soundCheckEnabled,
+            conversationAwarenessEnabled = profile.conversationAwarenessEnabled,
+            bgSoundPreset = profile.backgroundSoundPreset,
+            bgSoundVolume = profile.backgroundSoundVolume,
+            voiceIsolationEnabled = profile.voiceIsolationEnabled
         )
     }
 

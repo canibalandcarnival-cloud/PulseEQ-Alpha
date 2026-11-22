@@ -105,6 +105,39 @@ enum class SpatialMode(
     )
 }
 
+enum class BackgroundSoundPreset(
+    val id: String,
+    val label: String,
+    val subtitle: String
+) {
+    OFF("off", "Off", "Ambient mixer off"),
+    BALANCED_NOISE("balanced", "Balanced Noise", "Smooth neutral pink spectrum"),
+    DARK_NOISE("dark", "Dark Noise", "Warm deep low-pass drone"),
+    RAIN("rain", "Rain", "Soft steady rainfall texture"),
+    OCEAN("ocean", "Ocean", "Slow rhythmic surf swells")
+}
+
+@Immutable
+data class AudioLabTelemetry(
+    val inputLufs: Float = -60f,
+    val soundCheckTrimDb: Float = 0f,
+    val speechDetected: Boolean = false,
+    val duckingGainLinear: Float = 1f,
+    val voiceGateAttenuationDb: Float = 0f
+)
+
+@Immutable
+data class HearingCheckUiState(
+    val isActive: Boolean = false,
+    val currentStepIndex: Int = 0,
+    val frequenciesHz: List<Int> = listOf(500, 1000, 2000, 4000, 8000),
+    val currentLevelDb: Float = -54f,
+    val progressFraction: Float = 0f,
+    val measuredThresholdsDb: List<Float> = emptyList(),
+    val generatedEqCurveDb: List<Float>? = null,
+    val isCompleted: Boolean = false
+)
+
 @Immutable
 data class OutputEqProfile(
     val target: OutputTarget,
@@ -119,7 +152,13 @@ data class OutputEqProfile(
     val spatialMode: SpatialMode = SpatialMode.OFF,
     val spatialDepth: Float = SpatialMode.ATMOS_MUSIC.defaultDepth,
     val heightPresence: Float = SpatialMode.ATMOS_MUSIC.defaultHeight,
-    val vocalAnchor: Boolean = true
+    val vocalAnchor: Boolean = true,
+    val soundCheckEnabled: Boolean = false,
+    val conversationAwarenessEnabled: Boolean = false,
+    val backgroundSoundPreset: BackgroundSoundPreset = BackgroundSoundPreset.OFF,
+    val backgroundSoundVolume: Float = 0.28f,
+    val voiceIsolationEnabled: Boolean = false,
+    val audiogramGainsDb: List<Float>? = null
 ) {
     companion object {
         fun defaultGainsForTarget(target: OutputTarget): List<Float> = when (target) {

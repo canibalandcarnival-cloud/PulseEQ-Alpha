@@ -3,6 +3,7 @@ package com.example.audio
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
+import com.example.model.BackgroundSoundPreset
 import com.example.model.EqPresetsCatalog
 import com.example.model.NightIntensity
 import com.example.model.OutputTarget
@@ -377,6 +378,8 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
     private val lateNightCompressor = DynamicRangeCompressor(sampleRate)
     private val speakerDspChain = PhoneSpeakerDspChain(sampleRate)
     private val spatialAudioEngine = SpatialAudioEngine(sampleRate)
+    private val soundCheckNormalizer = SoundCheckNormalizer(sampleRate)
+    private val voiceIsolationProcessor = VoiceIsolationProcessor(sampleRate)
 
     @Volatile
     private var preampLinear: Double = 1.0
@@ -384,14 +387,32 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
     @Volatile
     private var bypassed: Boolean = false
 
+    @Volatile
+    private var abCompareHeld: Boolean = false
+
+    @Volatile
+    private var abLoudnessMatchLinear: Double = 1.0
+
+    @Volatile
+    var conversationDuckLinear: Double = 1.0
+
     val latestGainReductionDb: Float
         get() = when {
-            bypassed -> 0f
+            bypassed || abCompareHeld -> 0f
             lateNightCompressor.latestGainReductionDb < -0.05f || speakerDspChain.latestLimiterReductionDb < -0.05f -> {
                 minOf(lateNightCompressor.latestGainReductionDb, speakerDspChain.latestLimiterReductionDb)
             }
             else -> 0f
         }
+
+    val latestInputLufs: Float
+        get() = soundCheckNormalizer.latestLufs
+
+    val latestSoundCheckTrimDb: Float
+        get() = if (bypassed || abCompareHeld) 0f else soundCheckNormalizer.latestTrimDb
+
+    val latestVoiceGateDb: Float
+        get() = if (bypassed || abCompareHeld) 0f else voiceIsolationProcessor.latestGateAttenuationDb
 
     init {
         updateParameters(
@@ -406,7 +427,10 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             spatialMode = SpatialMode.OFF,
             spatialDepth = SpatialMode.ATMOS_MUSIC.defaultDepth,
             heightPresence = SpatialMode.ATMOS_MUSIC.defaultHeight,
-            vocalAnchor = true
+            vocalAnchor = true,
+            soundCheckEnabled = false,
+            voiceIsolationEnabled = false,
+            abCompareHeld = false
         )
     }
 
@@ -422,22 +446,41 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         spatialMode: SpatialMode = SpatialMode.OFF,
         spatialDepth: Float = SpatialMode.ATMOS_MUSIC.defaultDepth,
         heightPresence: Float = SpatialMode.ATMOS_MUSIC.defaultHeight,
-        vocalAnchor: Boolean = true
+        vocalAnchor: Boolean = true,
+        soundCheckEnabled: Boolean = false,
+        voiceIsolationEnabled: Boolean = false,
+        abCompareHeld: Boolean = false
     ) {
         bypassed = isBypassed
+        this.abCompareHeld = abCompareHeld
         preampLinear = 10.0.pow(preampDb.toDouble() / 20.0)
-        lateNightCompressor.configure(isEnabled = lateNightEnabled && !isBypassed, intensity = nightIntensity)
+
+        val effectiveProcessing = !isBypassed && !abCompareHeld
+        soundCheckNormalizer.enabled = soundCheckEnabled && effectiveProcessing
+        voiceIsolationProcessor.enabled = voiceIsolationEnabled && effectiveProcessing
+        lateNightCompressor.configure(isEnabled = lateNightEnabled && effectiveProcessing, intensity = nightIntensity)
         speakerDspChain.configure(
-            isSpeakerDspEnabled = speakerDspEnabled && !isBypassed,
-            isVirtualBassEnabled = virtualBassEnabled && !isBypassed
+            isSpeakerDspEnabled = speakerDspEnabled && effectiveProcessing,
+            isVirtualBassEnabled = virtualBassEnabled && effectiveProcessing
         )
         spatialAudioEngine.configure(
-            mode = if (isBypassed) SpatialMode.OFF else spatialMode,
+            mode = if (effectiveProcessing) spatialMode else SpatialMode.OFF,
             target = outputTarget,
             spatialDepth = spatialDepth,
             heightPresence = heightPresence,
             vocalAnchor = vocalAnchor
         )
+
+        val matchDb = AudiogramCheckEngine.computeLoudnessMatchGainDb(
+            bandGainsDb = gainsDb,
+            preampDb = preampDb,
+            lateNightEnabled = lateNightEnabled,
+            nightIntensity = nightIntensity,
+            target = outputTarget,
+            speakerDspEnabled = speakerDspEnabled,
+            spatialMode = spatialMode
+        )
+        abLoudnessMatchLinear = 10.0.pow(matchDb.toDouble() / 20.0)
 
         for (i in 0 until 10) {
             val freq = EqPresetsCatalog.BANDS[i].frequencyHz.toDouble()
@@ -447,11 +490,20 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
     }
 
     fun processStereoSample(inL: Double, inR: Double): Pair<Double, Double> {
+        val duck = conversationDuckLinear.coerceIn(0.15, 1.0)
         if (bypassed) {
-            return inL to inR
+            return (inL * duck) to (inR * duck)
         }
-        var l = inL * preampLinear
-        var r = inR * preampLinear
+        // Sound Check always monitors input LUFS; when A/B Compare is held, switch cleanly to loudness-matched original
+        val (scL, scR) = soundCheckNormalizer.processStereoSample(inL, inR)
+        if (abCompareHeld) {
+            val abL = tanh(inL * abLoudnessMatchLinear * duck * 0.92)
+            val abR = tanh(inR * abLoudnessMatchLinear * duck * 0.92)
+            return abL to abR
+        }
+
+        var l = scL * preampLinear
+        var r = scR * preampLinear
 
         for (band in 0 until 10) {
             val (nextL, nextR) = bandFilters[band].processStereo(l, r)
@@ -459,22 +511,25 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             r = nextR
         }
 
-        val (compL, compR) = lateNightCompressor.processStereoSample(l, r)
+        val (isoL, isoR) = voiceIsolationProcessor.processStereoSample(l, r)
+        val (compL, compR) = lateNightCompressor.processStereoSample(isoL, isoR)
         val (spatL, spatR) = spatialAudioEngine.processStereoSample(compL, compR)
         val (spkL, spkR) = speakerDspChain.processStereoSample(spatL, spatR)
 
-        // Final safety ceiling to prevent digital clipping
-        return tanh(spkL * 0.92) to tanh(spkR * 0.92)
+        // Final safety ceiling + Conversation Awareness auto-ducking
+        return tanh(spkL * duck * 0.92) to tanh(spkR * duck * 0.92)
     }
 }
 
 /**
  * Built-in real-time audio synthesizer so users can audition and visualize
- * Speaker DSP, Headphones, Bluetooth EQ tuning, Spatial Atmos & Late Night compression immediately.
+ * Speaker DSP, Headphones, Bluetooth EQ tuning, Spatial Atmos, Late Night compression,
+ * Sound Check, Voice Isolation & Background Sounds underneath immediately.
  */
 class TestAudioSynthesizer {
     private val sampleRate = 44100
     private val filterBank = BiquadEqFilterBank(sampleRate)
+    private val backgroundSynth = BackgroundSoundsSynthesizer(sampleRate)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private var playJob: Job? = null
@@ -490,6 +545,25 @@ class TestAudioSynthesizer {
     var audioSessionId: Int = 0
         private set
 
+    @Volatile
+    private var backgroundPreset: BackgroundSoundPreset = BackgroundSoundPreset.OFF
+
+    @Volatile
+    private var backgroundVolume: Float = 0.28f
+
+    val latestInputLufs: Float
+        get() = filterBank.latestInputLufs
+
+    val latestSoundCheckTrimDb: Float
+        get() = filterBank.latestSoundCheckTrimDb
+
+    val latestVoiceGateDb: Float
+        get() = filterBank.latestVoiceGateDb
+
+    fun setConversationDuckGain(duckGainLinear: Float) {
+        filterBank.conversationDuckLinear = duckGainLinear.toDouble()
+    }
+
     fun updateEq(
         gainsDb: List<Float>,
         preampDb: Float,
@@ -502,8 +576,15 @@ class TestAudioSynthesizer {
         spatialMode: SpatialMode,
         spatialDepth: Float,
         heightPresence: Float,
-        vocalAnchor: Boolean
+        vocalAnchor: Boolean,
+        soundCheckEnabled: Boolean = false,
+        voiceIsolationEnabled: Boolean = false,
+        abCompareHeld: Boolean = false,
+        bgSoundPreset: BackgroundSoundPreset = BackgroundSoundPreset.OFF,
+        bgSoundVolume: Float = 0.28f
     ) {
+        backgroundPreset = bgSoundPreset
+        backgroundVolume = bgSoundVolume
         filterBank.updateParameters(
             gainsDb = gainsDb,
             preampDb = preampDb,
@@ -516,7 +597,10 @@ class TestAudioSynthesizer {
             spatialMode = spatialMode,
             spatialDepth = spatialDepth,
             heightPresence = heightPresence,
-            vocalAnchor = vocalAnchor
+            vocalAnchor = vocalAnchor,
+            soundCheckEnabled = soundCheckEnabled,
+            voiceIsolationEnabled = voiceIsolationEnabled,
+            abCompareHeld = abCompareHeld
         )
     }
 
@@ -658,8 +742,11 @@ class TestAudioSynthesizer {
                     }
 
                     val (procL, procR) = filterBank.processStereoSample(rawL, rawR)
-                    val clampedL = procL.coerceIn(-1.0, 1.0)
-                    val clampedR = procR.coerceIn(-1.0, 1.0)
+                    val (bgL, bgR) = backgroundSynth.nextStereoSample(backgroundPreset, backgroundVolume)
+                    val mixedL = procL + bgL * filterBank.conversationDuckLinear
+                    val mixedR = procR + bgR * filterBank.conversationDuckLinear
+                    val clampedL = mixedL.coerceIn(-1.0, 1.0)
+                    val clampedR = mixedR.coerceIn(-1.0, 1.0)
                     pcmBuffer[i * 2] = (clampedL * 32767.0).toInt().toShort()
                     pcmBuffer[i * 2 + 1] = (clampedR * 32767.0).toInt().toShort()
 

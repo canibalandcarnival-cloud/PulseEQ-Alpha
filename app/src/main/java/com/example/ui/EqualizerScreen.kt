@@ -52,6 +52,8 @@ import com.example.model.OutputTarget
 import com.example.ui.components.AudioRoutingServiceCard
 import com.example.ui.components.AudioVisualizerPanel
 import com.example.ui.components.EqualizerConsole
+import com.example.ui.components.HearingCheckDialog
+import com.example.ui.components.IosAudioLabCard
 import com.example.ui.components.LateNightDynamicsCard
 import com.example.ui.components.MasterActionBar
 import com.example.ui.components.OutputDeviceSelector
@@ -85,6 +87,15 @@ fun EqualizerScreen(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         viewModel.onAudioPermissionResult(granted)
+    }
+
+    val conversationMicLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        viewModel.onAudioPermissionResult(granted)
+        if (granted && !uiState.activeProfile.conversationAwarenessEnabled) {
+            viewModel.toggleConversationAwareness()
+        }
     }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
@@ -142,6 +153,17 @@ fun EqualizerScreen(
                         onOpenPresetsSheet = { showPresetsSheet = true },
                         onRequestAudioPermission = {
                             audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        },
+                        onToggleConversationWithPermission = {
+                            val micGranted = ContextCompat.checkSelfPermission(
+                                context,
+                                Manifest.permission.RECORD_AUDIO
+                            ) == PackageManager.PERMISSION_GRANTED
+                            if (micGranted || uiState.activeProfile.conversationAwarenessEnabled) {
+                                viewModel.toggleConversationAwareness()
+                            } else {
+                                conversationMicLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            }
                         }
                     )
                 } else {
@@ -151,6 +173,17 @@ fun EqualizerScreen(
                         onOpenPresetsSheet = { showPresetsSheet = true },
                         onRequestAudioPermission = {
                             audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        },
+                        onToggleConversationWithPermission = {
+                            val micGranted = ContextCompat.checkSelfPermission(
+                                context,
+                                Manifest.permission.RECORD_AUDIO
+                            ) == PackageManager.PERMISSION_GRANTED
+                            if (micGranted || uiState.activeProfile.conversationAwarenessEnabled) {
+                                viewModel.toggleConversationAwareness()
+                            } else {
+                                conversationMicLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            }
                         }
                     )
                 }
@@ -165,6 +198,14 @@ fun EqualizerScreen(
             onDismiss = { showPresetsSheet = false }
         )
     }
+
+    HearingCheckDialog(
+        state = uiState.hearingCheckState,
+        onHearItTap = viewModel::recordHearingCheckTap,
+        onSkipStep = viewModel::skipHearingCheckStep,
+        onCancel = viewModel::cancelHearingCheck,
+        onApplyCurve = viewModel::applyAudiogramCurve
+    )
 }
 
 @Composable
@@ -172,7 +213,8 @@ private fun CompactConsoleLayout(
     uiState: EqualizerUiState,
     viewModel: EqualizerViewModel,
     onOpenPresetsSheet: () -> Unit,
-    onRequestAudioPermission: () -> Unit
+    onRequestAudioPermission: () -> Unit,
+    onToggleConversationWithPermission: () -> Unit
 ) {
     val profile = uiState.activeProfile
 
@@ -258,6 +300,21 @@ private fun CompactConsoleLayout(
             onToggleVocalAnchor = viewModel::toggleVocalAnchor
         )
 
+        IosAudioLabCard(
+            profile = profile,
+            telemetry = uiState.audioLabTelemetry,
+            abCompareHeld = uiState.abCompareHeld,
+            hasAudioPermission = uiState.hasAudioPermission,
+            onToggleSoundCheck = viewModel::toggleSoundCheck,
+            onToggleConversationAwareness = onToggleConversationWithPermission,
+            onSelectBackgroundSound = viewModel::selectBackgroundSound,
+            onBackgroundVolumeChange = viewModel::updateBackgroundVolume,
+            onStartHearingCheck = viewModel::startHearingCheck,
+            onApplySavedAudiogram = viewModel::applyAudiogramCurve,
+            onAbCompareHeld = viewModel::setAbCompareHeld,
+            onToggleVoiceIsolation = viewModel::toggleVoiceIsolation
+        )
+
         PresetQuickStrip(
             selectedPresetId = profile.selectedPresetId,
             onSelectPreset = viewModel::applyPreset
@@ -280,7 +337,8 @@ private fun WideConsoleLayout(
     uiState: EqualizerUiState,
     viewModel: EqualizerViewModel,
     onOpenPresetsSheet: () -> Unit,
-    onRequestAudioPermission: () -> Unit
+    onRequestAudioPermission: () -> Unit,
+    onToggleConversationWithPermission: () -> Unit
 ) {
     val profile = uiState.activeProfile
 
@@ -391,6 +449,21 @@ private fun WideConsoleLayout(
                     onDepthChange = viewModel::updateSpatialDepth,
                     onHeightChange = viewModel::updateHeightPresence,
                     onToggleVocalAnchor = viewModel::toggleVocalAnchor
+                )
+
+                IosAudioLabCard(
+                    profile = profile,
+                    telemetry = uiState.audioLabTelemetry,
+                    abCompareHeld = uiState.abCompareHeld,
+                    hasAudioPermission = uiState.hasAudioPermission,
+                    onToggleSoundCheck = viewModel::toggleSoundCheck,
+                    onToggleConversationAwareness = onToggleConversationWithPermission,
+                    onSelectBackgroundSound = viewModel::selectBackgroundSound,
+                    onBackgroundVolumeChange = viewModel::updateBackgroundVolume,
+                    onStartHearingCheck = viewModel::startHearingCheck,
+                    onApplySavedAudiogram = viewModel::applyAudiogramCurve,
+                    onAbCompareHeld = viewModel::setAbCompareHeld,
+                    onToggleVoiceIsolation = viewModel::toggleVoiceIsolation
                 )
             }
         }
