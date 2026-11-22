@@ -208,7 +208,10 @@ data class AudioLabTelemetry(
     val voiceGateAttenuationDb: Float = 0f,
     val accommodationsGrDb: Float = 0f,
     val voiceMicMonitorActive: Boolean = false,
-    val voiceMicLevelDb: Float = -60f
+    val voiceMicLevelDb: Float = -60f,
+    val loudnessRmsGrDb: Float = 0f,
+    val loudnessBrickwallGrDb: Float = 0f,
+    val loudnessAntiClipActive: Boolean = false
 )
 
 @Immutable
@@ -252,7 +255,9 @@ data class OutputEqProfile(
     val accommodationsToneProfile: AccommodationToneProfile = AccommodationToneProfile.BALANCED_TONE,
     val accommodationsSoftIntensity: SoftSoundIntensity = SoftSoundIntensity.MODERATE,
     val accommodationsApplyToMedia: Boolean = true,
-    val accommodationsApplyToVoice: Boolean = false
+    val accommodationsApplyToVoice: Boolean = false,
+    val loudnessMaximizerEnabled: Boolean = false,
+    val loudnessBoostPercent: Float = 0.50f
 ) {
     companion object {
         fun defaultGainsForTarget(target: OutputTarget): List<Float> = when (target) {
@@ -310,6 +315,21 @@ object ThreeBandEqRanges {
     const val MIDS_MAX_DB = 3f
     const val TREBLE_MIN_DB = -6f
     const val TREBLE_MAX_DB = 7f
+}
+
+object LoudnessMaximizerSpecs {
+    const val SUB_BASS_HPF_HZ = 115.0
+    const val MAX_MAKEUP_BOOST_DB = 9.0f
+    const val RMS_THRESHOLD_DB = -20.0f
+    const val RMS_RATIO = 4.0f
+    const val RMS_KNEE_DB = 15.0f
+    const val RMS_ATTACK_MS = 5.0f
+    const val RMS_RELEASE_MS = 150.0f
+    const val BRICKWALL_THRESHOLD_DB = -0.3f
+    const val BRICKWALL_RATIO = 20.0f
+    const val BRICKWALL_KNEE_DB = 0.0f
+    const val BRICKWALL_ATTACK_MS = 0.5f
+    const val BRICKWALL_RELEASE_MS = 40.0f
 }
 
 object EqPresetsCatalog {

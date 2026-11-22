@@ -19,6 +19,7 @@ import com.example.model.ConnectedDeviceState
 import com.example.model.CustomAudioSetupUiState
 import com.example.model.EqPresetsCatalog
 import com.example.model.HearingCheckUiState
+import com.example.model.LoudnessMaximizerSpecs
 import com.example.model.NightIntensity
 import com.example.model.OutputTarget
 import com.example.model.SoftSoundIntensity
@@ -224,6 +225,14 @@ class EqualizerAudioEngine(private val context: Context) {
         private set
 
     @Volatile
+    var currentLoudnessMaximizerEnabled: Boolean = false
+        private set
+
+    @Volatile
+    var currentLoudnessBoostPercent: Float = 0.50f
+        private set
+
+    @Volatile
     private var systemSoundCheckTrimDb: Float = 0f
 
     @Volatile
@@ -290,7 +299,10 @@ class EqualizerAudioEngine(private val context: Context) {
                         inputLufs = testSynthesizer.latestInputLufs,
                         soundCheckTrimDb = testSynthesizer.latestSoundCheckTrimDb,
                         voiceGateAttenuationDb = testSynthesizer.latestVoiceGateDb,
-                        accommodationsGrDb = testSynthesizer.latestAccommodationsGrDb
+                        accommodationsGrDb = testSynthesizer.latestAccommodationsGrDb,
+                        loudnessRmsGrDb = testSynthesizer.latestLoudnessRmsGrDb,
+                        loudnessBrickwallGrDb = testSynthesizer.latestLoudnessBrickwallGrDb,
+                        loudnessAntiClipActive = testSynthesizer.isLoudnessAntiClipActive
                     )
                     synthFrame
                 } else {
@@ -350,7 +362,9 @@ class EqualizerAudioEngine(private val context: Context) {
             accommodationsToneProfile = currentAccommodationsToneProfile,
             accommodationsSoftIntensity = currentAccommodationsSoftIntensity,
             accommodationsApplyToMedia = currentAccommodationsApplyToMedia,
-            accommodationsApplyToVoice = currentAccommodationsApplyToVoice
+            accommodationsApplyToVoice = currentAccommodationsApplyToVoice,
+            loudnessMaximizerEnabled = currentLoudnessMaximizerEnabled,
+            loudnessBoostPercent = currentLoudnessBoostPercent
         )
     }
 
@@ -533,7 +547,9 @@ class EqualizerAudioEngine(private val context: Context) {
         accommodationsToneProfile: AccommodationToneProfile = currentAccommodationsToneProfile,
         accommodationsSoftIntensity: SoftSoundIntensity = currentAccommodationsSoftIntensity,
         accommodationsApplyToMedia: Boolean = currentAccommodationsApplyToMedia,
-        accommodationsApplyToVoice: Boolean = currentAccommodationsApplyToVoice
+        accommodationsApplyToVoice: Boolean = currentAccommodationsApplyToVoice,
+        loudnessMaximizerEnabled: Boolean = currentLoudnessMaximizerEnabled,
+        loudnessBoostPercent: Float = currentLoudnessBoostPercent
     ) {
         currentTarget = target
         currentGainsDb = gainsDb
@@ -561,6 +577,8 @@ class EqualizerAudioEngine(private val context: Context) {
         currentAccommodationsSoftIntensity = accommodationsSoftIntensity
         currentAccommodationsApplyToMedia = accommodationsApplyToMedia
         currentAccommodationsApplyToVoice = accommodationsApplyToVoice
+        currentLoudnessMaximizerEnabled = loudnessMaximizerEnabled
+        currentLoudnessBoostPercent = loudnessBoostPercent.coerceIn(0f, 1f)
 
         val isSpeakerDspActive = (target == OutputTarget.SPEAKER) && speakerDspEnabled
         val isAbHeld = _abCompareHeld.value
@@ -604,7 +622,9 @@ class EqualizerAudioEngine(private val context: Context) {
             accommodationsEnabled = accommodationsEnabled,
             accommodationsToneProfile = accommodationsToneProfile,
             accommodationsSoftIntensity = accommodationsSoftIntensity,
-            accommodationsApplyToMedia = accommodationsApplyToMedia
+            accommodationsApplyToMedia = accommodationsApplyToMedia,
+            loudnessMaximizerEnabled = loudnessMaximizerEnabled,
+            loudnessBoostPercent = currentLoudnessBoostPercent
         )
         applyToAllSessions()
     }
@@ -644,9 +664,14 @@ class EqualizerAudioEngine(private val context: Context) {
                         } else {
                             0f
                         }
+                        val loudnessMatchBoost = if (currentLoudnessMaximizerEnabled) {
+                            currentLoudnessBoostPercent * LoudnessMaximizerSpecs.MAX_MAKEUP_BOOST_DB * 0.65f + 2.2f
+                        } else {
+                            0f
+                        }
                         val matchGainDb = AudiogramCheckEngine.computeLoudnessMatchGainDb(
                             bandGainsDb = currentGainsDb,
-                            preampDb = currentPreampDb + threeBandAvg + accommodationsMatchBoost,
+                            preampDb = currentPreampDb + threeBandAvg + accommodationsMatchBoost + loudnessMatchBoost,
                             lateNightEnabled = currentLateNightEnabled,
                             nightIntensity = currentNightIntensity,
                             target = currentTarget,
@@ -665,6 +690,7 @@ class EqualizerAudioEngine(private val context: Context) {
                         dp.setLimiterAllChannelsTo(DynamicsProcessing.Limiter(true, true, 0, 1.0f, 60.0f, 10.0f, -0.5f, 0.0f))
                     } else if (!currentBypassed) {
                         val accommodationsMediaActive = currentAccommodationsEnabled && currentAccommodationsApplyToMedia
+                        val loudnessMaxActive = currentLoudnessMaximizerEnabled
                         val scGain = if (currentSoundCheckEnabled) systemSoundCheckTrimDb else 0f
                         dp.setInputGainAllChannelsTo(currentPreampDb + scGain + duckDb)
                         for (i in 0 until 10) {
@@ -689,7 +715,16 @@ class EqualizerAudioEngine(private val context: Context) {
                             } else {
                                 0f
                             }
-                            val combinedGain = (tenBandGain + toneOffset + accommodationsOffset).coerceIn(-15f, 15f)
+                            val loudnessPresenceOffset = if (loudnessMaxActive) {
+                                IphoneLoudnessMaximizerChain.computePresenceAndHpfResponseDbAt(
+                                    freqHz = EqPresetsCatalog.BANDS[i].frequencyHz.toDouble(),
+                                    target = currentTarget
+                                )
+                            } else {
+                                0f
+                            }
+                            val combinedGain = (tenBandGain + toneOffset + accommodationsOffset + loudnessPresenceOffset)
+                                .coerceIn(-15f, 15f)
                             dp.setPreEqBandAllChannelsTo(
                                 i,
                                 DynamicsProcessing.EqBand(true, bandUpperCutoffsHz[i], combinedGain)
@@ -739,28 +774,42 @@ class EqualizerAudioEngine(private val context: Context) {
                         }
                         dp.setPostEqAllChannelsTo(postEq)
 
-                        // Mbc stage: Late Night 4:1 compressor OR Boost Soft Sounds OR Voice Isolation -38dB downward gate
-                        val compEnabled = currentLateNightEnabled || accommodationsMediaActive
+                        // Mbc stage: Late Night 4:1 OR Boost Soft Sounds OR Smooth RMS Compressor (-20dB, 4:1, 15dB knee, 5ms/150ms)
+                        val compEnabled = currentLateNightEnabled || accommodationsMediaActive || loudnessMaxActive
                         val mbc = DynamicsProcessing.Mbc(true, compEnabled, 1)
-                        val mbcAttack = if (currentLateNightEnabled) currentNightIntensity.attackMs else 8f
-                        val mbcRelease = if (currentLateNightEnabled) currentNightIntensity.releaseMs else 160f
-                        val mbcRatio = if (currentLateNightEnabled) {
-                            maxOf(currentNightIntensity.ratio, if (accommodationsMediaActive) currentAccommodationsSoftIntensity.ratio else 1f)
-                        } else {
-                            currentAccommodationsSoftIntensity.ratio
+                        val mbcAttack = when {
+                            loudnessMaxActive -> LoudnessMaximizerSpecs.RMS_ATTACK_MS
+                            currentLateNightEnabled -> currentNightIntensity.attackMs
+                            else -> 8f
                         }
-                        val mbcThreshold = if (currentLateNightEnabled) {
-                            currentNightIntensity.thresholdDb
-                        } else {
-                            currentAccommodationsSoftIntensity.thresholdDb
+                        val mbcRelease = when {
+                            loudnessMaxActive -> LoudnessMaximizerSpecs.RMS_RELEASE_MS
+                            currentLateNightEnabled -> currentNightIntensity.releaseMs
+                            else -> 160f
                         }
-                        val mbcKnee = if (currentLateNightEnabled) {
-                            currentNightIntensity.kneeDb
+                        val mbcRatio = maxOf(
+                            if (currentLateNightEnabled) currentNightIntensity.ratio else 1f,
+                            if (accommodationsMediaActive) currentAccommodationsSoftIntensity.ratio else 1f,
+                            if (loudnessMaxActive) LoudnessMaximizerSpecs.RMS_RATIO else 1f
+                        )
+                        val mbcThreshold = when {
+                            currentLateNightEnabled -> currentNightIntensity.thresholdDb
+                            loudnessMaxActive -> LoudnessMaximizerSpecs.RMS_THRESHOLD_DB
+                            else -> currentAccommodationsSoftIntensity.thresholdDb
+                        }
+                        val mbcKnee = when {
+                            loudnessMaxActive -> LoudnessMaximizerSpecs.RMS_KNEE_DB
+                            currentLateNightEnabled -> currentNightIntensity.kneeDb
+                            else -> currentAccommodationsSoftIntensity.kneeDb
+                        }
+                        val loudnessMakeupDb = if (loudnessMaxActive) {
+                            currentLoudnessBoostPercent * LoudnessMaximizerSpecs.MAX_MAKEUP_BOOST_DB
                         } else {
-                            currentAccommodationsSoftIntensity.kneeDb
+                            0f
                         }
                         val mbcMakeup = (if (currentLateNightEnabled) currentNightIntensity.makeupGainDb else 0f) +
-                            (if (accommodationsMediaActive) currentAccommodationsSoftIntensity.makeupGainDb else 0f)
+                            (if (accommodationsMediaActive) currentAccommodationsSoftIntensity.makeupGainDb else 0f) +
+                            loudnessMakeupDb
 
                         mbc.setBand(
                             0,
@@ -780,9 +829,20 @@ class EqualizerAudioEngine(private val context: Context) {
                         )
                         dp.setMbcAllChannelsTo(mbc)
 
-                        // Limiter stage: iPhone Smart Speaker Limiter (-6dB, 12:1, 1ms/80ms, +3dB makeup)
-                        val limiter = if (isSpeakerDspActive) {
-                            DynamicsProcessing.Limiter(
+                        // Limiter stage: Zero-Clipping Brickwall (-0.3dB, 20:1, 0.5ms/40ms) when Loudness Maximizer active,
+                        // otherwise iPhone Smart Speaker Limiter (-6dB, 12:1, 1ms/80ms, +3dB makeup) or safety limiter
+                        val limiter = when {
+                            loudnessMaxActive -> DynamicsProcessing.Limiter(
+                                true,
+                                true,
+                                0,
+                                LoudnessMaximizerSpecs.BRICKWALL_ATTACK_MS,
+                                LoudnessMaximizerSpecs.BRICKWALL_RELEASE_MS,
+                                LoudnessMaximizerSpecs.BRICKWALL_RATIO,
+                                LoudnessMaximizerSpecs.BRICKWALL_THRESHOLD_DB,
+                                0.0f
+                            )
+                            isSpeakerDspActive -> DynamicsProcessing.Limiter(
                                 true,
                                 true,
                                 0,
@@ -792,8 +852,7 @@ class EqualizerAudioEngine(private val context: Context) {
                                 -6.0f,
                                 3.0f
                             )
-                        } else {
-                            DynamicsProcessing.Limiter(
+                            else -> DynamicsProcessing.Limiter(
                                 true,
                                 true,
                                 0,
@@ -835,10 +894,12 @@ class EqualizerAudioEngine(private val context: Context) {
 
         val sessionCount = AudioSessionRegistry.activeSessions.value.size
         val accMediaActive = effectiveActive && currentAccommodationsEnabled && currentAccommodationsApplyToMedia
+        val loudnessMaxActive = effectiveActive && currentLoudnessMaximizerEnabled
         _dspStatusLabel.value = when {
             isAbHeld -> "A/B Compare: Original"
             currentBypassed -> "DSP Bypassed"
             currentVoiceIsolationEnabled -> "Voice Isolation"
+            loudnessMaxActive -> "Loudness Maximizer +${(currentLoudnessBoostPercent * LoudnessMaximizerSpecs.MAX_MAKEUP_BOOST_DB).toInt()}dB"
             isSpatialActive && currentTarget == OutputTarget.SPEAKER -> "Speaker XTC Spatial"
             isSpatialActive -> "Spatial ${currentSpatialMode.label}"
             accMediaActive -> "Accommodations • ${currentAccommodationsToneProfile.label}"
@@ -929,6 +990,31 @@ class EqualizerAudioEngine(private val context: Context) {
                             0f
                         }
 
+                        val loudnessRmsGr = if (live && currentLoudnessMaximizerEnabled && !currentBypassed && !_abCompareHeld.value) {
+                            DynamicRangeCompressor.computeGainReductionDb(
+                                inputDb = peakDb,
+                                thresholdDb = LoudnessMaximizerSpecs.RMS_THRESHOLD_DB,
+                                kneeDb = LoudnessMaximizerSpecs.RMS_KNEE_DB,
+                                ratio = LoudnessMaximizerSpecs.RMS_RATIO
+                            )
+                        } else {
+                            0f
+                        }
+                        val loudnessMakeupDb = currentLoudnessBoostPercent * LoudnessMaximizerSpecs.MAX_MAKEUP_BOOST_DB
+                        val postRmsDb = peakDb + loudnessRmsGr + loudnessMakeupDb
+                        val loudnessBrickwallGr = if (live && currentLoudnessMaximizerEnabled && !currentBypassed && !_abCompareHeld.value) {
+                            DynamicRangeCompressor.computeGainReductionDb(
+                                inputDb = postRmsDb,
+                                thresholdDb = LoudnessMaximizerSpecs.BRICKWALL_THRESHOLD_DB,
+                                kneeDb = LoudnessMaximizerSpecs.BRICKWALL_KNEE_DB,
+                                ratio = LoudnessMaximizerSpecs.BRICKWALL_RATIO
+                            )
+                        } else {
+                            0f
+                        }
+                        val loudnessAntiClip = live && currentLoudnessMaximizerEnabled && !currentBypassed && !_abCompareHeld.value &&
+                            (loudnessBrickwallGr < -0.15f || postRmsDb > LoudnessMaximizerSpecs.BRICKWALL_THRESHOLD_DB)
+
                         val desiredSoundCheck = if (live && currentSoundCheckEnabled) {
                             SoundCheckNormalizer.computeTargetTrimDb(peakDb - 3f)
                         } else {
@@ -939,14 +1025,17 @@ class EqualizerAudioEngine(private val context: Context) {
                             _audioLabTelemetry.value = _audioLabTelemetry.value.copy(
                                 inputLufs = (peakDb - 3f).coerceIn(-60f, 0f),
                                 soundCheckTrimDb = systemSoundCheckTrimDb,
-                                voiceGateAttenuationDb = if (live || !currentVoiceIsolationEnabled) 0f else -24f
+                                voiceGateAttenuationDb = if (live || !currentVoiceIsolationEnabled) 0f else -24f,
+                                loudnessRmsGrDb = loudnessRmsGr,
+                                loudnessBrickwallGrDb = loudnessBrickwallGr,
+                                loudnessAntiClipActive = loudnessAntiClip
                             )
                         }
 
                         _systemVisualizerFrame.value = _systemVisualizerFrame.value.copy(
                             waveformSamples = samples,
                             peakDb = peakDb,
-                            gainReductionDb = minOf(lateNightGr, speakerLimiterGr),
+                            gainReductionDb = minOf(lateNightGr, speakerLimiterGr, loudnessRmsGr, loudnessBrickwallGr),
                             isSignalLive = live
                         )
                     }
@@ -1036,7 +1125,9 @@ class EqualizerAudioEngine(private val context: Context) {
             accommodationsEnabled = currentAccommodationsEnabled,
             accommodationsToneProfile = currentAccommodationsToneProfile,
             accommodationsSoftIntensity = currentAccommodationsSoftIntensity,
-            accommodationsApplyToMedia = currentAccommodationsApplyToMedia
+            accommodationsApplyToMedia = currentAccommodationsApplyToMedia,
+            loudnessMaximizerEnabled = currentLoudnessMaximizerEnabled,
+            loudnessBoostPercent = currentLoudnessBoostPercent
         )
     }
 

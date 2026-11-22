@@ -483,4 +483,97 @@ class ExampleUnitTest {
         rmsOff = kotlin.math.sqrt(rmsOff / 2205)
         assertTrue("Apply to Media=true should boost quiet -50 dBFS 10kHz detail strongly", rmsOn > rmsOff * 2.5)
     }
+
+    @Test
+    fun iphone_loudness_maximizer_filters_sub_bass_boosts_presence_and_brickwalls_without_clipping() {
+        val sampleRate = 44100
+
+        // 1. Safe Sub-Bass Filter: 115 Hz 24dB/oct HPF cuts 50 Hz strongly on Phone Speaker, keeps 50 Hz near 0 dB on Headphones
+        val spkSub50Hz = com.example.audio.IphoneLoudnessMaximizerChain.computePresenceAndHpfResponseDbAt(
+            freqHz = 50.0,
+            target = com.example.model.OutputTarget.SPEAKER,
+            sampleRate = sampleRate
+        )
+        val hpSub50Hz = com.example.audio.IphoneLoudnessMaximizerChain.computePresenceAndHpfResponseDbAt(
+            freqHz = 50.0,
+            target = com.example.model.OutputTarget.HEADPHONES,
+            sampleRate = sampleRate
+        )
+        assertTrue("Speaker 115Hz 24dB/oct HPF should cut 50Hz by >14 dB", spkSub50Hz <= -14.0f)
+        assertTrue("Headphones should keep 50Hz near 0 dB", abs(hpSub50Hz) < 0.8f)
+
+        // 2. Presence & Fletcher-Munson Loudness Curve: 350Hz -2.5 dB, 1.5kHz +2.0 dB, 3kHz +3.5 dB, 8kHz +2.5 dB
+        val resp350 = com.example.audio.IphoneLoudnessMaximizerChain.computePresenceAndHpfResponseDbAt(
+            350.0,
+            com.example.model.OutputTarget.HEADPHONES,
+            sampleRate
+        )
+        val resp1500 = com.example.audio.IphoneLoudnessMaximizerChain.computePresenceAndHpfResponseDbAt(
+            1500.0,
+            com.example.model.OutputTarget.HEADPHONES,
+            sampleRate
+        )
+        val resp3000 = com.example.audio.IphoneLoudnessMaximizerChain.computePresenceAndHpfResponseDbAt(
+            3000.0,
+            com.example.model.OutputTarget.HEADPHONES,
+            sampleRate
+        )
+        val resp8000 = com.example.audio.IphoneLoudnessMaximizerChain.computePresenceAndHpfResponseDbAt(
+            8000.0,
+            com.example.model.OutputTarget.HEADPHONES,
+            sampleRate
+        )
+        assertEquals(-2.5f, resp350, 0.5f)
+        assertEquals(2.0f, resp1500, 0.7f)
+        assertEquals(3.5f, resp3000, 0.7f)
+        assertEquals(2.5f, resp8000, 0.6f)
+
+        // 3. Dynamic audio (-24 dBFS RMS bed + loud 0.85 transient peak) with +100% (+9 dB) boost
+        // triggers Zero-Clipping Brickwall Limiter & Anti-Clip Light while capping peaks <= 0.99
+        val chain = com.example.audio.IphoneLoudnessMaximizerChain(sampleRate).apply {
+            configure(
+                isEnabled = true,
+                outputTarget = com.example.model.OutputTarget.HEADPHONES,
+                boostPercent = 1.0f // +100% (+9.0 dB)
+            )
+        }
+        for (i in 0 until 4410) {
+            val bed = 0.06 * kotlin.math.sin(2.0 * Math.PI * 1000.0 * i / sampleRate)
+            chain.processStereoSample(bed, bed)
+        }
+        var maxOutputAbs = 0.0
+        var antiClipTriggered = false
+        var minBrickwallGr = 0f
+        for (i in 0 until 150) {
+            val transientPeak = 0.85 * kotlin.math.sin(2.0 * Math.PI * 3000.0 * i / sampleRate)
+            val (oL, oR) = chain.processStereoSample(transientPeak, transientPeak)
+            maxOutputAbs = maxOf(maxOutputAbs, abs(oL), abs(oR))
+            if (chain.isAntiClipActive) antiClipTriggered = true
+            minBrickwallGr = minOf(minBrickwallGr, chain.latestBrickwallGrDb)
+        }
+        assertTrue("Hot +9dB boosted transient must never clip above 0.99", maxOutputAbs <= 0.99)
+        assertTrue("Anti-Clip indicator should engage on hot boosted transient", antiClipTriggered)
+        assertTrue("Brickwall limiter should apply negative gain reduction", minBrickwallGr < -1.0f)
+
+        // 4. Integrated end-of-chain BiquadEqFilterBank boosts quiet 1kHz signal loudly and triggers anti-clip on hot input
+        val bank = BiquadEqFilterBank(sampleRate).apply {
+            updateParameters(
+                gainsDb = List(10) { 0f },
+                preampDb = 0f,
+                isBypassed = false,
+                loudnessMaximizerEnabled = true,
+                loudnessBoostPercent = 1.0f,
+                outputTarget = com.example.model.OutputTarget.SPEAKER
+            )
+        }
+        var quietOutRms = 0.0
+        for (i in 0 until 4410) {
+            val s = 0.03 * kotlin.math.sin(2.0 * Math.PI * 1500.0 * i / sampleRate)
+            val (oL, _) = bank.processStereoSample(s, s)
+            if (i > 2205) quietOutRms += oL * oL
+        }
+        quietOutRms = kotlin.math.sqrt(quietOutRms / 2205)
+        val quietInRms = 0.03 / kotlin.math.sqrt(2.0)
+        assertTrue("Loudness Maximizer +100% must boost quiet 1.5kHz passage strongly", quietOutRms > quietInRms * 2.5)
+    }
 }

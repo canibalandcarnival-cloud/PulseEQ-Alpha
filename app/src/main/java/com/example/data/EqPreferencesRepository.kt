@@ -61,6 +61,8 @@ class EqPreferencesRepository(private val context: Context) {
         fun accommodationsSoftIntensityKey(target: OutputTarget) = stringPreferencesKey("acc_soft_${target.id}")
         fun accommodationsMediaKey(target: OutputTarget) = booleanPreferencesKey("acc_media_${target.id}")
         fun accommodationsVoiceKey(target: OutputTarget) = booleanPreferencesKey("acc_voice_${target.id}")
+        fun loudnessMaxEnabledKey(target: OutputTarget) = booleanPreferencesKey("loudness_max_enabled_${target.id}")
+        fun loudnessBoostPctKey(target: OutputTarget) = floatPreferencesKey("loudness_boost_pct_${target.id}")
     }
 
     val preferencesFlow: Flow<StoredEqPreferences> = context.eqDataStore.data.map { prefs ->
@@ -141,7 +143,9 @@ class EqPreferencesRepository(private val context: Context) {
                     it.name == prefs[Keys.accommodationsSoftIntensityKey(target)]
                 } ?: com.example.model.SoftSoundIntensity.MODERATE,
                 accommodationsApplyToMedia = prefs[Keys.accommodationsMediaKey(target)] ?: true,
-                accommodationsApplyToVoice = prefs[Keys.accommodationsVoiceKey(target)] ?: false
+                accommodationsApplyToVoice = prefs[Keys.accommodationsVoiceKey(target)] ?: false,
+                loudnessMaximizerEnabled = prefs[Keys.loudnessMaxEnabledKey(target)] ?: false,
+                loudnessBoostPercent = (prefs[Keys.loudnessBoostPctKey(target)] ?: 0.50f).coerceIn(0f, 1f)
             )
         }
 
@@ -212,6 +216,8 @@ class EqPreferencesRepository(private val context: Context) {
             prefs[Keys.accommodationsSoftIntensityKey(profile.target)] = profile.accommodationsSoftIntensity.name
             prefs[Keys.accommodationsMediaKey(profile.target)] = profile.accommodationsApplyToMedia
             prefs[Keys.accommodationsVoiceKey(profile.target)] = profile.accommodationsApplyToVoice
+            prefs[Keys.loudnessMaxEnabledKey(profile.target)] = profile.loudnessMaximizerEnabled
+            prefs[Keys.loudnessBoostPctKey(profile.target)] = profile.loudnessBoostPercent.coerceIn(0f, 1f)
         }
     }
 }

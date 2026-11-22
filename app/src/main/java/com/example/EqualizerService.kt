@@ -103,7 +103,9 @@ class EqualizerService : Service() {
                     accommodationsToneProfile = audioEngine.currentAccommodationsToneProfile,
                     accommodationsSoftIntensity = audioEngine.currentAccommodationsSoftIntensity,
                     accommodationsApplyToMedia = audioEngine.currentAccommodationsApplyToMedia,
-                    accommodationsApplyToVoice = audioEngine.currentAccommodationsApplyToVoice
+                    accommodationsApplyToVoice = audioEngine.currentAccommodationsApplyToVoice,
+                    loudnessMaximizerEnabled = audioEngine.currentLoudnessMaximizerEnabled,
+                    loudnessBoostPercent = audioEngine.currentLoudnessBoostPercent
                 )
             }
 

@@ -57,6 +57,7 @@ import com.example.ui.components.HeadphoneAccommodationsCard
 import com.example.ui.components.HearingCheckDialog
 import com.example.ui.components.IosAudioLabCard
 import com.example.ui.components.LateNightDynamicsCard
+import com.example.ui.components.LoudnessMaximizerCard
 import com.example.ui.components.MasterActionBar
 import com.example.ui.components.OutputDeviceSelector
 import com.example.ui.components.PresetQuickStrip
@@ -302,7 +303,9 @@ private fun CompactConsoleLayout(
             accommodationsEnabled = profile.accommodationsEnabled,
             accommodationsToneProfile = profile.accommodationsToneProfile,
             accommodationsSoftIntensity = profile.accommodationsSoftIntensity,
-            accommodationsApplyToMedia = profile.accommodationsApplyToMedia
+            accommodationsApplyToMedia = profile.accommodationsApplyToMedia,
+            loudnessMaximizerEnabled = profile.loudnessMaximizerEnabled,
+            outputTarget = uiState.selectedTarget
         )
 
         MasterActionBar(
@@ -393,6 +396,16 @@ private fun CompactConsoleLayout(
             onToggleVoiceIsolation = viewModel::toggleVoiceIsolation
         )
 
+        LoudnessMaximizerCard(
+            loudnessMaximizerEnabled = profile.loudnessMaximizerEnabled,
+            boostPercent = profile.loudnessBoostPercent,
+            outputTarget = uiState.selectedTarget,
+            isMasterBypassed = profile.isBypassed,
+            telemetry = uiState.audioLabTelemetry,
+            onToggleEnabled = viewModel::toggleLoudnessMaximizer,
+            onBoostPercentChange = viewModel::updateLoudnessBoostPercent
+        )
+
         PresetQuickStrip(
             selectedPresetId = profile.selectedPresetId,
             onSelectPreset = viewModel::applyPreset
@@ -469,7 +482,9 @@ private fun WideConsoleLayout(
                     accommodationsEnabled = profile.accommodationsEnabled,
                     accommodationsToneProfile = profile.accommodationsToneProfile,
                     accommodationsSoftIntensity = profile.accommodationsSoftIntensity,
-                    accommodationsApplyToMedia = profile.accommodationsApplyToMedia
+                    accommodationsApplyToMedia = profile.accommodationsApplyToMedia,
+                    loudnessMaximizerEnabled = profile.loudnessMaximizerEnabled,
+                    outputTarget = uiState.selectedTarget
                 )
 
                 PresetQuickStrip(
@@ -576,6 +591,16 @@ private fun WideConsoleLayout(
                     onApplySavedAudiogram = viewModel::applyAudiogramCurve,
                     onAbCompareHeld = viewModel::setAbCompareHeld,
                     onToggleVoiceIsolation = viewModel::toggleVoiceIsolation
+                )
+
+                LoudnessMaximizerCard(
+                    loudnessMaximizerEnabled = profile.loudnessMaximizerEnabled,
+                    boostPercent = profile.loudnessBoostPercent,
+                    outputTarget = uiState.selectedTarget,
+                    isMasterBypassed = profile.isBypassed,
+                    telemetry = uiState.audioLabTelemetry,
+                    onToggleEnabled = viewModel::toggleLoudnessMaximizer,
+                    onBoostPercentChange = viewModel::updateLoudnessBoostPercent
                 )
             }
         }

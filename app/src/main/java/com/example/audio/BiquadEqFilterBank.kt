@@ -501,6 +501,7 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
     private val threeBandToneFilter = ThreeBandToneFilter(sampleRate)
     private val lateNightCompressor = DynamicRangeCompressor(sampleRate)
     private val speakerDspChain = PhoneSpeakerDspChain(sampleRate)
+    private val loudnessMaximizerChain = IphoneLoudnessMaximizerChain(sampleRate)
     private val spatialAudioEngine = SpatialAudioEngine(sampleRate)
     private val soundCheckNormalizer = SoundCheckNormalizer(sampleRate)
     private val voiceIsolationProcessor = VoiceIsolationProcessor(sampleRate)
@@ -521,12 +522,15 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
     var conversationDuckLinear: Double = 1.0
 
     val latestGainReductionDb: Float
-        get() = when {
-            bypassed || abCompareHeld -> 0f
-            lateNightCompressor.latestGainReductionDb < -0.05f || speakerDspChain.latestLimiterReductionDb < -0.05f -> {
-                minOf(lateNightCompressor.latestGainReductionDb, speakerDspChain.latestLimiterReductionDb)
-            }
-            else -> 0f
+        get() {
+            if (bypassed || abCompareHeld) return 0f
+            val minGr = minOf(
+                lateNightCompressor.latestGainReductionDb,
+                speakerDspChain.latestLimiterReductionDb,
+                loudnessMaximizerChain.latestRmsGrDb,
+                loudnessMaximizerChain.latestBrickwallGrDb
+            )
+            return if (minGr < -0.05f) minGr else 0f
         }
 
     val latestInputLufs: Float
@@ -540,6 +544,15 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
 
     val latestAccommodationsGrDb: Float
         get() = if (bypassed || abCompareHeld) 0f else headphoneAccommodationsProcessor.latestGainReductionDb
+
+    val latestLoudnessRmsGrDb: Float
+        get() = if (bypassed || abCompareHeld) 0f else loudnessMaximizerChain.latestRmsGrDb
+
+    val latestLoudnessBrickwallGrDb: Float
+        get() = if (bypassed || abCompareHeld) 0f else loudnessMaximizerChain.latestBrickwallGrDb
+
+    val isLoudnessAntiClipActive: Boolean
+        get() = !bypassed && !abCompareHeld && loudnessMaximizerChain.isAntiClipActive
 
     init {
         updateParameters(
@@ -588,7 +601,9 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         accommodationsEnabled: Boolean = false,
         accommodationsToneProfile: AccommodationToneProfile = AccommodationToneProfile.BALANCED_TONE,
         accommodationsSoftIntensity: SoftSoundIntensity = SoftSoundIntensity.MODERATE,
-        accommodationsApplyToMedia: Boolean = true
+        accommodationsApplyToMedia: Boolean = true,
+        loudnessMaximizerEnabled: Boolean = false,
+        loudnessBoostPercent: Float = 0.50f
     ) {
         bypassed = isBypassed
         this.abCompareHeld = abCompareHeld
@@ -620,6 +635,11 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             heightPresence = heightPresence,
             vocalAnchor = vocalAnchor
         )
+        loudnessMaximizerChain.configure(
+            isEnabled = loudnessMaximizerEnabled && effectiveProcessing,
+            outputTarget = outputTarget,
+            boostPercent = loudnessBoostPercent
+        )
 
         val threeBandAvg = if (threeBandEnabled) {
             (threeBandBassDb * 0.25f + threeBandMidsDb * 0.50f + threeBandTrebleDb * 0.25f)
@@ -631,9 +651,14 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         } else {
             0f
         }
+        val loudnessMatchBoost = if (loudnessMaximizerEnabled) {
+            loudnessBoostPercent.coerceIn(0f, 1f) * com.example.model.LoudnessMaximizerSpecs.MAX_MAKEUP_BOOST_DB * 0.65f + 2.2f
+        } else {
+            0f
+        }
         val matchDb = AudiogramCheckEngine.computeLoudnessMatchGainDb(
             bandGainsDb = gainsDb,
-            preampDb = preampDb + threeBandAvg + accommodationsMatchBoost,
+            preampDb = preampDb + threeBandAvg + accommodationsMatchBoost + loudnessMatchBoost,
             lateNightEnabled = lateNightEnabled,
             nightIntensity = nightIntensity,
             target = outputTarget,
@@ -681,9 +706,14 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         val (compL, compR) = lateNightCompressor.processStereoSample(isoL, isoR)
         val (spatL, spatR) = spatialAudioEngine.processStereoSample(compL, compR)
         val (spkL, spkR) = speakerDspChain.processStereoSample(spatL, spatR)
+        val (maxL, maxR) = loudnessMaximizerChain.processStereoSample(spkL, spkR)
 
         // Final safety ceiling + Conversation Awareness auto-ducking
-        return tanh(spkL * duck * 0.92) to tanh(spkR * duck * 0.92)
+        return if (loudnessMaximizerChain.enabled) {
+            (maxL * duck).coerceIn(-0.99, 0.99) to (maxR * duck).coerceIn(-0.99, 0.99)
+        } else {
+            tanh(maxL * duck * 0.92) to tanh(maxR * duck * 0.92)
+        }
     }
 }
 
@@ -729,6 +759,15 @@ class TestAudioSynthesizer {
     val latestAccommodationsGrDb: Float
         get() = filterBank.latestAccommodationsGrDb
 
+    val latestLoudnessRmsGrDb: Float
+        get() = filterBank.latestLoudnessRmsGrDb
+
+    val latestLoudnessBrickwallGrDb: Float
+        get() = filterBank.latestLoudnessBrickwallGrDb
+
+    val isLoudnessAntiClipActive: Boolean
+        get() = filterBank.isLoudnessAntiClipActive
+
     fun setConversationDuckGain(duckGainLinear: Float) {
         filterBank.conversationDuckLinear = duckGainLinear.toDouble()
     }
@@ -758,7 +797,9 @@ class TestAudioSynthesizer {
         accommodationsEnabled: Boolean = false,
         accommodationsToneProfile: AccommodationToneProfile = AccommodationToneProfile.BALANCED_TONE,
         accommodationsSoftIntensity: SoftSoundIntensity = SoftSoundIntensity.MODERATE,
-        accommodationsApplyToMedia: Boolean = true
+        accommodationsApplyToMedia: Boolean = true,
+        loudnessMaximizerEnabled: Boolean = false,
+        loudnessBoostPercent: Float = 0.50f
     ) {
         backgroundPreset = bgSoundPreset
         backgroundVolume = bgSoundVolume
@@ -785,7 +826,9 @@ class TestAudioSynthesizer {
             accommodationsEnabled = accommodationsEnabled,
             accommodationsToneProfile = accommodationsToneProfile,
             accommodationsSoftIntensity = accommodationsSoftIntensity,
-            accommodationsApplyToMedia = accommodationsApplyToMedia
+            accommodationsApplyToMedia = accommodationsApplyToMedia,
+            loudnessMaximizerEnabled = loudnessMaximizerEnabled,
+            loudnessBoostPercent = loudnessBoostPercent
         )
     }
 

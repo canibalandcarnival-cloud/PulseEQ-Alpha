@@ -497,6 +497,27 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
         commitProfile(updated)
     }
 
+    fun toggleLoudnessMaximizer() {
+        val current = currentProfile()
+        val enabling = !current.loudnessMaximizerEnabled
+        val updated = current.copy(
+            loudnessMaximizerEnabled = enabling,
+            isBypassed = if (enabling) false else current.isBypassed
+        )
+        commitProfile(updated)
+    }
+
+    fun updateLoudnessBoostPercent(rawPercent: Float) {
+        val current = currentProfile()
+        val snapped = ((rawPercent.coerceIn(0f, 1f) * 100f).roundToInt() / 100f).coerceIn(0f, 1f)
+        val updated = current.copy(
+            loudnessBoostPercent = snapped,
+            loudnessMaximizerEnabled = if (snapped > 0f) true else current.loudnessMaximizerEnabled,
+            isBypassed = if (snapped > 0f) false else current.isBypassed
+        )
+        commitProfile(updated)
+    }
+
     fun openCustomAudioSetup() {
         audioEngine.customAudioSetupEngine.open(currentProfile().accommodationsSoftIntensity)
     }
@@ -643,7 +664,9 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             accommodationsToneProfile = profile.accommodationsToneProfile,
             accommodationsSoftIntensity = profile.accommodationsSoftIntensity,
             accommodationsApplyToMedia = profile.accommodationsApplyToMedia,
-            accommodationsApplyToVoice = profile.accommodationsApplyToVoice
+            accommodationsApplyToVoice = profile.accommodationsApplyToVoice,
+            loudnessMaximizerEnabled = profile.loudnessMaximizerEnabled,
+            loudnessBoostPercent = profile.loudnessBoostPercent
         )
     }
 
