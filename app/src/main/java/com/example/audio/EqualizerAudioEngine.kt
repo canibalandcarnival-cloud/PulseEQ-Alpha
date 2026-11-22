@@ -225,6 +225,10 @@ class EqualizerAudioEngine(private val context: Context) {
         private set
 
     @Volatile
+    var currentAccommodationsOutputGainDb: Float = 0f
+        private set
+
+    @Volatile
     var currentLoudnessMaximizerEnabled: Boolean = false
         private set
 
@@ -363,6 +367,7 @@ class EqualizerAudioEngine(private val context: Context) {
             accommodationsSoftIntensity = currentAccommodationsSoftIntensity,
             accommodationsApplyToMedia = currentAccommodationsApplyToMedia,
             accommodationsApplyToVoice = currentAccommodationsApplyToVoice,
+            accommodationsOutputGainDb = currentAccommodationsOutputGainDb,
             loudnessMaximizerEnabled = currentLoudnessMaximizerEnabled,
             loudnessBoostPercent = currentLoudnessBoostPercent
         )
@@ -548,6 +553,7 @@ class EqualizerAudioEngine(private val context: Context) {
         accommodationsSoftIntensity: SoftSoundIntensity = currentAccommodationsSoftIntensity,
         accommodationsApplyToMedia: Boolean = currentAccommodationsApplyToMedia,
         accommodationsApplyToVoice: Boolean = currentAccommodationsApplyToVoice,
+        accommodationsOutputGainDb: Float = currentAccommodationsOutputGainDb,
         loudnessMaximizerEnabled: Boolean = currentLoudnessMaximizerEnabled,
         loudnessBoostPercent: Float = currentLoudnessBoostPercent
     ) {
@@ -577,6 +583,10 @@ class EqualizerAudioEngine(private val context: Context) {
         currentAccommodationsSoftIntensity = accommodationsSoftIntensity
         currentAccommodationsApplyToMedia = accommodationsApplyToMedia
         currentAccommodationsApplyToVoice = accommodationsApplyToVoice
+        currentAccommodationsOutputGainDb = accommodationsOutputGainDb.coerceIn(
+            com.example.model.HeadphoneAccommodationsSpecs.OUTPUT_GAIN_MIN_DB,
+            com.example.model.HeadphoneAccommodationsSpecs.OUTPUT_GAIN_MAX_DB
+        )
         currentLoudnessMaximizerEnabled = loudnessMaximizerEnabled
         currentLoudnessBoostPercent = loudnessBoostPercent.coerceIn(0f, 1f)
 
@@ -623,6 +633,7 @@ class EqualizerAudioEngine(private val context: Context) {
             accommodationsToneProfile = accommodationsToneProfile,
             accommodationsSoftIntensity = accommodationsSoftIntensity,
             accommodationsApplyToMedia = accommodationsApplyToMedia,
+            accommodationsOutputGainDb = currentAccommodationsOutputGainDb,
             loudnessMaximizerEnabled = loudnessMaximizerEnabled,
             loudnessBoostPercent = currentLoudnessBoostPercent
         )
@@ -659,8 +670,8 @@ class EqualizerAudioEngine(private val context: Context) {
                             0f
                         }
                         val accommodationsMatchBoost = if (currentAccommodationsEnabled && currentAccommodationsApplyToMedia) {
-                            currentAccommodationsSoftIntensity.makeupGainDb * 0.65f +
-                                1.0f * currentAccommodationsSoftIntensity.eqScale
+                            (currentAccommodationsSoftIntensity.makeupGainDb + currentAccommodationsOutputGainDb) * 0.65f +
+                                0.8f * currentAccommodationsSoftIntensity.eqScale
                         } else {
                             0f
                         }
@@ -808,7 +819,11 @@ class EqualizerAudioEngine(private val context: Context) {
                             0f
                         }
                         val mbcMakeup = (if (currentLateNightEnabled) currentNightIntensity.makeupGainDb else 0f) +
-                            (if (accommodationsMediaActive) currentAccommodationsSoftIntensity.makeupGainDb else 0f) +
+                            (if (accommodationsMediaActive) {
+                                currentAccommodationsSoftIntensity.makeupGainDb + currentAccommodationsOutputGainDb
+                            } else {
+                                0f
+                            }) +
                             loudnessMakeupDb
 
                         mbc.setBand(
@@ -1126,6 +1141,7 @@ class EqualizerAudioEngine(private val context: Context) {
             accommodationsToneProfile = currentAccommodationsToneProfile,
             accommodationsSoftIntensity = currentAccommodationsSoftIntensity,
             accommodationsApplyToMedia = currentAccommodationsApplyToMedia,
+            accommodationsOutputGainDb = currentAccommodationsOutputGainDb,
             loudnessMaximizerEnabled = currentLoudnessMaximizerEnabled,
             loudnessBoostPercent = currentLoudnessBoostPercent
         )

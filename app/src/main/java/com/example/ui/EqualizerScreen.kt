@@ -325,7 +325,8 @@ private fun CompactConsoleLayout(
             onSelectSoftIntensity = viewModel::setAccommodationsSoftIntensity,
             onOpenCustomAudioSetup = viewModel::openCustomAudioSetup,
             onToggleApplyToMedia = viewModel::toggleAccommodationsMedia,
-            onToggleApplyToVoice = onToggleAccommodationsVoiceWithPermission
+            onToggleApplyToVoice = onToggleAccommodationsVoiceWithPermission,
+            onOutputGainChange = viewModel::updateAccommodationsOutputGain
         )
 
         EqualizerConsole(
@@ -522,7 +523,8 @@ private fun WideConsoleLayout(
                     onSelectSoftIntensity = viewModel::setAccommodationsSoftIntensity,
                     onOpenCustomAudioSetup = viewModel::openCustomAudioSetup,
                     onToggleApplyToMedia = viewModel::toggleAccommodationsMedia,
-                    onToggleApplyToVoice = onToggleAccommodationsVoiceWithPermission
+                    onToggleApplyToVoice = onToggleAccommodationsVoiceWithPermission,
+                    onOutputGainChange = viewModel::updateAccommodationsOutputGain
                 )
 
                 EqualizerConsole(

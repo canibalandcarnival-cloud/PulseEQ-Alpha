@@ -61,6 +61,7 @@ class EqPreferencesRepository(private val context: Context) {
         fun accommodationsSoftIntensityKey(target: OutputTarget) = stringPreferencesKey("acc_soft_${target.id}")
         fun accommodationsMediaKey(target: OutputTarget) = booleanPreferencesKey("acc_media_${target.id}")
         fun accommodationsVoiceKey(target: OutputTarget) = booleanPreferencesKey("acc_voice_${target.id}")
+        fun accommodationsOutputGainKey(target: OutputTarget) = floatPreferencesKey("acc_output_gain_${target.id}")
         fun loudnessMaxEnabledKey(target: OutputTarget) = booleanPreferencesKey("loudness_max_enabled_${target.id}")
         fun loudnessBoostPctKey(target: OutputTarget) = floatPreferencesKey("loudness_boost_pct_${target.id}")
     }
@@ -144,6 +145,11 @@ class EqPreferencesRepository(private val context: Context) {
                 } ?: com.example.model.SoftSoundIntensity.MODERATE,
                 accommodationsApplyToMedia = prefs[Keys.accommodationsMediaKey(target)] ?: true,
                 accommodationsApplyToVoice = prefs[Keys.accommodationsVoiceKey(target)] ?: false,
+                accommodationsOutputGainDb = (prefs[Keys.accommodationsOutputGainKey(target)] ?: 0f)
+                    .coerceIn(
+                        com.example.model.HeadphoneAccommodationsSpecs.OUTPUT_GAIN_MIN_DB,
+                        com.example.model.HeadphoneAccommodationsSpecs.OUTPUT_GAIN_MAX_DB
+                    ),
                 loudnessMaximizerEnabled = prefs[Keys.loudnessMaxEnabledKey(target)] ?: false,
                 loudnessBoostPercent = (prefs[Keys.loudnessBoostPctKey(target)] ?: 0.50f).coerceIn(0f, 1f)
             )
@@ -216,6 +222,11 @@ class EqPreferencesRepository(private val context: Context) {
             prefs[Keys.accommodationsSoftIntensityKey(profile.target)] = profile.accommodationsSoftIntensity.name
             prefs[Keys.accommodationsMediaKey(profile.target)] = profile.accommodationsApplyToMedia
             prefs[Keys.accommodationsVoiceKey(profile.target)] = profile.accommodationsApplyToVoice
+            prefs[Keys.accommodationsOutputGainKey(profile.target)] = profile.accommodationsOutputGainDb
+                .coerceIn(
+                    com.example.model.HeadphoneAccommodationsSpecs.OUTPUT_GAIN_MIN_DB,
+                    com.example.model.HeadphoneAccommodationsSpecs.OUTPUT_GAIN_MAX_DB
+                )
             prefs[Keys.loudnessMaxEnabledKey(profile.target)] = profile.loudnessMaximizerEnabled
             prefs[Keys.loudnessBoostPctKey(profile.target)] = profile.loudnessBoostPercent.coerceIn(0f, 1f)
         }

@@ -497,6 +497,21 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
         commitProfile(updated)
     }
 
+    fun updateAccommodationsOutputGain(rawDb: Float) {
+        val current = currentProfile()
+        val snapped = snapHalfDbRange(
+            rawDb,
+            com.example.model.HeadphoneAccommodationsSpecs.OUTPUT_GAIN_MIN_DB,
+            com.example.model.HeadphoneAccommodationsSpecs.OUTPUT_GAIN_MAX_DB
+        )
+        val updated = current.copy(
+            accommodationsOutputGainDb = snapped,
+            accommodationsEnabled = if (snapped > 0f) true else current.accommodationsEnabled,
+            isBypassed = if (snapped > 0f) false else current.isBypassed
+        )
+        commitProfile(updated)
+    }
+
     fun toggleLoudnessMaximizer() {
         val current = currentProfile()
         val enabling = !current.loudnessMaximizerEnabled
@@ -665,6 +680,7 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             accommodationsSoftIntensity = profile.accommodationsSoftIntensity,
             accommodationsApplyToMedia = profile.accommodationsApplyToMedia,
             accommodationsApplyToVoice = profile.accommodationsApplyToVoice,
+            accommodationsOutputGainDb = profile.accommodationsOutputGainDb,
             loudnessMaximizerEnabled = profile.loudnessMaximizerEnabled,
             loudnessBoostPercent = profile.loudnessBoostPercent
         )

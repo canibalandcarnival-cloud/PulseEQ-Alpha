@@ -378,9 +378,9 @@ class ExampleUnitTest {
     fun headphone_accommodations_tone_profiles_and_soft_sound_scaling_work_accurately() {
         val sampleRate = 44100
 
-        // 1. Balanced Tone @ Moderate (1.0x): boosts 1k (+1.5), 3k (+2.5), 8k (+3.0), 14k (+2.0)
-        val bal1k = com.example.audio.HeadphoneAccommodationsProcessor.computeResponseDbAt(
-            1000.0,
+        // 1. Balanced Tone @ Moderate (1.0x): -2 dB headroom cut @ 300Hz, boosts capped <= +3.0 dB
+        val bal300 = com.example.audio.HeadphoneAccommodationsProcessor.computeResponseDbAt(
+            300.0,
             com.example.model.AccommodationToneProfile.BALANCED_TONE,
             com.example.model.SoftSoundIntensity.MODERATE,
             sampleRate
@@ -391,12 +391,18 @@ class ExampleUnitTest {
             com.example.model.SoftSoundIntensity.MODERATE,
             sampleRate
         )
-        assertEquals(1.5f, bal1k, 0.45f)
-        assertEquals(3.0f, bal8k, 0.55f)
+        assertEquals(-2.0f, bal300, 0.5f)
+        assertTrue("Balanced 8kHz boost should be around +2.1 dB and <= +3.0 dB", bal8k in 1.5f..3.0f)
 
-        // 2. Vocal Range @ Moderate (1.0x): 100Hz HPF cuts 50Hz sub rumble, boosts 2.5kHz (+4.0dB)
+        // 2. Vocal Range @ Moderate (1.0x): 100Hz HPF cuts 50Hz rumble, -2.0 dB @ 250Hz, balanced boost @ 2.5kHz (<= +3.0 dB)
         val vocal50 = com.example.audio.HeadphoneAccommodationsProcessor.computeResponseDbAt(
             50.0,
+            com.example.model.AccommodationToneProfile.VOCAL_RANGE,
+            com.example.model.SoftSoundIntensity.MODERATE,
+            sampleRate
+        )
+        val vocal250 = com.example.audio.HeadphoneAccommodationsProcessor.computeResponseDbAt(
+            250.0,
             com.example.model.AccommodationToneProfile.VOCAL_RANGE,
             com.example.model.SoftSoundIntensity.MODERATE,
             sampleRate
@@ -408,9 +414,10 @@ class ExampleUnitTest {
             sampleRate
         )
         assertTrue("Vocal Range 100Hz HPF must strongly attenuate 50Hz rumble", vocal50 < -10f)
-        assertTrue("Vocal Range must lift 2.5kHz presence clearly", vocal2500 > 3.5f)
+        assertEquals(-2.0f, vocal250, 0.6f)
+        assertTrue("Vocal Range 2.5kHz lift should stay balanced <= +3.0 dB", vocal2500 in 1.6f..3.0f)
 
-        // 3. Brightness scaling: Slight (0.6x) < Moderate (1.0x) < Strong (1.4x) at 12kHz
+        // 3. Brightness scaling: Slight (0.6x) < Moderate (1.0x) < Strong (1.4x) at 12kHz, all <= +3.0 dB (+0.6 dB tolerance)
         val brightSlight = com.example.audio.HeadphoneAccommodationsProcessor.computeResponseDbAt(
             12000.0,
             com.example.model.AccommodationToneProfile.BRIGHTNESS,
@@ -431,57 +438,75 @@ class ExampleUnitTest {
         )
         assertTrue("Slight (0.6x) < Moderate (1.0x)", brightSlight < brightMod)
         assertTrue("Moderate (1.0x) < Strong (1.4x)", brightMod < brightStrong)
+        assertTrue("Brightness Strong 12kHz peak should stay balanced (<= +3.5 dB instead of +5.5 dB)", brightStrong <= 3.5f)
 
-        // 4. Boost Soft Sounds compressor thresholds & ratios match Apple spec
-        assertEquals(-30f, com.example.model.SoftSoundIntensity.SLIGHT.thresholdDb, 0.01f)
-        assertEquals(2.0f, com.example.model.SoftSoundIntensity.SLIGHT.ratio, 0.01f)
-        assertEquals(1.5f, com.example.model.SoftSoundIntensity.SLIGHT.makeupGainDb, 0.01f)
+        // 4. Boost Soft Sounds softened compressor thresholds, ratios, and increased makeup gain specs
+        assertEquals(-24f, com.example.model.SoftSoundIntensity.SLIGHT.thresholdDb, 0.01f)
+        assertEquals(1.8f, com.example.model.SoftSoundIntensity.SLIGHT.ratio, 0.01f)
+        assertEquals(3.5f, com.example.model.SoftSoundIntensity.SLIGHT.makeupGainDb, 0.01f)
 
-        assertEquals(-36f, com.example.model.SoftSoundIntensity.MODERATE.thresholdDb, 0.01f)
-        assertEquals(3.0f, com.example.model.SoftSoundIntensity.MODERATE.ratio, 0.01f)
-        assertEquals(3.0f, com.example.model.SoftSoundIntensity.MODERATE.makeupGainDb, 0.01f)
+        assertEquals(-28f, com.example.model.SoftSoundIntensity.MODERATE.thresholdDb, 0.01f)
+        assertEquals(2.2f, com.example.model.SoftSoundIntensity.MODERATE.ratio, 0.01f)
+        assertEquals(6.0f, com.example.model.SoftSoundIntensity.MODERATE.makeupGainDb, 0.01f)
 
-        assertEquals(-42f, com.example.model.SoftSoundIntensity.STRONG.thresholdDb, 0.01f)
-        assertEquals(4.0f, com.example.model.SoftSoundIntensity.STRONG.ratio, 0.01f)
-        assertEquals(4.5f, com.example.model.SoftSoundIntensity.STRONG.makeupGainDb, 0.01f)
+        assertEquals(-32f, com.example.model.SoftSoundIntensity.STRONG.thresholdDb, 0.01f)
+        assertEquals(2.6f, com.example.model.SoftSoundIntensity.STRONG.ratio, 0.01f)
+        assertEquals(8.5f, com.example.model.SoftSoundIntensity.STRONG.makeupGainDb, 0.01f)
 
-        // 5. BiquadEqFilterBank runs Headphone Accommodations when Apply to Media is true, skips when false
-        val mediaOnBank = BiquadEqFilterBank(sampleRate).apply {
+        // 5. Turning Accommodations ON increases perceived loudness on normal -18 dBFS music instead of making it quieter,
+        //    and Accommodations Output Gain (+0..+10 dB) dials in extra clean loudness
+        val accOffBank = BiquadEqFilterBank(sampleRate).apply {
+            updateParameters(
+                gainsDb = List(10) { 0f },
+                preampDb = 0f,
+                isBypassed = false,
+                accommodationsEnabled = false
+            )
+        }
+        val accModerateBank = BiquadEqFilterBank(sampleRate).apply {
             updateParameters(
                 gainsDb = List(10) { 0f },
                 preampDb = 0f,
                 isBypassed = false,
                 accommodationsEnabled = true,
-                accommodationsToneProfile = com.example.model.AccommodationToneProfile.BRIGHTNESS,
-                accommodationsSoftIntensity = com.example.model.SoftSoundIntensity.STRONG,
-                accommodationsApplyToMedia = true
+                accommodationsToneProfile = com.example.model.AccommodationToneProfile.BALANCED_TONE,
+                accommodationsSoftIntensity = com.example.model.SoftSoundIntensity.MODERATE,
+                accommodationsApplyToMedia = true,
+                accommodationsOutputGainDb = 0f
             )
         }
-        val mediaOffBank = BiquadEqFilterBank(sampleRate).apply {
+        val accBoostedBank = BiquadEqFilterBank(sampleRate).apply {
             updateParameters(
                 gainsDb = List(10) { 0f },
                 preampDb = 0f,
                 isBypassed = false,
                 accommodationsEnabled = true,
-                accommodationsToneProfile = com.example.model.AccommodationToneProfile.BRIGHTNESS,
-                accommodationsSoftIntensity = com.example.model.SoftSoundIntensity.STRONG,
-                accommodationsApplyToMedia = false
+                accommodationsToneProfile = com.example.model.AccommodationToneProfile.BALANCED_TONE,
+                accommodationsSoftIntensity = com.example.model.SoftSoundIntensity.MODERATE,
+                accommodationsApplyToMedia = true,
+                accommodationsOutputGainDb = 6.0f
             )
         }
-        var rmsOn = 0.0
         var rmsOff = 0.0
+        var rmsMod = 0.0
+        var rmsBoosted = 0.0
         for (i in 0 until 4410) {
-            val s = 0.003 * kotlin.math.sin(2.0 * Math.PI * 10000.0 * i / sampleRate) // quiet -50 dBFS detail
-            val (oOn, _) = mediaOnBank.processStereoSample(s, s)
-            val (oOff, _) = mediaOffBank.processStereoSample(s, s)
+            // Typical -18 dBFS 1 kHz track level
+            val s = 0.125 * kotlin.math.sin(2.0 * Math.PI * 1000.0 * i / sampleRate)
+            val (oOff, _) = accOffBank.processStereoSample(s, s)
+            val (oMod, _) = accModerateBank.processStereoSample(s, s)
+            val (oBoost, _) = accBoostedBank.processStereoSample(s, s)
             if (i > 2205) {
-                rmsOn += oOn * oOn
                 rmsOff += oOff * oOff
+                rmsMod += oMod * oMod
+                rmsBoosted += oBoost * oBoost
             }
         }
-        rmsOn = kotlin.math.sqrt(rmsOn / 2205)
         rmsOff = kotlin.math.sqrt(rmsOff / 2205)
-        assertTrue("Apply to Media=true should boost quiet -50 dBFS 10kHz detail strongly", rmsOn > rmsOff * 2.5)
+        rmsMod = kotlin.math.sqrt(rmsMod / 2205)
+        rmsBoosted = kotlin.math.sqrt(rmsBoosted / 2205)
+        assertTrue("Turning Accommodations ON must increase loudness on -18 dBFS audio (rmsMod=$rmsMod vs rmsOff=$rmsOff)", rmsMod > rmsOff * 1.15)
+        assertTrue("Accommodations Output Gain (+6 dB) should increase output further cleanly", rmsBoosted > rmsMod * 1.45)
     }
 
     @Test

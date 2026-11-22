@@ -602,6 +602,7 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         accommodationsToneProfile: AccommodationToneProfile = AccommodationToneProfile.BALANCED_TONE,
         accommodationsSoftIntensity: SoftSoundIntensity = SoftSoundIntensity.MODERATE,
         accommodationsApplyToMedia: Boolean = true,
+        accommodationsOutputGainDb: Float = 0f,
         loudnessMaximizerEnabled: Boolean = false,
         loudnessBoostPercent: Float = 0.50f
     ) {
@@ -615,7 +616,8 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         headphoneAccommodationsProcessor.configure(
             isEnabled = accommodationsEnabled && accommodationsApplyToMedia && effectiveProcessing,
             profile = accommodationsToneProfile,
-            intensity = accommodationsSoftIntensity
+            intensity = accommodationsSoftIntensity,
+            outputGainDb = accommodationsOutputGainDb
         )
         threeBandToneFilter.configure(
             isEnabled = threeBandEnabled && effectiveProcessing,
@@ -647,7 +649,8 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             0f
         }
         val accommodationsMatchBoost = if (accommodationsEnabled && accommodationsApplyToMedia) {
-            accommodationsSoftIntensity.makeupGainDb * 0.65f + 1.0f * accommodationsSoftIntensity.eqScale
+            (accommodationsSoftIntensity.makeupGainDb + accommodationsOutputGainDb) * 0.65f +
+                0.8f * accommodationsSoftIntensity.eqScale
         } else {
             0f
         }
@@ -798,6 +801,7 @@ class TestAudioSynthesizer {
         accommodationsToneProfile: AccommodationToneProfile = AccommodationToneProfile.BALANCED_TONE,
         accommodationsSoftIntensity: SoftSoundIntensity = SoftSoundIntensity.MODERATE,
         accommodationsApplyToMedia: Boolean = true,
+        accommodationsOutputGainDb: Float = 0f,
         loudnessMaximizerEnabled: Boolean = false,
         loudnessBoostPercent: Float = 0.50f
     ) {
@@ -827,6 +831,7 @@ class TestAudioSynthesizer {
             accommodationsToneProfile = accommodationsToneProfile,
             accommodationsSoftIntensity = accommodationsSoftIntensity,
             accommodationsApplyToMedia = accommodationsApplyToMedia,
+            accommodationsOutputGainDb = accommodationsOutputGainDb,
             loudnessMaximizerEnabled = loudnessMaximizerEnabled,
             loudnessBoostPercent = loudnessBoostPercent
         )

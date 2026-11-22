@@ -38,6 +38,7 @@ import kotlin.math.sqrt
 class HeadphoneAccommodationsProcessor(private val sampleRate: Int = 44100) {
 
     private val vocalHpf100 = StereoBiquad()
+    private val mudCutBand = StereoBiquad()
     private val eqBand1 = StereoBiquad()
     private val eqBand2 = StereoBiquad()
     private val eqBand3 = StereoBiquad()
@@ -51,6 +52,9 @@ class HeadphoneAccommodationsProcessor(private val sampleRate: Int = 44100) {
     @Volatile
     private var vocalHpfEnabled: Boolean = false
 
+    @Volatile
+    private var outputGainLinear: Double = 1.0
+
     val latestGainReductionDb: Float
         get() = if (enabled) softSoundCompressor.latestGainReductionDb else 0f
 
@@ -58,42 +62,52 @@ class HeadphoneAccommodationsProcessor(private val sampleRate: Int = 44100) {
         configure(
             isEnabled = false,
             profile = AccommodationToneProfile.BALANCED_TONE,
-            intensity = SoftSoundIntensity.MODERATE
+            intensity = SoftSoundIntensity.MODERATE,
+            outputGainDb = 0f
         )
     }
 
     fun configure(
         isEnabled: Boolean,
         profile: AccommodationToneProfile,
-        intensity: SoftSoundIntensity
+        intensity: SoftSoundIntensity,
+        outputGainDb: Float = 0f
     ) {
         enabled = isEnabled
         val scale = intensity.eqScale.toDouble()
+        val clampedOutDb = outputGainDb.coerceIn(
+            com.example.model.HeadphoneAccommodationsSpecs.OUTPUT_GAIN_MIN_DB,
+            com.example.model.HeadphoneAccommodationsSpecs.OUTPUT_GAIN_MAX_DB
+        )
+        outputGainLinear = Math.pow(10.0, clampedOutDb / 20.0)
 
         when (profile) {
             AccommodationToneProfile.BALANCED_TONE -> {
                 vocalHpfEnabled = false
-                eqBand1.setPeaking(sampleRate, 1000.0, 1.4, 1.5 * scale)
-                eqBand2.setPeaking(sampleRate, 3000.0, 1.4, 2.5 * scale)
-                eqBand3.setPeaking(sampleRate, 8000.0, 1.5, 3.0 * scale)
-                eqBand4.setPeaking(sampleRate, 14000.0, 1.5, 2.0 * scale)
+                mudCutBand.setPeaking(sampleRate, 300.0, 1.3, -2.0)
+                eqBand1.setPeaking(sampleRate, 1000.0, 1.4, (1.0 * scale).coerceAtMost(3.0))
+                eqBand2.setPeaking(sampleRate, 3000.0, 1.4, (1.8 * scale).coerceAtMost(3.0))
+                eqBand3.setPeaking(sampleRate, 8000.0, 1.5, (2.1 * scale).coerceAtMost(3.0))
+                eqBand4.setPeaking(sampleRate, 14000.0, 1.5, (1.5 * scale).coerceAtMost(3.0))
             }
 
             AccommodationToneProfile.VOCAL_RANGE -> {
                 vocalHpfEnabled = true
                 vocalHpf100.setHighPass(sampleRate, 100.0, 0.7071)
-                eqBand1.setPeaking(sampleRate, 250.0, 1.4, -2.0 * scale)
-                eqBand2.setPeaking(sampleRate, 1000.0, 1.4, 2.5 * scale)
-                eqBand3.setPeaking(sampleRate, 2500.0, 1.5, 4.0 * scale)
-                eqBand4.setPeaking(sampleRate, 4000.0, 1.5, 3.0 * scale)
+                mudCutBand.setPeaking(sampleRate, 250.0, 1.3, -2.0)
+                eqBand1.setPeaking(sampleRate, 1000.0, 1.4, (1.5 * scale).coerceAtMost(3.0))
+                eqBand2.setPeaking(sampleRate, 2500.0, 1.5, (2.1 * scale).coerceAtMost(3.0))
+                eqBand3.setPeaking(sampleRate, 4000.0, 1.5, (1.8 * scale).coerceAtMost(3.0))
+                eqBand4.setPeaking(sampleRate, 8000.0, 1.5, 0.0)
             }
 
             AccommodationToneProfile.BRIGHTNESS -> {
                 vocalHpfEnabled = false
-                eqBand1.setPeaking(sampleRate, 4000.0, 1.4, 2.5 * scale)
-                eqBand2.setPeaking(sampleRate, 8000.0, 1.5, 4.5 * scale)
-                eqBand3.setPeaking(sampleRate, 12000.0, 1.5, 5.5 * scale)
-                eqBand4.setPeaking(sampleRate, 16000.0, 1.5, 4.0 * scale)
+                mudCutBand.setPeaking(sampleRate, 300.0, 1.3, -2.0)
+                eqBand1.setPeaking(sampleRate, 4000.0, 2.4, (1.1 * scale).coerceAtMost(3.0))
+                eqBand2.setPeaking(sampleRate, 8000.0, 2.4, (1.4 * scale).coerceAtMost(3.0))
+                eqBand3.setPeaking(sampleRate, 12000.0, 2.4, (1.7 * scale).coerceAtMost(3.0))
+                eqBand4.setPeaking(sampleRate, 16000.0, 2.4, (1.3 * scale).coerceAtMost(3.0))
             }
         }
 
@@ -118,18 +132,34 @@ class HeadphoneAccommodationsProcessor(private val sampleRate: Int = 44100) {
             l = hpL
             r = hpR
         }
-        val (e1L, e1R) = eqBand1.processStereo(l, r)
+        val (cutL, cutR) = mudCutBand.processStereo(l, r)
+        val (e1L, e1R) = eqBand1.processStereo(cutL, cutR)
         val (e2L, e2R) = eqBand2.processStereo(e1L, e1R)
         val (e3L, e3R) = eqBand3.processStereo(e2L, e2R)
         val (e4L, e4R) = eqBand4.processStereo(e3L, e3R)
 
-        return softSoundCompressor.processStereoSample(e4L, e4R)
+        val (compL, compR) = softSoundCompressor.processStereoSample(e4L, e4R)
+        val outL = normalizePeakHeadroom(compL * outputGainLinear)
+        val outR = normalizePeakHeadroom(compR * outputGainLinear)
+        return outL to outR
+    }
+
+    private fun normalizePeakHeadroom(sample: Double): Double {
+        // Transparent below 0.86; smoothly rounds extreme HF transient peaks so final limiter never ducks overall loudness
+        val kneeStart = 0.86
+        val absVal = abs(sample)
+        if (absVal <= kneeStart) return sample
+        val excess = absVal - kneeStart
+        val headroom = 0.985 - kneeStart
+        val compressed = kneeStart + headroom * kotlin.math.tanh(excess / headroom)
+        return if (sample >= 0.0) compressed else -compressed
     }
 
     companion object {
         /**
          * Computes analytical EQ + HPF frequency response magnitude (in dB) for a given
-         * Tone Profile and Soft Sound Intensity scaling (0.6x / 1.0x / 1.4x).
+         * Tone Profile and Soft Sound Intensity scaling (0.6x / 1.0x / 1.4x),
+         * including the -2.0 dB 250Hz-350Hz headroom cut and +3.0 dB balanced boost ceiling.
          */
         fun computeResponseDbAt(
             freqHz: Double,
@@ -140,6 +170,7 @@ class HeadphoneAccommodationsProcessor(private val sampleRate: Int = 44100) {
             val scale = intensity.eqScale.toDouble()
             var totalDb = 0.0
 
+            val mud = StereoBiquad()
             val b1 = StereoBiquad()
             val b2 = StereoBiquad()
             val b3 = StereoBiquad()
@@ -147,29 +178,33 @@ class HeadphoneAccommodationsProcessor(private val sampleRate: Int = 44100) {
 
             when (profile) {
                 AccommodationToneProfile.BALANCED_TONE -> {
-                    b1.setPeaking(sampleRate, 1000.0, 1.4, 1.5 * scale)
-                    b2.setPeaking(sampleRate, 3000.0, 1.4, 2.5 * scale)
-                    b3.setPeaking(sampleRate, 8000.0, 1.5, 3.0 * scale)
-                    b4.setPeaking(sampleRate, 14000.0, 1.5, 2.0 * scale)
+                    mud.setPeaking(sampleRate, 300.0, 1.3, -2.0)
+                    b1.setPeaking(sampleRate, 1000.0, 1.4, (1.0 * scale).coerceAtMost(3.0))
+                    b2.setPeaking(sampleRate, 3000.0, 1.4, (1.8 * scale).coerceAtMost(3.0))
+                    b3.setPeaking(sampleRate, 8000.0, 1.5, (2.1 * scale).coerceAtMost(3.0))
+                    b4.setPeaking(sampleRate, 14000.0, 1.5, (1.5 * scale).coerceAtMost(3.0))
                 }
 
                 AccommodationToneProfile.VOCAL_RANGE -> {
                     val hpf = StereoBiquad().apply { setHighPass(sampleRate, 100.0, 0.7071) }
                     totalDb += hpf.magnitudeDbAt(sampleRate, freqHz).coerceAtLeast(-14.0)
-                    b1.setPeaking(sampleRate, 250.0, 1.4, -2.0 * scale)
-                    b2.setPeaking(sampleRate, 1000.0, 1.4, 2.5 * scale)
-                    b3.setPeaking(sampleRate, 2500.0, 1.5, 4.0 * scale)
-                    b4.setPeaking(sampleRate, 4000.0, 1.5, 3.0 * scale)
+                    mud.setPeaking(sampleRate, 250.0, 1.3, -2.0)
+                    b1.setPeaking(sampleRate, 1000.0, 1.4, (1.5 * scale).coerceAtMost(3.0))
+                    b2.setPeaking(sampleRate, 2500.0, 1.5, (2.1 * scale).coerceAtMost(3.0))
+                    b3.setPeaking(sampleRate, 4000.0, 1.5, (1.8 * scale).coerceAtMost(3.0))
+                    b4.setPeaking(sampleRate, 8000.0, 1.5, 0.0)
                 }
 
                 AccommodationToneProfile.BRIGHTNESS -> {
-                    b1.setPeaking(sampleRate, 4000.0, 1.4, 2.5 * scale)
-                    b2.setPeaking(sampleRate, 8000.0, 1.5, 4.5 * scale)
-                    b3.setPeaking(sampleRate, 12000.0, 1.5, 5.5 * scale)
-                    b4.setPeaking(sampleRate, 16000.0, 1.5, 4.0 * scale)
+                    mud.setPeaking(sampleRate, 300.0, 1.3, -2.0)
+                    b1.setPeaking(sampleRate, 4000.0, 2.4, (1.1 * scale).coerceAtMost(3.0))
+                    b2.setPeaking(sampleRate, 8000.0, 2.4, (1.4 * scale).coerceAtMost(3.0))
+                    b3.setPeaking(sampleRate, 12000.0, 2.4, (1.7 * scale).coerceAtMost(3.0))
+                    b4.setPeaking(sampleRate, 16000.0, 2.4, (1.3 * scale).coerceAtMost(3.0))
                 }
             }
 
+            totalDb += mud.magnitudeDbAt(sampleRate, freqHz)
             totalDb += b1.magnitudeDbAt(sampleRate, freqHz)
             totalDb += b2.magnitudeDbAt(sampleRate, freqHz)
             totalDb += b3.magnitudeDbAt(sampleRate, freqHz)

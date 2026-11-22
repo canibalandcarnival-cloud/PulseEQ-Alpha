@@ -126,20 +126,20 @@ enum class AccommodationToneProfile(
     BALANCED_TONE(
         id = "balanced_tone",
         label = "Balanced Tone",
-        shortSummary = "Gentle wide-range presence & air",
-        detailBadge = "1k +1.5 • 3k +2.5 • 8k +3 • 14k +2 dB"
+        shortSummary = "Balanced presence & headroom-safe air",
+        detailBadge = "300Hz -2 • 1k +1.0 • 3k +1.8 • 8k +2.1 • 14k +1.5 dB"
     ),
     VOCAL_RANGE(
         id = "vocal_range",
         label = "Vocal Range",
         shortSummary = "Speech clarity & 100Hz rumble cut",
-        detailBadge = "100Hz HPF • 250Hz -2 • 1k..4k +2.5/+4/+3 dB"
+        detailBadge = "100Hz HPF • 250Hz -2 • 1k +1.5 • 2.5k +2.1 • 4k +1.8 dB"
     ),
     BRIGHTNESS(
         id = "brightness",
         label = "Brightness",
-        shortSummary = "Strong high-frequency air & detail",
-        detailBadge = "4k +2.5 • 8k +4.5 • 12k +5.5 • 16k +4 dB"
+        shortSummary = "Headroom-normalized high-frequency air",
+        detailBadge = "300Hz -2 • 4k +1.1 • 8k +1.4 • 12k +1.7 • 16k +1.3 dB"
     )
 }
 
@@ -156,28 +156,28 @@ enum class SoftSoundIntensity(
         id = "slight",
         label = "Slight",
         eqScale = 0.6f,
-        thresholdDb = -30f,
-        ratio = 2.0f,
+        thresholdDb = -24f,
+        ratio = 1.8f,
         kneeDb = 20f,
-        makeupGainDb = 1.5f
+        makeupGainDb = 3.5f
     ),
     MODERATE(
         id = "moderate",
         label = "Moderate",
         eqScale = 1.0f,
-        thresholdDb = -36f,
-        ratio = 3.0f,
+        thresholdDb = -28f,
+        ratio = 2.2f,
         kneeDb = 20f,
-        makeupGainDb = 3.0f
+        makeupGainDb = 6.0f
     ),
     STRONG(
         id = "strong",
         label = "Strong",
         eqScale = 1.4f,
-        thresholdDb = -42f,
-        ratio = 4.0f,
+        thresholdDb = -32f,
+        ratio = 2.6f,
         kneeDb = 15f,
-        makeupGainDb = 4.5f
+        makeupGainDb = 8.5f
     )
 }
 
@@ -256,6 +256,7 @@ data class OutputEqProfile(
     val accommodationsSoftIntensity: SoftSoundIntensity = SoftSoundIntensity.MODERATE,
     val accommodationsApplyToMedia: Boolean = true,
     val accommodationsApplyToVoice: Boolean = false,
+    val accommodationsOutputGainDb: Float = 0f,
     val loudnessMaximizerEnabled: Boolean = false,
     val loudnessBoostPercent: Float = 0.50f
 ) {
@@ -330,6 +331,12 @@ object LoudnessMaximizerSpecs {
     const val BRICKWALL_KNEE_DB = 0.0f
     const val BRICKWALL_ATTACK_MS = 0.5f
     const val BRICKWALL_RELEASE_MS = 40.0f
+}
+
+object HeadphoneAccommodationsSpecs {
+    const val OUTPUT_GAIN_MIN_DB = 0f
+    const val OUTPUT_GAIN_MAX_DB = 10f
+    const val MAX_PROFILE_BOOST_DB = 3.0f
 }
 
 object EqPresetsCatalog {

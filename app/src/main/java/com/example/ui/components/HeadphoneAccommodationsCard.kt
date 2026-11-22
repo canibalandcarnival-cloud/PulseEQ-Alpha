@@ -25,6 +25,8 @@ import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -52,6 +54,7 @@ import com.example.audio.HeadphoneAccommodationsProcessor
 import com.example.model.AccommodationToneProfile
 import com.example.model.AudioLabTelemetry
 import com.example.model.EqPresetsCatalog
+import com.example.model.HeadphoneAccommodationsSpecs
 import com.example.model.OutputEqProfile
 import com.example.model.SoftSoundIntensity
 import com.example.ui.theme.AppleBlue
@@ -81,6 +84,7 @@ fun HeadphoneAccommodationsCard(
     onOpenCustomAudioSetup: () -> Unit,
     onToggleApplyToMedia: () -> Unit,
     onToggleApplyToVoice: () -> Unit,
+    onOutputGainChange: (Float) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val active = profile.accommodationsEnabled && !profile.isBypassed
@@ -371,7 +375,7 @@ fun HeadphoneAccommodationsCard(
                 Text(
                     text = String.format(
                         Locale.US,
-                        "%.0fdB • %.0f:1 • %+.1fdB • %.1fx EQ",
+                        "%.0fdB • %.1f:1 • +%.1fdB • %.1fx EQ",
                         softSpec.thresholdDb,
                         softSpec.ratio,
                         softSpec.makeupGainDb,
@@ -450,6 +454,103 @@ fun HeadphoneAccommodationsCard(
                     ),
                     style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
                     color = AppleMint
+                )
+            }
+        }
+
+        // 3b. Dedicated Accommodations Output Gain / Clarity Boost Slider (+0 dB to +10 dB)
+        val clampedOutGainDb = profile.accommodationsOutputGainDb.coerceIn(
+            HeadphoneAccommodationsSpecs.OUTPUT_GAIN_MIN_DB,
+            HeadphoneAccommodationsSpecs.OUTPUT_GAIN_MAX_DB
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(AppleGlassTile.copy(alpha = 0.72f))
+                .border(1.dp, AppleGlassBorder.copy(alpha = 0.7f), RoundedCornerShape(14.dp))
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "Accommodations Output Gain",
+                        style = MaterialTheme.typography.labelLarge.copy(
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.SemiBold
+                        ),
+                        color = TextPrimary
+                    )
+                    Text(
+                        text = "Clarity Boost after compressor (+makeup ${
+                            String.format(Locale.US, "+%.1f", profile.accommodationsSoftIntensity.makeupGainDb)
+                        } dB)",
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                        color = TextSecondary
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (active && clampedOutGainDb > 0f) AppleMintSoft else StudioSurfaceElevated)
+                        .border(
+                            1.dp,
+                            if (active && clampedOutGainDb > 0f) AppleMint.copy(alpha = 0.6f) else AppleGlassBorder,
+                            RoundedCornerShape(8.dp)
+                        )
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                ) {
+                    Text(
+                        text = String.format(Locale.US, "+%.1f dB", clampedOutGainDb),
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = if (active && clampedOutGainDb > 0f) AppleMint else TextPrimary
+                    )
+                }
+            }
+
+            Slider(
+                value = clampedOutGainDb,
+                onValueChange = onOutputGainChange,
+                valueRange = HeadphoneAccommodationsSpecs.OUTPUT_GAIN_MIN_DB..HeadphoneAccommodationsSpecs.OUTPUT_GAIN_MAX_DB,
+                colors = SliderDefaults.colors(
+                    thumbColor = if (active) AppleMint else TextSecondary,
+                    activeTrackColor = if (active) AppleMint else TextMuted,
+                    inactiveTrackColor = StudioSurfaceElevated
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("accommodations_output_gain_slider")
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "+0 dB",
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                    color = TextMuted,
+                    modifier = Modifier.clickable { onOutputGainChange(0f) }
+                )
+                Text(
+                    text = "+5 dB",
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                    color = TextMuted,
+                    modifier = Modifier.clickable { onOutputGainChange(5f) }
+                )
+                Text(
+                    text = "+10 dB",
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                    color = TextMuted,
+                    modifier = Modifier.clickable { onOutputGainChange(10f) }
                 )
             }
         }
