@@ -12,13 +12,16 @@ import android.media.audiofx.Visualizer
 import android.os.Build
 import androidx.core.content.ContextCompat
 import com.example.AudioSessionRegistry
+import com.example.model.AccommodationToneProfile
 import com.example.model.AudioLabTelemetry
 import com.example.model.BackgroundSoundPreset
 import com.example.model.ConnectedDeviceState
+import com.example.model.CustomAudioSetupUiState
 import com.example.model.EqPresetsCatalog
 import com.example.model.HearingCheckUiState
 import com.example.model.NightIntensity
 import com.example.model.OutputTarget
+import com.example.model.SoftSoundIntensity
 import com.example.model.SpatialMode
 import com.example.model.TestAudioSource
 import com.example.model.VisualizerFrame
@@ -72,6 +75,7 @@ class EqualizerAudioEngine(private val context: Context) {
 
     val testSynthesizer = TestAudioSynthesizer()
     val audiogramEngine = AudiogramCheckEngine()
+    val customAudioSetupEngine = CustomAudioSetupAuditionEngine()
     private val standaloneBackgroundPlayer = StandaloneBackgroundAudioPlayer()
 
     private val sessionEffects = ConcurrentHashMap<Int, SessionEffect>()
@@ -93,6 +97,7 @@ class EqualizerAudioEngine(private val context: Context) {
     val audioLabTelemetry: StateFlow<AudioLabTelemetry> = _audioLabTelemetry.asStateFlow()
 
     val hearingCheckState: StateFlow<HearingCheckUiState> = audiogramEngine.state
+    val customAudioSetupState: StateFlow<CustomAudioSetupUiState> = customAudioSetupEngine.state
 
     private val _abCompareHeld = MutableStateFlow(false)
     val abCompareHeld: StateFlow<Boolean> = _abCompareHeld.asStateFlow()
@@ -199,10 +204,37 @@ class EqualizerAudioEngine(private val context: Context) {
         private set
 
     @Volatile
+    var currentAccommodationsEnabled: Boolean = false
+        private set
+
+    @Volatile
+    var currentAccommodationsToneProfile: AccommodationToneProfile = AccommodationToneProfile.BALANCED_TONE
+        private set
+
+    @Volatile
+    var currentAccommodationsSoftIntensity: SoftSoundIntensity = SoftSoundIntensity.MODERATE
+        private set
+
+    @Volatile
+    var currentAccommodationsApplyToMedia: Boolean = true
+        private set
+
+    @Volatile
+    var currentAccommodationsApplyToVoice: Boolean = false
+        private set
+
+    @Volatile
     private var systemSoundCheckTrimDb: Float = 0f
 
     @Volatile
     private var currentDuckGainLinear: Float = 1f
+
+    private val voiceMicMonitor = VoiceMicAccommodationsMonitor { active, levelDb ->
+        _audioLabTelemetry.value = _audioLabTelemetry.value.copy(
+            voiceMicMonitorActive = active,
+            voiceMicLevelDb = levelDb
+        )
+    }
 
     private val conversationMonitor = ConversationAwarenessMonitor { speechDetected, duckGain ->
         currentDuckGainLinear = duckGain
@@ -257,7 +289,8 @@ class EqualizerAudioEngine(private val context: Context) {
                     _audioLabTelemetry.value = _audioLabTelemetry.value.copy(
                         inputLufs = testSynthesizer.latestInputLufs,
                         soundCheckTrimDb = testSynthesizer.latestSoundCheckTrimDb,
-                        voiceGateAttenuationDb = testSynthesizer.latestVoiceGateDb
+                        voiceGateAttenuationDb = testSynthesizer.latestVoiceGateDb,
+                        accommodationsGrDb = testSynthesizer.latestAccommodationsGrDb
                     )
                     synthFrame
                 } else {
@@ -280,6 +313,12 @@ class EqualizerAudioEngine(private val context: Context) {
         _hasAudioPermission.value = granted
         refreshSystemVisualizer()
         conversationMonitor.setEnabled(currentConversationAwarenessEnabled, granted)
+        voiceMicMonitor.configure(
+            enabled = currentAccommodationsEnabled && currentAccommodationsApplyToVoice && !currentBypassed,
+            profile = currentAccommodationsToneProfile,
+            intensity = currentAccommodationsSoftIntensity,
+            hasRecordPermission = granted
+        )
     }
 
     fun setAbCompareHeld(held: Boolean) {
@@ -306,7 +345,12 @@ class EqualizerAudioEngine(private val context: Context) {
             threeBandEnabled = currentThreeBandEnabled,
             threeBandBassDb = currentThreeBandBassDb,
             threeBandMidsDb = currentThreeBandMidsDb,
-            threeBandTrebleDb = currentThreeBandTrebleDb
+            threeBandTrebleDb = currentThreeBandTrebleDb,
+            accommodationsEnabled = currentAccommodationsEnabled,
+            accommodationsToneProfile = currentAccommodationsToneProfile,
+            accommodationsSoftIntensity = currentAccommodationsSoftIntensity,
+            accommodationsApplyToMedia = currentAccommodationsApplyToMedia,
+            accommodationsApplyToVoice = currentAccommodationsApplyToVoice
         )
     }
 
@@ -484,7 +528,12 @@ class EqualizerAudioEngine(private val context: Context) {
         threeBandEnabled: Boolean = currentThreeBandEnabled,
         threeBandBassDb: Float = currentThreeBandBassDb,
         threeBandMidsDb: Float = currentThreeBandMidsDb,
-        threeBandTrebleDb: Float = currentThreeBandTrebleDb
+        threeBandTrebleDb: Float = currentThreeBandTrebleDb,
+        accommodationsEnabled: Boolean = currentAccommodationsEnabled,
+        accommodationsToneProfile: AccommodationToneProfile = currentAccommodationsToneProfile,
+        accommodationsSoftIntensity: SoftSoundIntensity = currentAccommodationsSoftIntensity,
+        accommodationsApplyToMedia: Boolean = currentAccommodationsApplyToMedia,
+        accommodationsApplyToVoice: Boolean = currentAccommodationsApplyToVoice
     ) {
         currentTarget = target
         currentGainsDb = gainsDb
@@ -507,11 +556,23 @@ class EqualizerAudioEngine(private val context: Context) {
         currentThreeBandBassDb = threeBandBassDb
         currentThreeBandMidsDb = threeBandMidsDb
         currentThreeBandTrebleDb = threeBandTrebleDb
+        currentAccommodationsEnabled = accommodationsEnabled
+        currentAccommodationsToneProfile = accommodationsToneProfile
+        currentAccommodationsSoftIntensity = accommodationsSoftIntensity
+        currentAccommodationsApplyToMedia = accommodationsApplyToMedia
+        currentAccommodationsApplyToVoice = accommodationsApplyToVoice
 
         val isSpeakerDspActive = (target == OutputTarget.SPEAKER) && speakerDspEnabled
         val isAbHeld = _abCompareHeld.value
+        val hasMicPerm = checkAudioPermission()
 
-        conversationMonitor.setEnabled(conversationAwarenessEnabled, checkAudioPermission())
+        conversationMonitor.setEnabled(conversationAwarenessEnabled, hasMicPerm)
+        voiceMicMonitor.configure(
+            enabled = accommodationsEnabled && accommodationsApplyToVoice && !isBypassed,
+            profile = accommodationsToneProfile,
+            intensity = accommodationsSoftIntensity,
+            hasRecordPermission = hasMicPerm
+        )
         standaloneBackgroundPlayer.update(
             preset = bgSoundPreset,
             volume = bgSoundVolume,
@@ -539,7 +600,11 @@ class EqualizerAudioEngine(private val context: Context) {
             threeBandEnabled = threeBandEnabled,
             threeBandBassDb = threeBandBassDb,
             threeBandMidsDb = threeBandMidsDb,
-            threeBandTrebleDb = threeBandTrebleDb
+            threeBandTrebleDb = threeBandTrebleDb,
+            accommodationsEnabled = accommodationsEnabled,
+            accommodationsToneProfile = accommodationsToneProfile,
+            accommodationsSoftIntensity = accommodationsSoftIntensity,
+            accommodationsApplyToMedia = accommodationsApplyToMedia
         )
         applyToAllSessions()
     }
@@ -573,9 +638,15 @@ class EqualizerAudioEngine(private val context: Context) {
                         } else {
                             0f
                         }
+                        val accommodationsMatchBoost = if (currentAccommodationsEnabled && currentAccommodationsApplyToMedia) {
+                            currentAccommodationsSoftIntensity.makeupGainDb * 0.65f +
+                                1.0f * currentAccommodationsSoftIntensity.eqScale
+                        } else {
+                            0f
+                        }
                         val matchGainDb = AudiogramCheckEngine.computeLoudnessMatchGainDb(
                             bandGainsDb = currentGainsDb,
-                            preampDb = currentPreampDb + threeBandAvg,
+                            preampDb = currentPreampDb + threeBandAvg + accommodationsMatchBoost,
                             lateNightEnabled = currentLateNightEnabled,
                             nightIntensity = currentNightIntensity,
                             target = currentTarget,
@@ -593,6 +664,7 @@ class EqualizerAudioEngine(private val context: Context) {
                         dp.setMbcAllChannelsTo(DynamicsProcessing.Mbc(true, false, 1))
                         dp.setLimiterAllChannelsTo(DynamicsProcessing.Limiter(true, true, 0, 1.0f, 60.0f, 10.0f, -0.5f, 0.0f))
                     } else if (!currentBypassed) {
+                        val accommodationsMediaActive = currentAccommodationsEnabled && currentAccommodationsApplyToMedia
                         val scGain = if (currentSoundCheckEnabled) systemSoundCheckTrimDb else 0f
                         dp.setInputGainAllChannelsTo(currentPreampDb + scGain + duckDb)
                         for (i in 0 until 10) {
@@ -608,7 +680,16 @@ class EqualizerAudioEngine(private val context: Context) {
                             } else {
                                 0f
                             }
-                            val combinedGain = (tenBandGain + toneOffset).coerceIn(-15f, 15f)
+                            val accommodationsOffset = if (accommodationsMediaActive) {
+                                HeadphoneAccommodationsProcessor.computeResponseDbAt(
+                                    freqHz = EqPresetsCatalog.BANDS[i].frequencyHz.toDouble(),
+                                    profile = currentAccommodationsToneProfile,
+                                    intensity = currentAccommodationsSoftIntensity
+                                )
+                            } else {
+                                0f
+                            }
+                            val combinedGain = (tenBandGain + toneOffset + accommodationsOffset).coerceIn(-15f, 15f)
                             dp.setPreEqBandAllChannelsTo(
                                 i,
                                 DynamicsProcessing.EqBand(true, bandUpperCutoffsHz[i], combinedGain)
@@ -658,23 +739,43 @@ class EqualizerAudioEngine(private val context: Context) {
                         }
                         dp.setPostEqAllChannelsTo(postEq)
 
-                        // Mbc stage: Late Night 4:1 compressor OR Voice Isolation -38dB downward gate
-                        val compEnabled = currentLateNightEnabled
+                        // Mbc stage: Late Night 4:1 compressor OR Boost Soft Sounds OR Voice Isolation -38dB downward gate
+                        val compEnabled = currentLateNightEnabled || accommodationsMediaActive
                         val mbc = DynamicsProcessing.Mbc(true, compEnabled, 1)
+                        val mbcAttack = if (currentLateNightEnabled) currentNightIntensity.attackMs else 8f
+                        val mbcRelease = if (currentLateNightEnabled) currentNightIntensity.releaseMs else 160f
+                        val mbcRatio = if (currentLateNightEnabled) {
+                            maxOf(currentNightIntensity.ratio, if (accommodationsMediaActive) currentAccommodationsSoftIntensity.ratio else 1f)
+                        } else {
+                            currentAccommodationsSoftIntensity.ratio
+                        }
+                        val mbcThreshold = if (currentLateNightEnabled) {
+                            currentNightIntensity.thresholdDb
+                        } else {
+                            currentAccommodationsSoftIntensity.thresholdDb
+                        }
+                        val mbcKnee = if (currentLateNightEnabled) {
+                            currentNightIntensity.kneeDb
+                        } else {
+                            currentAccommodationsSoftIntensity.kneeDb
+                        }
+                        val mbcMakeup = (if (currentLateNightEnabled) currentNightIntensity.makeupGainDb else 0f) +
+                            (if (accommodationsMediaActive) currentAccommodationsSoftIntensity.makeupGainDb else 0f)
+
                         mbc.setBand(
                             0,
                             DynamicsProcessing.MbcBand(
                                 compEnabled,
                                 22000f,
-                                currentNightIntensity.attackMs,
-                                currentNightIntensity.releaseMs,
-                                currentNightIntensity.ratio,
-                                currentNightIntensity.thresholdDb,
-                                currentNightIntensity.kneeDb,
+                                mbcAttack,
+                                mbcRelease,
+                                mbcRatio,
+                                mbcThreshold,
+                                mbcKnee,
                                 if (currentVoiceIsolationEnabled) -38f else -90f,
                                 if (currentVoiceIsolationEnabled) 3.2f else 1f,
                                 0f,
-                                if (compEnabled) currentNightIntensity.makeupGainDb else 0f
+                                if (compEnabled) mbcMakeup else 0f
                             )
                         )
                         dp.setMbcAllChannelsTo(mbc)
@@ -733,12 +834,14 @@ class EqualizerAudioEngine(private val context: Context) {
         }
 
         val sessionCount = AudioSessionRegistry.activeSessions.value.size
+        val accMediaActive = effectiveActive && currentAccommodationsEnabled && currentAccommodationsApplyToMedia
         _dspStatusLabel.value = when {
             isAbHeld -> "A/B Compare: Original"
             currentBypassed -> "DSP Bypassed"
             currentVoiceIsolationEnabled -> "Voice Isolation"
             isSpatialActive && currentTarget == OutputTarget.SPEAKER -> "Speaker XTC Spatial"
             isSpatialActive -> "Spatial ${currentSpatialMode.label}"
+            accMediaActive -> "Accommodations • ${currentAccommodationsToneProfile.label}"
             isSpeakerDspActive && currentLateNightEnabled -> "Speaker DSP + Late Night"
             isSpeakerDspActive -> "iPhone Speaker DSP"
             anyDpActive && sessionCount > 0 -> {
@@ -929,7 +1032,11 @@ class EqualizerAudioEngine(private val context: Context) {
             threeBandEnabled = currentThreeBandEnabled,
             threeBandBassDb = currentThreeBandBassDb,
             threeBandMidsDb = currentThreeBandMidsDb,
-            threeBandTrebleDb = currentThreeBandTrebleDb
+            threeBandTrebleDb = currentThreeBandTrebleDb,
+            accommodationsEnabled = currentAccommodationsEnabled,
+            accommodationsToneProfile = currentAccommodationsToneProfile,
+            accommodationsSoftIntensity = currentAccommodationsSoftIntensity,
+            accommodationsApplyToMedia = currentAccommodationsApplyToMedia
         )
     }
 
@@ -953,8 +1060,10 @@ class EqualizerAudioEngine(private val context: Context) {
         } catch (_: Throwable) {
         }
         conversationMonitor.stop()
+        voiceMicMonitor.stop()
         standaloneBackgroundPlayer.stop()
         audiogramEngine.stopTone()
+        customAudioSetupEngine.stopAuditionLoop()
         releaseSystemVisualizer()
         testSynthesizer.stop()
         releaseAllSessions()

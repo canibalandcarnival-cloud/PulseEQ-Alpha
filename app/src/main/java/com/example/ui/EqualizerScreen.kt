@@ -51,7 +51,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.model.OutputTarget
 import com.example.ui.components.AudioRoutingServiceCard
 import com.example.ui.components.AudioVisualizerPanel
+import com.example.ui.components.CustomAudioSetupDialog
 import com.example.ui.components.EqualizerConsole
+import com.example.ui.components.HeadphoneAccommodationsCard
 import com.example.ui.components.HearingCheckDialog
 import com.example.ui.components.IosAudioLabCard
 import com.example.ui.components.LateNightDynamicsCard
@@ -96,6 +98,15 @@ fun EqualizerScreen(
         viewModel.onAudioPermissionResult(granted)
         if (granted && !uiState.activeProfile.conversationAwarenessEnabled) {
             viewModel.toggleConversationAwareness()
+        }
+    }
+
+    val accommodationsVoiceMicLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        viewModel.onAudioPermissionResult(granted)
+        if (granted && !uiState.activeProfile.accommodationsApplyToVoice) {
+            viewModel.toggleAccommodationsVoice()
         }
     }
 
@@ -165,6 +176,17 @@ fun EqualizerScreen(
                             } else {
                                 conversationMicLauncher.launch(Manifest.permission.RECORD_AUDIO)
                             }
+                        },
+                        onToggleAccommodationsVoiceWithPermission = {
+                            val micGranted = ContextCompat.checkSelfPermission(
+                                context,
+                                Manifest.permission.RECORD_AUDIO
+                            ) == PackageManager.PERMISSION_GRANTED
+                            if (micGranted || uiState.activeProfile.accommodationsApplyToVoice) {
+                                viewModel.toggleAccommodationsVoice()
+                            } else {
+                                accommodationsVoiceMicLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            }
                         }
                     )
                 } else {
@@ -184,6 +206,17 @@ fun EqualizerScreen(
                                 viewModel.toggleConversationAwareness()
                             } else {
                                 conversationMicLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            }
+                        },
+                        onToggleAccommodationsVoiceWithPermission = {
+                            val micGranted = ContextCompat.checkSelfPermission(
+                                context,
+                                Manifest.permission.RECORD_AUDIO
+                            ) == PackageManager.PERMISSION_GRANTED
+                            if (micGranted || uiState.activeProfile.accommodationsApplyToVoice) {
+                                viewModel.toggleAccommodationsVoice()
+                            } else {
+                                accommodationsVoiceMicLauncher.launch(Manifest.permission.RECORD_AUDIO)
                             }
                         }
                     )
@@ -207,6 +240,16 @@ fun EqualizerScreen(
         onCancel = viewModel::cancelHearingCheck,
         onApplyCurve = viewModel::applyAudiogramCurve
     )
+
+    CustomAudioSetupDialog(
+        state = uiState.customAudioSetupState,
+        onSelectAuditionSlot = viewModel::selectCustomSetupAudition,
+        onSelectIntensity = viewModel::selectCustomSetupIntensity,
+        onChooseWinner = viewModel::pickCustomSetupWinner,
+        onRestart = viewModel::restartCustomAudioSetup,
+        onApply = viewModel::applyCustomAudioSetupResult,
+        onClose = viewModel::closeCustomAudioSetup
+    )
 }
 
 @Composable
@@ -215,7 +258,8 @@ private fun CompactConsoleLayout(
     viewModel: EqualizerViewModel,
     onOpenPresetsSheet: () -> Unit,
     onRequestAudioPermission: () -> Unit,
-    onToggleConversationWithPermission: () -> Unit
+    onToggleConversationWithPermission: () -> Unit,
+    onToggleAccommodationsVoiceWithPermission: () -> Unit
 ) {
     val profile = uiState.activeProfile
 
@@ -254,7 +298,11 @@ private fun CompactConsoleLayout(
             threeBandEnabled = profile.threeBandEnabled,
             threeBandBassDb = profile.threeBandBassDb,
             threeBandMidsDb = profile.threeBandMidsDb,
-            threeBandTrebleDb = profile.threeBandTrebleDb
+            threeBandTrebleDb = profile.threeBandTrebleDb,
+            accommodationsEnabled = profile.accommodationsEnabled,
+            accommodationsToneProfile = profile.accommodationsToneProfile,
+            accommodationsSoftIntensity = profile.accommodationsSoftIntensity,
+            accommodationsApplyToMedia = profile.accommodationsApplyToMedia
         )
 
         MasterActionBar(
@@ -263,6 +311,18 @@ private fun CompactConsoleLayout(
             onToggleBypass = viewModel::toggleBypass,
             onReset = viewModel::resetToFlat,
             onOpenPresetsSheet = onOpenPresetsSheet
+        )
+
+        HeadphoneAccommodationsCard(
+            profile = profile,
+            telemetry = uiState.audioLabTelemetry,
+            hasAudioPermission = uiState.hasAudioPermission,
+            onToggleEnabled = viewModel::toggleHeadphoneAccommodations,
+            onSelectToneProfile = viewModel::setAccommodationsToneProfile,
+            onSelectSoftIntensity = viewModel::setAccommodationsSoftIntensity,
+            onOpenCustomAudioSetup = viewModel::openCustomAudioSetup,
+            onToggleApplyToMedia = viewModel::toggleAccommodationsMedia,
+            onToggleApplyToVoice = onToggleAccommodationsVoiceWithPermission
         )
 
         EqualizerConsole(
@@ -356,7 +416,8 @@ private fun WideConsoleLayout(
     viewModel: EqualizerViewModel,
     onOpenPresetsSheet: () -> Unit,
     onRequestAudioPermission: () -> Unit,
-    onToggleConversationWithPermission: () -> Unit
+    onToggleConversationWithPermission: () -> Unit,
+    onToggleAccommodationsVoiceWithPermission: () -> Unit
 ) {
     val profile = uiState.activeProfile
 
@@ -404,7 +465,11 @@ private fun WideConsoleLayout(
                     threeBandEnabled = profile.threeBandEnabled,
                     threeBandBassDb = profile.threeBandBassDb,
                     threeBandMidsDb = profile.threeBandMidsDb,
-                    threeBandTrebleDb = profile.threeBandTrebleDb
+                    threeBandTrebleDb = profile.threeBandTrebleDb,
+                    accommodationsEnabled = profile.accommodationsEnabled,
+                    accommodationsToneProfile = profile.accommodationsToneProfile,
+                    accommodationsSoftIntensity = profile.accommodationsSoftIntensity,
+                    accommodationsApplyToMedia = profile.accommodationsApplyToMedia
                 )
 
                 PresetQuickStrip(
@@ -431,6 +496,18 @@ private fun WideConsoleLayout(
                     onToggleBypass = viewModel::toggleBypass,
                     onReset = viewModel::resetToFlat,
                     onOpenPresetsSheet = onOpenPresetsSheet
+                )
+
+                HeadphoneAccommodationsCard(
+                    profile = profile,
+                    telemetry = uiState.audioLabTelemetry,
+                    hasAudioPermission = uiState.hasAudioPermission,
+                    onToggleEnabled = viewModel::toggleHeadphoneAccommodations,
+                    onSelectToneProfile = viewModel::setAccommodationsToneProfile,
+                    onSelectSoftIntensity = viewModel::setAccommodationsSoftIntensity,
+                    onOpenCustomAudioSetup = viewModel::openCustomAudioSetup,
+                    onToggleApplyToMedia = viewModel::toggleAccommodationsMedia,
+                    onToggleApplyToVoice = onToggleAccommodationsVoiceWithPermission
                 )
 
                 EqualizerConsole(

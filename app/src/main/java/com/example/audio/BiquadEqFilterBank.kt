@@ -3,10 +3,12 @@ package com.example.audio
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
+import com.example.model.AccommodationToneProfile
 import com.example.model.BackgroundSoundPreset
 import com.example.model.EqPresetsCatalog
 import com.example.model.NightIntensity
 import com.example.model.OutputTarget
+import com.example.model.SoftSoundIntensity
 import com.example.model.SpatialMode
 import com.example.model.TestAudioSource
 import com.example.model.ThreeBandEqRanges
@@ -494,6 +496,7 @@ class ThreeBandToneFilter(private val sampleRate: Int = 44100) {
  */
 class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
 
+    private val headphoneAccommodationsProcessor = HeadphoneAccommodationsProcessor(sampleRate)
     private val bandFilters = Array(10) { StereoBiquad() }
     private val threeBandToneFilter = ThreeBandToneFilter(sampleRate)
     private val lateNightCompressor = DynamicRangeCompressor(sampleRate)
@@ -534,6 +537,9 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
 
     val latestVoiceGateDb: Float
         get() = if (bypassed || abCompareHeld) 0f else voiceIsolationProcessor.latestGateAttenuationDb
+
+    val latestAccommodationsGrDb: Float
+        get() = if (bypassed || abCompareHeld) 0f else headphoneAccommodationsProcessor.latestGainReductionDb
 
     init {
         updateParameters(
@@ -578,7 +584,11 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         threeBandEnabled: Boolean = true,
         threeBandBassDb: Float = 0f,
         threeBandMidsDb: Float = 0f,
-        threeBandTrebleDb: Float = 0f
+        threeBandTrebleDb: Float = 0f,
+        accommodationsEnabled: Boolean = false,
+        accommodationsToneProfile: AccommodationToneProfile = AccommodationToneProfile.BALANCED_TONE,
+        accommodationsSoftIntensity: SoftSoundIntensity = SoftSoundIntensity.MODERATE,
+        accommodationsApplyToMedia: Boolean = true
     ) {
         bypassed = isBypassed
         this.abCompareHeld = abCompareHeld
@@ -587,6 +597,11 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         val effectiveProcessing = !isBypassed && !abCompareHeld
         soundCheckNormalizer.enabled = soundCheckEnabled && effectiveProcessing
         voiceIsolationProcessor.enabled = voiceIsolationEnabled && effectiveProcessing
+        headphoneAccommodationsProcessor.configure(
+            isEnabled = accommodationsEnabled && accommodationsApplyToMedia && effectiveProcessing,
+            profile = accommodationsToneProfile,
+            intensity = accommodationsSoftIntensity
+        )
         threeBandToneFilter.configure(
             isEnabled = threeBandEnabled && effectiveProcessing,
             bassDb = threeBandBassDb,
@@ -611,9 +626,14 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         } else {
             0f
         }
+        val accommodationsMatchBoost = if (accommodationsEnabled && accommodationsApplyToMedia) {
+            accommodationsSoftIntensity.makeupGainDb * 0.65f + 1.0f * accommodationsSoftIntensity.eqScale
+        } else {
+            0f
+        }
         val matchDb = AudiogramCheckEngine.computeLoudnessMatchGainDb(
             bandGainsDb = gainsDb,
-            preampDb = preampDb + threeBandAvg,
+            preampDb = preampDb + threeBandAvg + accommodationsMatchBoost,
             lateNightEnabled = lateNightEnabled,
             nightIntensity = nightIntensity,
             target = outputTarget,
@@ -644,6 +664,11 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
 
         var l = scL * preampLinear
         var r = scR * preampLinear
+
+        // Headphone Accommodations inserted in signal chain right BEFORE the main 10-band EQ
+        val (accL, accR) = headphoneAccommodationsProcessor.processStereoSample(l, r)
+        l = accL
+        r = accR
 
         for (band in 0 until 10) {
             val (nextL, nextR) = bandFilters[band].processStereo(l, r)
@@ -701,6 +726,9 @@ class TestAudioSynthesizer {
     val latestVoiceGateDb: Float
         get() = filterBank.latestVoiceGateDb
 
+    val latestAccommodationsGrDb: Float
+        get() = filterBank.latestAccommodationsGrDb
+
     fun setConversationDuckGain(duckGainLinear: Float) {
         filterBank.conversationDuckLinear = duckGainLinear.toDouble()
     }
@@ -726,7 +754,11 @@ class TestAudioSynthesizer {
         threeBandEnabled: Boolean = true,
         threeBandBassDb: Float = 0f,
         threeBandMidsDb: Float = 0f,
-        threeBandTrebleDb: Float = 0f
+        threeBandTrebleDb: Float = 0f,
+        accommodationsEnabled: Boolean = false,
+        accommodationsToneProfile: AccommodationToneProfile = AccommodationToneProfile.BALANCED_TONE,
+        accommodationsSoftIntensity: SoftSoundIntensity = SoftSoundIntensity.MODERATE,
+        accommodationsApplyToMedia: Boolean = true
     ) {
         backgroundPreset = bgSoundPreset
         backgroundVolume = bgSoundVolume
@@ -749,7 +781,11 @@ class TestAudioSynthesizer {
             threeBandEnabled = threeBandEnabled,
             threeBandBassDb = threeBandBassDb,
             threeBandMidsDb = threeBandMidsDb,
-            threeBandTrebleDb = threeBandTrebleDb
+            threeBandTrebleDb = threeBandTrebleDb,
+            accommodationsEnabled = accommodationsEnabled,
+            accommodationsToneProfile = accommodationsToneProfile,
+            accommodationsSoftIntensity = accommodationsSoftIntensity,
+            accommodationsApplyToMedia = accommodationsApplyToMedia
         )
     }
 

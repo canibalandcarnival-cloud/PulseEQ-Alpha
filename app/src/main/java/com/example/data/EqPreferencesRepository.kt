@@ -56,6 +56,11 @@ class EqPreferencesRepository(private val context: Context) {
         fun threeBandBassKey(target: OutputTarget) = floatPreferencesKey("three_band_bass_${target.id}")
         fun threeBandMidsKey(target: OutputTarget) = floatPreferencesKey("three_band_mids_${target.id}")
         fun threeBandTrebleKey(target: OutputTarget) = floatPreferencesKey("three_band_treble_${target.id}")
+        fun accommodationsEnabledKey(target: OutputTarget) = booleanPreferencesKey("acc_enabled_${target.id}")
+        fun accommodationsProfileKey(target: OutputTarget) = stringPreferencesKey("acc_profile_${target.id}")
+        fun accommodationsSoftIntensityKey(target: OutputTarget) = stringPreferencesKey("acc_soft_${target.id}")
+        fun accommodationsMediaKey(target: OutputTarget) = booleanPreferencesKey("acc_media_${target.id}")
+        fun accommodationsVoiceKey(target: OutputTarget) = booleanPreferencesKey("acc_voice_${target.id}")
     }
 
     val preferencesFlow: Flow<StoredEqPreferences> = context.eqDataStore.data.map { prefs ->
@@ -127,7 +132,16 @@ class EqPreferencesRepository(private val context: Context) {
                 threeBandMidsDb = (prefs[Keys.threeBandMidsKey(target)] ?: 0f)
                     .coerceIn(com.example.model.ThreeBandEqRanges.MIDS_MIN_DB, com.example.model.ThreeBandEqRanges.MIDS_MAX_DB),
                 threeBandTrebleDb = (prefs[Keys.threeBandTrebleKey(target)] ?: 0f)
-                    .coerceIn(com.example.model.ThreeBandEqRanges.TREBLE_MIN_DB, com.example.model.ThreeBandEqRanges.TREBLE_MAX_DB)
+                    .coerceIn(com.example.model.ThreeBandEqRanges.TREBLE_MIN_DB, com.example.model.ThreeBandEqRanges.TREBLE_MAX_DB),
+                accommodationsEnabled = prefs[Keys.accommodationsEnabledKey(target)] ?: false,
+                accommodationsToneProfile = com.example.model.AccommodationToneProfile.entries.firstOrNull {
+                    it.name == prefs[Keys.accommodationsProfileKey(target)]
+                } ?: com.example.model.AccommodationToneProfile.BALANCED_TONE,
+                accommodationsSoftIntensity = com.example.model.SoftSoundIntensity.entries.firstOrNull {
+                    it.name == prefs[Keys.accommodationsSoftIntensityKey(target)]
+                } ?: com.example.model.SoftSoundIntensity.MODERATE,
+                accommodationsApplyToMedia = prefs[Keys.accommodationsMediaKey(target)] ?: true,
+                accommodationsApplyToVoice = prefs[Keys.accommodationsVoiceKey(target)] ?: false
             )
         }
 
@@ -193,6 +207,11 @@ class EqPreferencesRepository(private val context: Context) {
             prefs[Keys.threeBandBassKey(profile.target)] = profile.threeBandBassDb
             prefs[Keys.threeBandMidsKey(profile.target)] = profile.threeBandMidsDb
             prefs[Keys.threeBandTrebleKey(profile.target)] = profile.threeBandTrebleDb
+            prefs[Keys.accommodationsEnabledKey(profile.target)] = profile.accommodationsEnabled
+            prefs[Keys.accommodationsProfileKey(profile.target)] = profile.accommodationsToneProfile.name
+            prefs[Keys.accommodationsSoftIntensityKey(profile.target)] = profile.accommodationsSoftIntensity.name
+            prefs[Keys.accommodationsMediaKey(profile.target)] = profile.accommodationsApplyToMedia
+            prefs[Keys.accommodationsVoiceKey(profile.target)] = profile.accommodationsApplyToVoice
         }
     }
 }

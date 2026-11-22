@@ -98,7 +98,12 @@ class EqualizerService : Service() {
                     threeBandEnabled = audioEngine.currentThreeBandEnabled,
                     threeBandBassDb = audioEngine.currentThreeBandBassDb,
                     threeBandMidsDb = audioEngine.currentThreeBandMidsDb,
-                    threeBandTrebleDb = audioEngine.currentThreeBandTrebleDb
+                    threeBandTrebleDb = audioEngine.currentThreeBandTrebleDb,
+                    accommodationsEnabled = audioEngine.currentAccommodationsEnabled,
+                    accommodationsToneProfile = audioEngine.currentAccommodationsToneProfile,
+                    accommodationsSoftIntensity = audioEngine.currentAccommodationsSoftIntensity,
+                    accommodationsApplyToMedia = audioEngine.currentAccommodationsApplyToMedia,
+                    accommodationsApplyToVoice = audioEngine.currentAccommodationsApplyToVoice
                 )
             }
 

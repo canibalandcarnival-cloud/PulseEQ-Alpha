@@ -117,13 +117,98 @@ enum class BackgroundSoundPreset(
     OCEAN("ocean", "Ocean", "Slow rhythmic surf swells")
 }
 
+enum class AccommodationToneProfile(
+    val id: String,
+    val label: String,
+    val shortSummary: String,
+    val detailBadge: String
+) {
+    BALANCED_TONE(
+        id = "balanced_tone",
+        label = "Balanced Tone",
+        shortSummary = "Gentle wide-range presence & air",
+        detailBadge = "1k +1.5 • 3k +2.5 • 8k +3 • 14k +2 dB"
+    ),
+    VOCAL_RANGE(
+        id = "vocal_range",
+        label = "Vocal Range",
+        shortSummary = "Speech clarity & 100Hz rumble cut",
+        detailBadge = "100Hz HPF • 250Hz -2 • 1k..4k +2.5/+4/+3 dB"
+    ),
+    BRIGHTNESS(
+        id = "brightness",
+        label = "Brightness",
+        shortSummary = "Strong high-frequency air & detail",
+        detailBadge = "4k +2.5 • 8k +4.5 • 12k +5.5 • 16k +4 dB"
+    )
+}
+
+enum class SoftSoundIntensity(
+    val id: String,
+    val label: String,
+    val eqScale: Float,
+    val thresholdDb: Float,
+    val ratio: Float,
+    val kneeDb: Float,
+    val makeupGainDb: Float
+) {
+    SLIGHT(
+        id = "slight",
+        label = "Slight",
+        eqScale = 0.6f,
+        thresholdDb = -30f,
+        ratio = 2.0f,
+        kneeDb = 20f,
+        makeupGainDb = 1.5f
+    ),
+    MODERATE(
+        id = "moderate",
+        label = "Moderate",
+        eqScale = 1.0f,
+        thresholdDb = -36f,
+        ratio = 3.0f,
+        kneeDb = 20f,
+        makeupGainDb = 3.0f
+    ),
+    STRONG(
+        id = "strong",
+        label = "Strong",
+        eqScale = 1.4f,
+        thresholdDb = -42f,
+        ratio = 4.0f,
+        kneeDb = 15f,
+        makeupGainDb = 4.5f
+    )
+}
+
+enum class SetupAuditionSlot {
+    STANDARD,
+    OPTION_A,
+    OPTION_B
+}
+
+@Immutable
+data class CustomAudioSetupUiState(
+    val isOpen: Boolean = false,
+    val stepIndex: Int = 0, // 0: Option A vs B (Balanced vs Vocal), 1: Winner vs Brightness, 2: Summary
+    val optionA: AccommodationToneProfile = AccommodationToneProfile.BALANCED_TONE,
+    val optionB: AccommodationToneProfile = AccommodationToneProfile.VOCAL_RANGE,
+    val activeAuditionSlot: SetupAuditionSlot = SetupAuditionSlot.OPTION_A,
+    val chosenProfile: AccommodationToneProfile = AccommodationToneProfile.BALANCED_TONE,
+    val softIntensity: SoftSoundIntensity = SoftSoundIntensity.MODERATE,
+    val isCompleted: Boolean = false
+)
+
 @Immutable
 data class AudioLabTelemetry(
     val inputLufs: Float = -60f,
     val soundCheckTrimDb: Float = 0f,
     val speechDetected: Boolean = false,
     val duckingGainLinear: Float = 1f,
-    val voiceGateAttenuationDb: Float = 0f
+    val voiceGateAttenuationDb: Float = 0f,
+    val accommodationsGrDb: Float = 0f,
+    val voiceMicMonitorActive: Boolean = false,
+    val voiceMicLevelDb: Float = -60f
 )
 
 @Immutable
@@ -162,7 +247,12 @@ data class OutputEqProfile(
     val threeBandEnabled: Boolean = true,
     val threeBandBassDb: Float = 0f,
     val threeBandMidsDb: Float = 0f,
-    val threeBandTrebleDb: Float = 0f
+    val threeBandTrebleDb: Float = 0f,
+    val accommodationsEnabled: Boolean = false,
+    val accommodationsToneProfile: AccommodationToneProfile = AccommodationToneProfile.BALANCED_TONE,
+    val accommodationsSoftIntensity: SoftSoundIntensity = SoftSoundIntensity.MODERATE,
+    val accommodationsApplyToMedia: Boolean = true,
+    val accommodationsApplyToVoice: Boolean = false
 ) {
     companion object {
         fun defaultGainsForTarget(target: OutputTarget): List<Float> = when (target) {

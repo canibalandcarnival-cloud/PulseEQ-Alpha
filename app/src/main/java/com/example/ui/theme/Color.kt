@@ -29,3 +29,15 @@ val FaderCapWhite = Color(0xFFF7F9FC)
 val FaderTrackIdle = Color(0xFF333B4D)
 val GridLineZero = Color(0xFF475166)
 val GridLineSubtle = Color(0xFF212634)
+
+// iOS Accessibility / Apple Control Center Dark Glass Tokens
+val AppleGlassTop = Color(0xE6222836)
+val AppleGlassBottom = Color(0xEB141822)
+val AppleGlassTile = Color(0x522E364A)
+val AppleGlassBorder = Color(0x33FFFFFF)
+val AppleBlue = Color(0xFF0A84FF)
+val AppleBlueSoft = Color(0x2E0A84FF)
+val AppleMint = Color(0xFF30D158)
+val AppleMintSoft = Color(0x2B30D158)
+val AppleIndigo = Color(0xFF5E5CE6)
+

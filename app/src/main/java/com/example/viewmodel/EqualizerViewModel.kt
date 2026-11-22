@@ -7,15 +7,19 @@ import com.example.AudioSessionRegistry
 import com.example.EqualizerService
 import com.example.audio.EqualizerEngineHolder
 import com.example.data.EqPreferencesRepository
+import com.example.model.AccommodationToneProfile
 import com.example.model.AudioLabTelemetry
 import com.example.model.BackgroundSoundPreset
 import com.example.model.ConnectedDeviceState
+import com.example.model.CustomAudioSetupUiState
 import com.example.model.EqPreset
 import com.example.model.EqPresetsCatalog
 import com.example.model.HearingCheckUiState
 import com.example.model.NightIntensity
 import com.example.model.OutputEqProfile
 import com.example.model.OutputTarget
+import com.example.model.SetupAuditionSlot
+import com.example.model.SoftSoundIntensity
 import com.example.model.SpatialMode
 import com.example.model.TestAudioSource
 import com.example.model.ThreeBandEqRanges
@@ -47,6 +51,7 @@ data class EqualizerUiState(
     val hasAudioPermission: Boolean = false,
     val audioLabTelemetry: AudioLabTelemetry = AudioLabTelemetry(),
     val hearingCheckState: HearingCheckUiState = HearingCheckUiState(),
+    val customAudioSetupState: CustomAudioSetupUiState = CustomAudioSetupUiState(),
     val abCompareHeld: Boolean = false
 ) {
     val activeProfile: OutputEqProfile
@@ -103,6 +108,7 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             AudioSessionRegistry.activeSessions,
             audioEngine.audioLabTelemetry,
             audioEngine.hearingCheckState,
+            audioEngine.customAudioSetupState,
             audioEngine.abCompareHeld
         ) { arr ->
             @Suppress("UNCHECKED_CAST")
@@ -112,7 +118,8 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
                 sessions = arr[2] as Map<Int, String>,
                 labTelemetry = arr[3] as AudioLabTelemetry,
                 hearingCheck = arr[4] as HearingCheckUiState,
-                abHeld = arr[5] as Boolean
+                customAudioSetup = arr[5] as CustomAudioSetupUiState,
+                abHeld = arr[6] as Boolean
             )
         }
     ) { core, engine, routing ->
@@ -131,6 +138,7 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             hasAudioPermission = engine.hasPerm,
             audioLabTelemetry = routing.labTelemetry,
             hearingCheckState = routing.hearingCheck,
+            customAudioSetupState = routing.customAudioSetup,
             abCompareHeld = routing.abHeld
         )
     }.stateIn(
@@ -145,6 +153,7 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
         val sessions: Map<Int, String>,
         val labTelemetry: AudioLabTelemetry,
         val hearingCheck: HearingCheckUiState,
+        val customAudioSetup: CustomAudioSetupUiState,
         val abHeld: Boolean
     )
 
@@ -447,6 +456,84 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
         commitProfile(updated)
     }
 
+    fun toggleHeadphoneAccommodations() {
+        val current = currentProfile()
+        val updated = current.copy(
+            accommodationsEnabled = !current.accommodationsEnabled,
+            isBypassed = if (!current.accommodationsEnabled) false else current.isBypassed
+        )
+        commitProfile(updated)
+    }
+
+    fun setAccommodationsToneProfile(profile: AccommodationToneProfile) {
+        val current = currentProfile()
+        val updated = current.copy(
+            accommodationsToneProfile = profile,
+            accommodationsEnabled = true,
+            isBypassed = false
+        )
+        commitProfile(updated)
+    }
+
+    fun setAccommodationsSoftIntensity(intensity: SoftSoundIntensity) {
+        val current = currentProfile()
+        val updated = current.copy(
+            accommodationsSoftIntensity = intensity,
+            accommodationsEnabled = true,
+            isBypassed = false
+        )
+        commitProfile(updated)
+    }
+
+    fun toggleAccommodationsMedia() {
+        val current = currentProfile()
+        val updated = current.copy(accommodationsApplyToMedia = !current.accommodationsApplyToMedia)
+        commitProfile(updated)
+    }
+
+    fun toggleAccommodationsVoice() {
+        val current = currentProfile()
+        val updated = current.copy(accommodationsApplyToVoice = !current.accommodationsApplyToVoice)
+        commitProfile(updated)
+    }
+
+    fun openCustomAudioSetup() {
+        audioEngine.customAudioSetupEngine.open(currentProfile().accommodationsSoftIntensity)
+    }
+
+    fun selectCustomSetupAudition(slot: SetupAuditionSlot) {
+        audioEngine.customAudioSetupEngine.selectAuditionSlot(slot)
+    }
+
+    fun selectCustomSetupIntensity(intensity: SoftSoundIntensity) {
+        audioEngine.customAudioSetupEngine.selectIntensity(intensity)
+    }
+
+    fun pickCustomSetupWinner(slot: SetupAuditionSlot) {
+        audioEngine.customAudioSetupEngine.chooseOptionForCurrentRound(slot)
+    }
+
+    fun restartCustomAudioSetup() {
+        audioEngine.customAudioSetupEngine.restartWizard()
+    }
+
+    fun applyCustomAudioSetupResult() {
+        val wizardState = audioEngine.customAudioSetupEngine.state.value
+        val current = currentProfile()
+        val updated = current.copy(
+            accommodationsEnabled = true,
+            accommodationsToneProfile = wizardState.chosenProfile,
+            accommodationsSoftIntensity = wizardState.softIntensity,
+            isBypassed = false
+        )
+        commitProfile(updated)
+        audioEngine.customAudioSetupEngine.close()
+    }
+
+    fun closeCustomAudioSetup() {
+        audioEngine.customAudioSetupEngine.close()
+    }
+
     fun setAbCompareHeld(held: Boolean) {
         audioEngine.setAbCompareHeld(held)
     }
@@ -518,6 +605,10 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             val updated = currentProfile().copy(conversationAwarenessEnabled = false)
             commitProfile(updated)
         }
+        if (!granted && currentProfile().accommodationsApplyToVoice) {
+            val updated = currentProfile().copy(accommodationsApplyToVoice = false)
+            commitProfile(updated)
+        }
     }
 
     private fun currentProfile(): OutputEqProfile {
@@ -547,7 +638,12 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             threeBandEnabled = profile.threeBandEnabled,
             threeBandBassDb = profile.threeBandBassDb,
             threeBandMidsDb = profile.threeBandMidsDb,
-            threeBandTrebleDb = profile.threeBandTrebleDb
+            threeBandTrebleDb = profile.threeBandTrebleDb,
+            accommodationsEnabled = profile.accommodationsEnabled,
+            accommodationsToneProfile = profile.accommodationsToneProfile,
+            accommodationsSoftIntensity = profile.accommodationsSoftIntensity,
+            accommodationsApplyToMedia = profile.accommodationsApplyToMedia,
+            accommodationsApplyToVoice = profile.accommodationsApplyToVoice
         )
     }
 

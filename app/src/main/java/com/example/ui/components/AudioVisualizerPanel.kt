@@ -47,8 +47,11 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.audio.HeadphoneAccommodationsProcessor
 import com.example.audio.ThreeBandToneFilter
+import com.example.model.AccommodationToneProfile
 import com.example.model.EqPresetsCatalog
+import com.example.model.SoftSoundIntensity
 import com.example.model.TestAudioSource
 import com.example.model.VisualizerFrame
 import com.example.model.VisualizerMode
@@ -86,6 +89,10 @@ fun AudioVisualizerPanel(
     threeBandBassDb: Float = 0f,
     threeBandMidsDb: Float = 0f,
     threeBandTrebleDb: Float = 0f,
+    accommodationsEnabled: Boolean = false,
+    accommodationsToneProfile: AccommodationToneProfile = AccommodationToneProfile.BALANCED_TONE,
+    accommodationsSoftIntensity: SoftSoundIntensity = SoftSoundIntensity.MODERATE,
+    accommodationsApplyToMedia: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     // Animate EQ response curve points for smooth transitions on preset changes
@@ -101,7 +108,16 @@ fun AudioVisualizerPanel(
         } else {
             0f
         }
-        val target = if (isBypassed) 0f else (gain + toneOffset + preampDb * 0.5f)
+        val accommodationsOffset = if (accommodationsEnabled && accommodationsApplyToMedia && !isBypassed) {
+            HeadphoneAccommodationsProcessor.computeResponseDbAt(
+                freqHz = freqHz,
+                profile = accommodationsToneProfile,
+                intensity = accommodationsSoftIntensity
+            )
+        } else {
+            0f
+        }
+        val target = if (isBypassed) 0f else (gain + toneOffset + accommodationsOffset + preampDb * 0.5f)
             .coerceIn(EqPresetsCatalog.MIN_GAIN_DB, EqPresetsCatalog.MAX_GAIN_DB)
         val anim by animateFloatAsState(
             targetValue = target,
