@@ -1,0 +1,6 @@
+{
+  "name": "PulseEQ",
+  "description": "10-band graphic sound equalizer with preamp, 21 presets, per-output device profiles, and real-time spectrum/waveform visualizer.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

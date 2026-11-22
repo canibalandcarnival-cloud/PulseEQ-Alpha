@@ -1,0 +1,12 @@
+<resources>
+    <string name="app_name">PulseEQ</string>
+    <string name="output_speaker">Phone Speaker</string>
+    <string name="output_headphones">Headphones</string>
+    <string name="output_bluetooth">Bluetooth</string>
+    <string name="eq_bypass">Bypass</string>
+    <string name="eq_active">Active</string>
+    <string name="eq_reset">Reset</string>
+    <string name="eq_preamp">Preamp</string>
+    <string name="presets_title">Presets</string>
+    <string name="visualizer_title">Real-Time Analyzer</string>
+</resources>

@@ -1,0 +1,88 @@
+package com.example
+
+import com.example.audio.BiquadEqFilterBank
+import com.example.audio.DynamicRangeCompressor
+import com.example.model.EqPresetsCatalog
+import com.example.model.NightIntensity
+import com.example.model.PresetGroup
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import kotlin.math.abs
+
+class ExampleUnitTest {
+
+    @Test
+    fun all_presets_including_late_night_have_10_valid_bands() {
+        assertEquals(22, EqPresetsCatalog.PRESETS.size)
+        assertEquals(5, EqPresetsCatalog.PRESETS.count { it.group == PresetGroup.SET_1 })
+        assertEquals(8, EqPresetsCatalog.PRESETS.count { it.group == PresetGroup.SET_2 })
+        assertEquals(8, EqPresetsCatalog.PRESETS.count { it.group == PresetGroup.SET_3 })
+
+        val lateNight = EqPresetsCatalog.findById(EqPresetsCatalog.LATE_NIGHT_ID)
+        assertEquals(
+            listOf(3.5f, 2.5f, 1.0f, 0.0f, 0.0f, 1.0f, 2.0f, 2.5f, 3.0f, 3.5f),
+            lateNight?.gainsDb
+        )
+
+        EqPresetsCatalog.ALL_WITH_FLAT.forEach { preset ->
+            assertEquals("Preset ${preset.name} must have 10 bands", 10, preset.gainsDb.size)
+            preset.gainsDb.forEach { gain ->
+                assertTrue(
+                    "Gain $gain in ${preset.name} out of range",
+                    gain in EqPresetsCatalog.MIN_GAIN_DB..EqPresetsCatalog.MAX_GAIN_DB
+                )
+            }
+        }
+    }
+
+    @Test
+    fun dynamic_range_compressor_reduces_peaks_and_scales_with_intensity() {
+        val standardGr = DynamicRangeCompressor.computeGainReductionDb(
+            inputDb = -6f,
+            thresholdDb = NightIntensity.STANDARD.thresholdDb,
+            kneeDb = NightIntensity.STANDARD.kneeDb,
+            ratio = NightIntensity.STANDARD.ratio
+        )
+        val heavyGr = DynamicRangeCompressor.computeGainReductionDb(
+            inputDb = -6f,
+            thresholdDb = NightIntensity.HEAVY.thresholdDb,
+            kneeDb = NightIntensity.HEAVY.kneeDb,
+            ratio = NightIntensity.HEAVY.ratio
+        )
+        assertTrue("Expected negative gain reduction at -6 dB input", standardGr < -5f)
+        assertTrue("Heavy intensity should compress more than Standard", heavyGr < standardGr)
+    }
+
+    @Test
+    fun speaker_profile_cuts_sub_bass_and_headphones_boosts_full_range() {
+        val speakerGains = com.example.model.OutputEqProfile.defaultGainsForTarget(com.example.model.OutputTarget.SPEAKER)
+        val headphoneGains = com.example.model.OutputEqProfile.defaultGainsForTarget(com.example.model.OutputTarget.HEADPHONES)
+        assertTrue("Phone speaker should cut 32Hz sub-bass", speakerGains[0] < 0f)
+        assertTrue("Phone speaker should cut 64Hz sub-bass", speakerGains[1] < 0f)
+        assertTrue("Phone speaker should boost vocal clarity at 2kHz", speakerGains[6] > 0f)
+        assertTrue("Headphones should boost 32Hz bass", headphoneGains[0] > 0f)
+        assertTrue("Headphones should boost 16kHz treble", headphoneGains[9] > 0f)
+    }
+
+    @Test
+    fun biquad_filter_bank_respects_bypass_and_applies_preamp() {
+        val bank = BiquadEqFilterBank()
+        bank.updateParameters(
+            gainsDb = List(10) { 12f },
+            preampDb = 6f,
+            isBypassed = true
+        )
+        val (bypassL, bypassR) = bank.processStereoSample(0.25, -0.25)
+        assertEquals(0.25, bypassL, 1e-6)
+        assertEquals(-0.25, bypassR, 1e-6)
+
+        bank.updateParameters(
+            gainsDb = List(10) { 0f },
+            preampDb = 6f,
+            isBypassed = false
+        )
+        val (boostedL, _) = bank.processStereoSample(0.25, 0.25)
+        assertTrue("Preamp +6dB should boost output magnitude", abs(boostedL) > 0.35)
+    }
+}
