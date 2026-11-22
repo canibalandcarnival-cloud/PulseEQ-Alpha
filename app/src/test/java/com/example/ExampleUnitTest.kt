@@ -601,4 +601,88 @@ class ExampleUnitTest {
         val quietInRms = 0.03 / kotlin.math.sqrt(2.0)
         assertTrue("Loudness Maximizer +100% must boost quiet 1.5kHz passage strongly", quietOutRms > quietInRms * 2.5)
     }
+
+    @Test
+    fun ten_band_and_three_band_eq_are_mutually_exclusive_with_zero_double_processing() {
+        val sampleRate = 44100
+
+        // Feed a 1 kHz sine wave with non-zero settings in BOTH 10-band (1 kHz = +12 dB) and 3-band (Mids = -6 dB).
+        // 1) When 3-Band EQ is active (tenBandEnabled = false, threeBandEnabled = true):
+        //    All 10-band filters MUST be flat-bypassed to 0 dB, so output is attenuated (~-6 dB), NOT boosted.
+        val threeBandActiveBank = BiquadEqFilterBank(sampleRate).apply {
+            updateParameters(
+                gainsDb = listOf(12f, 12f, 12f, 12f, 12f, 12f, 12f, 12f, 12f, 12f),
+                preampDb = 0f,
+                isBypassed = false,
+                tenBandEnabled = false,
+                threeBandEnabled = true,
+                threeBandBassDb = 0f,
+                threeBandMidsDb = -6f,
+                threeBandTrebleDb = 0f
+            )
+        }
+
+        // 2) When 10-Band EQ is active (tenBandEnabled = true, threeBandEnabled = false):
+        //    All 3-band filters MUST be flat-bypassed to 0 dB, so output receives full +12 dB at 1 kHz without -6 dB attenuation.
+        val tenBandActiveBank = BiquadEqFilterBank(sampleRate).apply {
+            updateParameters(
+                gainsDb = listOf(0f, 0f, 0f, 0f, 0f, 12f, 0f, 0f, 0f, 0f),
+                preampDb = 0f,
+                isBypassed = false,
+                tenBandEnabled = true,
+                threeBandEnabled = false,
+                threeBandBassDb = 7f,
+                threeBandMidsDb = -6f,
+                threeBandTrebleDb = 7f
+            )
+        }
+
+        // 3) Safety guard if both booleans are passed true: strictly zero double-processing (prefers 10-Band only).
+        val bothPassedTrueBank = BiquadEqFilterBank(sampleRate).apply {
+            updateParameters(
+                gainsDb = listOf(0f, 0f, 0f, 0f, 0f, 12f, 0f, 0f, 0f, 0f),
+                preampDb = 0f,
+                isBypassed = false,
+                tenBandEnabled = true,
+                threeBandEnabled = true,
+                threeBandBassDb = 7f,
+                threeBandMidsDb = -6f,
+                threeBandTrebleDb = 7f
+            )
+        }
+
+        var rmsThreeOnly = 0.0
+        var rmsTenOnly = 0.0
+        var rmsBothTrue = 0.0
+        for (i in 0 until 4410) {
+            val s = 0.1 * kotlin.math.sin(2.0 * Math.PI * 1000.0 * i / sampleRate)
+            val (oThree, _) = threeBandActiveBank.processStereoSample(s, s)
+            val (oTen, _) = tenBandActiveBank.processStereoSample(s, s)
+            val (oBoth, _) = bothPassedTrueBank.processStereoSample(s, s)
+            if (i > 2205) {
+                rmsThreeOnly += oThree * oThree
+                rmsTenOnly += oTen * oTen
+                rmsBothTrue += oBoth * oBoth
+            }
+        }
+        rmsThreeOnly = kotlin.math.sqrt(rmsThreeOnly / 2205)
+        rmsTenOnly = kotlin.math.sqrt(rmsTenOnly / 2205)
+        rmsBothTrue = kotlin.math.sqrt(rmsBothTrue / 2205)
+        val inRms = 0.1 / kotlin.math.sqrt(2.0)
+
+        assertTrue(
+            "When 3-Band (-6dB Mids) is active, 10-band +12dB must be flat-bypassed (rmsThreeOnly=$rmsThreeOnly < inRms=$inRms)",
+            rmsThreeOnly < inRms * 0.65
+        )
+        assertTrue(
+            "When 10-Band (+12dB @ 1kHz) is active, 3-band -6dB Mids must be flat-bypassed (rmsTenOnly=$rmsTenOnly > inRms=$inRms)",
+            rmsTenOnly > inRms * 2.5
+        )
+        assertEquals(
+            "Passing both flags true must match 10-band-only output without double processing",
+            rmsTenOnly,
+            rmsBothTrue,
+            1e-4
+        )
+    }
 }

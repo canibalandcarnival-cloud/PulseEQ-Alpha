@@ -434,9 +434,21 @@ class ThreeBandToneFilter(private val sampleRate: Int = 44100) {
         trebleDb: Float
     ) {
         enabled = isEnabled
-        val clampedBass = bassDb.coerceIn(ThreeBandEqRanges.BASS_MIN_DB, ThreeBandEqRanges.BASS_MAX_DB).toDouble()
-        val clampedMids = midsDb.coerceIn(ThreeBandEqRanges.MIDS_MIN_DB, ThreeBandEqRanges.MIDS_MAX_DB).toDouble()
-        val clampedTreble = trebleDb.coerceIn(ThreeBandEqRanges.TREBLE_MIN_DB, ThreeBandEqRanges.TREBLE_MAX_DB).toDouble()
+        val clampedBass = if (isEnabled) {
+            bassDb.coerceIn(ThreeBandEqRanges.BASS_MIN_DB, ThreeBandEqRanges.BASS_MAX_DB).toDouble()
+        } else {
+            0.0
+        }
+        val clampedMids = if (isEnabled) {
+            midsDb.coerceIn(ThreeBandEqRanges.MIDS_MIN_DB, ThreeBandEqRanges.MIDS_MAX_DB).toDouble()
+        } else {
+            0.0
+        }
+        val clampedTreble = if (isEnabled) {
+            trebleDb.coerceIn(ThreeBandEqRanges.TREBLE_MIN_DB, ThreeBandEqRanges.TREBLE_MAX_DB).toDouble()
+        } else {
+            0.0
+        }
 
         bassLowShelf.setLowShelf(sampleRate, 250.0, 0.7071, clampedBass)
         // Q = 0.28 centered at 1200 Hz gives -3dB skirt span ~300 Hz to 4.7 kHz
@@ -571,7 +583,8 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             soundCheckEnabled = false,
             voiceIsolationEnabled = false,
             abCompareHeld = false,
-            threeBandEnabled = true,
+            tenBandEnabled = true,
+            threeBandEnabled = false,
             threeBandBassDb = 0f,
             threeBandMidsDb = 0f,
             threeBandTrebleDb = 0f
@@ -594,7 +607,8 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         soundCheckEnabled: Boolean = false,
         voiceIsolationEnabled: Boolean = false,
         abCompareHeld: Boolean = false,
-        threeBandEnabled: Boolean = true,
+        threeBandEnabled: Boolean = false,
+        tenBandEnabled: Boolean = !threeBandEnabled,
         threeBandBassDb: Float = 0f,
         threeBandMidsDb: Float = 0f,
         threeBandTrebleDb: Float = 0f,
@@ -611,6 +625,10 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         preampLinear = 10.0.pow(preampDb.toDouble() / 20.0)
 
         val effectiveProcessing = !isBypassed && !abCompareHeld
+        // Strict mutual exclusion: never allow 10-Band and 3-Band EQ to double-process audio
+        val activeThreeBand = threeBandEnabled && !tenBandEnabled
+        val activeTenBand = !activeThreeBand
+
         soundCheckNormalizer.enabled = soundCheckEnabled && effectiveProcessing
         voiceIsolationProcessor.enabled = voiceIsolationEnabled && effectiveProcessing
         headphoneAccommodationsProcessor.configure(
@@ -620,10 +638,10 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             outputGainDb = accommodationsOutputGainDb
         )
         threeBandToneFilter.configure(
-            isEnabled = threeBandEnabled && effectiveProcessing,
-            bassDb = threeBandBassDb,
-            midsDb = threeBandMidsDb,
-            trebleDb = threeBandTrebleDb
+            isEnabled = activeThreeBand && effectiveProcessing,
+            bassDb = if (activeThreeBand) threeBandBassDb else 0f,
+            midsDb = if (activeThreeBand) threeBandMidsDb else 0f,
+            trebleDb = if (activeThreeBand) threeBandTrebleDb else 0f
         )
         lateNightCompressor.configure(isEnabled = lateNightEnabled && effectiveProcessing, intensity = nightIntensity)
         speakerDspChain.configure(
@@ -643,7 +661,8 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             boostPercent = loudnessBoostPercent
         )
 
-        val threeBandAvg = if (threeBandEnabled) {
+        val activeBandGains = if (activeTenBand) gainsDb else List(10) { 0f }
+        val threeBandAvg = if (activeThreeBand) {
             (threeBandBassDb * 0.25f + threeBandMidsDb * 0.50f + threeBandTrebleDb * 0.25f)
         } else {
             0f
@@ -660,7 +679,7 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             0f
         }
         val matchDb = AudiogramCheckEngine.computeLoudnessMatchGainDb(
-            bandGainsDb = gainsDb,
+            bandGainsDb = activeBandGains,
             preampDb = preampDb + threeBandAvg + accommodationsMatchBoost + loudnessMatchBoost,
             lateNightEnabled = lateNightEnabled,
             nightIntensity = nightIntensity,
@@ -672,7 +691,8 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
 
         for (i in 0 until 10) {
             val freq = EqPresetsCatalog.BANDS[i].frequencyHz.toDouble()
-            val db = gainsDb.getOrElse(i) { 0f }.toDouble()
+            // Flat 0 dB bypass on all 10-band biquads whenever 3-Band EQ is active
+            val db = if (activeTenBand && effectiveProcessing) gainsDb.getOrElse(i) { 0f }.toDouble() else 0.0
             bandFilters[i].setPeaking(sampleRate, freq, 1.414, db)
         }
     }
@@ -793,7 +813,8 @@ class TestAudioSynthesizer {
         abCompareHeld: Boolean = false,
         bgSoundPreset: BackgroundSoundPreset = BackgroundSoundPreset.OFF,
         bgSoundVolume: Float = 0.28f,
-        threeBandEnabled: Boolean = true,
+        tenBandEnabled: Boolean = true,
+        threeBandEnabled: Boolean = false,
         threeBandBassDb: Float = 0f,
         threeBandMidsDb: Float = 0f,
         threeBandTrebleDb: Float = 0f,
@@ -824,6 +845,7 @@ class TestAudioSynthesizer {
             voiceIsolationEnabled = voiceIsolationEnabled,
             abCompareHeld = abCompareHeld,
             threeBandEnabled = threeBandEnabled,
+            tenBandEnabled = tenBandEnabled,
             threeBandBassDb = threeBandBassDb,
             threeBandMidsDb = threeBandMidsDb,
             threeBandTrebleDb = threeBandTrebleDb,

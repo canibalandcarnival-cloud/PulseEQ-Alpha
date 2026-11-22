@@ -65,6 +65,14 @@ import com.example.ui.components.PresetsBrowserSheet
 import com.example.ui.components.SpatialAudioCard
 import com.example.ui.components.SpeakerDspCard
 import com.example.ui.components.ThreeBandEqualizerCard
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.material3.Surface
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import com.example.ui.theme.AnalyzerCyanSoft
+import com.example.ui.theme.StudioSurfaceHighlight
 import com.example.ui.theme.AnalyzerCyan
 import com.example.ui.theme.RouteEmerald
 import com.example.ui.theme.SignalCoral
@@ -296,6 +304,7 @@ private fun CompactConsoleLayout(
             onSelectMode = viewModel::setVisualizerMode,
             onCycleTestAudio = viewModel::cycleTestAudioSource,
             onRequestAudioPermission = onRequestAudioPermission,
+            tenBandEnabled = profile.tenBandEnabled,
             threeBandEnabled = profile.threeBandEnabled,
             threeBandBassDb = profile.threeBandBassDb,
             threeBandMidsDb = profile.threeBandMidsDb,
@@ -329,10 +338,18 @@ private fun CompactConsoleLayout(
             onOutputGainChange = viewModel::updateAccommodationsOutputGain
         )
 
+        EqModeSegmentedSwitcher(
+            tenBandEnabled = profile.tenBandEnabled,
+            threeBandEnabled = profile.threeBandEnabled,
+            onSelectEqMode = viewModel::selectEqMode
+        )
+
         EqualizerConsole(
             bandGainsDb = profile.bandGainsDb,
             preampDb = profile.preampDb,
             isBypassed = profile.isBypassed,
+            tenBandEnabled = profile.tenBandEnabled,
+            onToggleEnabled = viewModel::toggleTenBandEnabled,
             onBandGainChange = viewModel::updateBandGain,
             onPreampChange = viewModel::updatePreamp
         )
@@ -476,6 +493,7 @@ private fun WideConsoleLayout(
                     onSelectMode = viewModel::setVisualizerMode,
                     onCycleTestAudio = viewModel::cycleTestAudioSource,
                     onRequestAudioPermission = onRequestAudioPermission,
+                    tenBandEnabled = profile.tenBandEnabled,
                     threeBandEnabled = profile.threeBandEnabled,
                     threeBandBassDb = profile.threeBandBassDb,
                     threeBandMidsDb = profile.threeBandMidsDb,
@@ -527,10 +545,18 @@ private fun WideConsoleLayout(
                     onOutputGainChange = viewModel::updateAccommodationsOutputGain
                 )
 
+                EqModeSegmentedSwitcher(
+                    tenBandEnabled = profile.tenBandEnabled,
+                    threeBandEnabled = profile.threeBandEnabled,
+                    onSelectEqMode = viewModel::selectEqMode
+                )
+
                 EqualizerConsole(
                     bandGainsDb = profile.bandGainsDb,
                     preampDb = profile.preampDb,
                     isBypassed = profile.isBypassed,
+                    tenBandEnabled = profile.tenBandEnabled,
+                    onToggleEnabled = viewModel::toggleTenBandEnabled,
                     onBandGainChange = viewModel::updateBandGain,
                     onPreampChange = viewModel::updatePreamp
                 )
@@ -673,6 +699,105 @@ private fun StudioTopHeader(
                 style = MaterialTheme.typography.labelSmall,
                 color = if (isBypassed) TextMuted else AnalyzerCyan
             )
+        }
+    }
+}
+
+@Composable
+private fun EqModeSegmentedSwitcher(
+    tenBandEnabled: Boolean,
+    threeBandEnabled: Boolean,
+    onSelectEqMode: (Boolean) -> Unit
+) {
+    val isThreeBand = threeBandEnabled && !tenBandEnabled
+    val isTenBand = !isThreeBand
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(999.dp))
+            .background(StudioSurface)
+            .border(1.dp, StudioBorder, RoundedCornerShape(999.dp))
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Surface(
+            shape = RoundedCornerShape(999.dp),
+            color = if (isTenBand) SignalCoralSoft else StudioBackground.copy(alpha = 0.35f),
+            modifier = Modifier
+                .weight(1f)
+                .defaultMinSize(minHeight = 48.dp)
+                .clip(RoundedCornerShape(999.dp))
+                .border(
+                    width = 1.dp,
+                    color = if (isTenBand) SignalCoral.copy(alpha = 0.72f) else StudioBorder.copy(alpha = 0.4f),
+                    shape = RoundedCornerShape(999.dp)
+                )
+                .clickable { onSelectEqMode(false) }
+                .testTag("eq_mode_10band_pill")
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(7.dp)
+                        .clip(CircleShape)
+                        .background(if (isTenBand) SignalCoral else TextMuted)
+                )
+                Spacer(modifier = Modifier.size(7.dp))
+                Text(
+                    text = if (isTenBand) "10-Band EQ Active" else "Switch to 10-Band",
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontWeight = if (isTenBand) FontWeight.SemiBold else FontWeight.Medium
+                    ),
+                    color = if (isTenBand) TextPrimary else TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+
+        Surface(
+            shape = RoundedCornerShape(999.dp),
+            color = if (isThreeBand) AnalyzerCyanSoft else StudioBackground.copy(alpha = 0.35f),
+            modifier = Modifier
+                .weight(1f)
+                .defaultMinSize(minHeight = 48.dp)
+                .clip(RoundedCornerShape(999.dp))
+                .border(
+                    width = 1.dp,
+                    color = if (isThreeBand) AnalyzerCyan.copy(alpha = 0.72f) else StudioBorder.copy(alpha = 0.4f),
+                    shape = RoundedCornerShape(999.dp)
+                )
+                .clickable { onSelectEqMode(true) }
+                .testTag("eq_mode_3band_pill")
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(7.dp)
+                        .clip(CircleShape)
+                        .background(if (isThreeBand) AnalyzerCyan else TextMuted)
+                )
+                Spacer(modifier = Modifier.size(7.dp))
+                Text(
+                    text = if (isThreeBand) "3-Band EQ Active" else "Switch to 3-Band",
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontWeight = if (isThreeBand) FontWeight.SemiBold else FontWeight.Medium
+                    ),
+                    color = if (isThreeBand) TextPrimary else TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
     }
 }

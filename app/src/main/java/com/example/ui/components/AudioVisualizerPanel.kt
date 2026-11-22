@@ -87,6 +87,7 @@ fun AudioVisualizerPanel(
     onSelectMode: (VisualizerMode) -> Unit,
     onCycleTestAudio: () -> Unit,
     onRequestAudioPermission: () -> Unit,
+    tenBandEnabled: Boolean = true,
     threeBandEnabled: Boolean = false,
     threeBandBassDb: Float = 0f,
     threeBandMidsDb: Float = 0f,
@@ -99,10 +100,14 @@ fun AudioVisualizerPanel(
     outputTarget: OutputTarget = OutputTarget.HEADPHONES,
     modifier: Modifier = Modifier
 ) {
+    val activeThreeBand = threeBandEnabled && !tenBandEnabled
+    val activeTenBand = !activeThreeBand
+
     // Animate EQ response curve points for smooth transitions on preset changes
     val animatedCurveGains = bandGainsDb.mapIndexed { index, gain ->
         val freqHz = EqPresetsCatalog.BANDS.getOrNull(index)?.frequencyHz?.toDouble() ?: 1000.0
-        val toneOffset = if (threeBandEnabled && !isBypassed) {
+        val tenBandGain = if (activeTenBand && !isBypassed) gain else 0f
+        val toneOffset = if (activeThreeBand && !isBypassed) {
             ThreeBandToneFilter.computeCombinedResponseDbAt(
                 freqHz = freqHz,
                 bassDb = threeBandBassDb,
@@ -129,7 +134,7 @@ fun AudioVisualizerPanel(
         } else {
             0f
         }
-        val target = if (isBypassed) 0f else (gain + toneOffset + accommodationsOffset + loudnessOffset + preampDb * 0.5f)
+        val target = if (isBypassed) 0f else (tenBandGain + toneOffset + accommodationsOffset + loudnessOffset + preampDb * 0.5f)
             .coerceIn(EqPresetsCatalog.MIN_GAIN_DB, EqPresetsCatalog.MAX_GAIN_DB)
         val anim by animateFloatAsState(
             targetValue = target,

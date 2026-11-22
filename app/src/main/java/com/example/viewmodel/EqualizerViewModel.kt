@@ -255,7 +255,9 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
         val matchedPreset = findMatchingPresetId(updatedGains)
         val updated = current.copy(
             bandGainsDb = updatedGains,
-            selectedPresetId = matchedPreset
+            selectedPresetId = matchedPreset,
+            tenBandEnabled = true,
+            threeBandEnabled = false
         )
         commitProfile(updated)
     }
@@ -277,7 +279,30 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             preampDb = preset.preampDb,
             isBypassed = false,
             selectedPresetId = preset.id,
-            lateNightEnabled = isLateNightPreset
+            lateNightEnabled = isLateNightPreset,
+            tenBandEnabled = true,
+            threeBandEnabled = false
+        )
+        commitProfile(updated)
+    }
+
+    fun selectEqMode(useThreeBand: Boolean) {
+        val current = currentProfile()
+        val updated = current.copy(
+            tenBandEnabled = !useThreeBand,
+            threeBandEnabled = useThreeBand,
+            isBypassed = false
+        )
+        commitProfile(updated)
+    }
+
+    fun toggleTenBandEnabled() {
+        val current = currentProfile()
+        val nextTenBand = !current.tenBandEnabled
+        val updated = current.copy(
+            tenBandEnabled = nextTenBand,
+            threeBandEnabled = !nextTenBand,
+            isBypassed = false
         )
         commitProfile(updated)
     }
@@ -291,7 +316,9 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
                 preampDb = 0f,
                 isBypassed = false,
                 selectedPresetId = EqPresetsCatalog.LATE_NIGHT_ID,
-                lateNightEnabled = true
+                lateNightEnabled = true,
+                tenBandEnabled = true,
+                threeBandEnabled = false
             )
             commitProfile(updated)
         } else {
@@ -423,25 +450,45 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun updateThreeBandBass(rawDb: Float) {
         val clamped = snapHalfDbRange(rawDb, ThreeBandEqRanges.BASS_MIN_DB, ThreeBandEqRanges.BASS_MAX_DB)
-        val updated = currentProfile().copy(threeBandBassDb = clamped, threeBandEnabled = true)
+        val updated = currentProfile().copy(
+            threeBandBassDb = clamped,
+            threeBandEnabled = true,
+            tenBandEnabled = false,
+            isBypassed = false
+        )
         commitProfile(updated)
     }
 
     fun updateThreeBandMids(rawDb: Float) {
         val clamped = snapHalfDbRange(rawDb, ThreeBandEqRanges.MIDS_MIN_DB, ThreeBandEqRanges.MIDS_MAX_DB)
-        val updated = currentProfile().copy(threeBandMidsDb = clamped, threeBandEnabled = true)
+        val updated = currentProfile().copy(
+            threeBandMidsDb = clamped,
+            threeBandEnabled = true,
+            tenBandEnabled = false,
+            isBypassed = false
+        )
         commitProfile(updated)
     }
 
     fun updateThreeBandTreble(rawDb: Float) {
         val clamped = snapHalfDbRange(rawDb, ThreeBandEqRanges.TREBLE_MIN_DB, ThreeBandEqRanges.TREBLE_MAX_DB)
-        val updated = currentProfile().copy(threeBandTrebleDb = clamped, threeBandEnabled = true)
+        val updated = currentProfile().copy(
+            threeBandTrebleDb = clamped,
+            threeBandEnabled = true,
+            tenBandEnabled = false,
+            isBypassed = false
+        )
         commitProfile(updated)
     }
 
     fun toggleThreeBandEnabled() {
         val current = currentProfile()
-        val updated = current.copy(threeBandEnabled = !current.threeBandEnabled)
+        val nextThreeBand = !current.threeBandEnabled
+        val updated = current.copy(
+            threeBandEnabled = nextThreeBand,
+            tenBandEnabled = !nextThreeBand,
+            isBypassed = false
+        )
         commitProfile(updated)
     }
 
@@ -449,6 +496,7 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
         val current = currentProfile()
         val updated = current.copy(
             threeBandEnabled = true,
+            tenBandEnabled = false,
             threeBandBassDb = 0f,
             threeBandMidsDb = 0f,
             threeBandTrebleDb = 0f
@@ -597,7 +645,9 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             bandGainsDb = curveDb,
             isBypassed = false,
             selectedPresetId = EqPresetsCatalog.CUSTOM_ID,
-            audiogramGainsDb = curveDb
+            audiogramGainsDb = curveDb,
+            tenBandEnabled = true,
+            threeBandEnabled = false
         )
         commitProfile(updated)
         audioEngine.audiogramEngine.cancelCheck()
@@ -671,6 +721,7 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             bgSoundPreset = profile.backgroundSoundPreset,
             bgSoundVolume = profile.backgroundSoundVolume,
             voiceIsolationEnabled = profile.voiceIsolationEnabled,
+            tenBandEnabled = profile.tenBandEnabled,
             threeBandEnabled = profile.threeBandEnabled,
             threeBandBassDb = profile.threeBandBassDb,
             threeBandMidsDb = profile.threeBandMidsDb,

@@ -38,6 +38,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -45,6 +46,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.testTag
@@ -92,17 +94,26 @@ fun ThreeBandEqualizerCard(
     modifier: Modifier = Modifier
 ) {
     val effectivelyBypassed = isMasterBypassed || !threeBandEnabled
+    val bodyAlpha by animateFloatAsState(
+        targetValue = if (threeBandEnabled) 1f else 0.40f,
+        animationSpec = spring(dampingRatio = 0.9f, stiffness = 700f),
+        label = "three_band_alpha"
+    )
 
     Column(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(18.dp))
             .background(StudioSurface)
-            .border(1.dp, StudioBorder, RoundedCornerShape(18.dp))
+            .border(
+                1.dp,
+                if (threeBandEnabled && !isMasterBypassed) AnalyzerCyan.copy(alpha = 0.42f) else StudioBorder,
+                RoundedCornerShape(18.dp)
+            )
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // Header Row: Title, Subtitle, Reset, and ON/OFF Toggle
+        // Header Row: Title, Disabled Badge, Reset, and ON/OFF Toggle
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -137,13 +148,25 @@ fun ThreeBandEqualizerCard(
                     Text(
                         text = "3-Band Tone Equalizer",
                         style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                        color = TextPrimary
+                        color = if (threeBandEnabled) TextPrimary else TextSecondary
                     )
-                    Text(
-                        text = "250Hz Shelf • 1.2kHz Mid • 3.3kHz Shelf",
-                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                        color = TextSecondary
-                    )
+                    if (!threeBandEnabled) {
+                        Text(
+                            text = "Disabled (10-Band Active)",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Medium
+                            ),
+                            color = TextMuted,
+                            modifier = Modifier.testTag("three_band_disabled_badge")
+                        )
+                    } else {
+                        Text(
+                            text = "250Hz Shelf • 1.2kHz Mid • 3.3kHz Shelf",
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                            color = TextSecondary
+                        )
+                    }
                 }
             }
 
@@ -151,32 +174,49 @@ fun ThreeBandEqualizerCard(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Surface(
-                    shape = RoundedCornerShape(999.dp),
-                    color = StudioSurfaceElevated,
-                    modifier = Modifier
-                        .defaultMinSize(minHeight = 32.dp)
-                        .clip(RoundedCornerShape(999.dp))
-                        .border(1.dp, StudioBorder, RoundedCornerShape(999.dp))
-                        .clickable(onClick = onReset)
-                        .testTag("three_band_reset_btn")
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                if (!threeBandEnabled) {
+                    Surface(
+                        shape = RoundedCornerShape(999.dp),
+                        color = StudioSurfaceElevated,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .border(1.dp, StudioBorder, RoundedCornerShape(999.dp))
                     ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Refresh,
-                            contentDescription = "Reset 3-band equalizer",
-                            tint = TextSecondary,
-                            modifier = Modifier.size(13.dp)
-                        )
                         Text(
-                            text = "Reset",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = TextSecondary
+                            text = "Disabled (10-Band Active)",
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                            color = TextMuted,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                         )
+                    }
+                } else {
+                    Surface(
+                        shape = RoundedCornerShape(999.dp),
+                        color = StudioSurfaceElevated,
+                        modifier = Modifier
+                            .defaultMinSize(minHeight = 32.dp)
+                            .clip(RoundedCornerShape(999.dp))
+                            .border(1.dp, StudioBorder, RoundedCornerShape(999.dp))
+                            .clickable(onClick = onReset)
+                            .testTag("three_band_reset_btn")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Refresh,
+                                contentDescription = "Reset 3-band equalizer",
+                                tint = TextSecondary,
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Text(
+                                text = "Reset",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = TextSecondary
+                            )
+                        }
                     }
                 }
 
@@ -225,83 +265,115 @@ fun ThreeBandEqualizerCard(
             }
         }
 
-        // 3 Clean Graphic Vertical Faders (Bass, Mids, Treble)
-        Row(
+        // 3 Clean Graphic Vertical Faders (Bass, Mids, Treble) — Dimmed (0.40) & pointer-blocked when 10-Band EQ is active
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(216.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(StudioBackground.copy(alpha = 0.72f))
-                .border(1.dp, StudioBorder.copy(alpha = 0.85f), RoundedCornerShape(14.dp))
-                .padding(horizontal = 10.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .alpha(bodyAlpha)
         ) {
-            ThreeBandFaderColumn(
-                title = "Bass",
-                subtitle = "< 250 Hz",
-                gainDb = bassDb,
-                minDb = ThreeBandEqRanges.BASS_MIN_DB,
-                maxDb = ThreeBandEqRanges.BASS_MAX_DB,
-                maxLabel = "+7",
-                minLabel = "-7",
-                isBypassed = effectivelyBypassed,
-                accentColor = SignalCoral,
-                accentGlowColor = SignalCoralBright,
-                onGainChange = onBassChange,
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .testTag("three_band_bass_slider"),
-                semanticsLabel = "Bass Low-Shelf below 250 Hz"
-            )
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(216.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(StudioBackground.copy(alpha = 0.72f))
+                        .border(1.dp, StudioBorder.copy(alpha = 0.85f), RoundedCornerShape(14.dp))
+                        .padding(horizontal = 10.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    ThreeBandFaderColumn(
+                        title = "Bass",
+                        subtitle = "< 250 Hz",
+                        gainDb = bassDb,
+                        minDb = ThreeBandEqRanges.BASS_MIN_DB,
+                        maxDb = ThreeBandEqRanges.BASS_MAX_DB,
+                        maxLabel = "+7",
+                        minLabel = "-7",
+                        isBypassed = effectivelyBypassed,
+                        isInteractive = threeBandEnabled,
+                        accentColor = SignalCoral,
+                        accentGlowColor = SignalCoralBright,
+                        onGainChange = onBassChange,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .testTag("three_band_bass_slider"),
+                        semanticsLabel = "Bass Low-Shelf below 250 Hz"
+                    )
 
-            ThreeBandFaderColumn(
-                title = "Mids",
-                subtitle = "1.2 kHz",
-                gainDb = midsDb,
-                minDb = ThreeBandEqRanges.MIDS_MIN_DB,
-                maxDb = ThreeBandEqRanges.MIDS_MAX_DB,
-                maxLabel = "+3",
-                minLabel = "-6",
-                isBypassed = effectivelyBypassed,
-                accentColor = WarmAmber,
-                accentGlowColor = WarmAmber.copy(alpha = 0.95f),
-                onGainChange = onMidsChange,
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .testTag("three_band_mids_slider"),
-                semanticsLabel = "Mids Peaking at 1.2 kHz"
-            )
+                    ThreeBandFaderColumn(
+                        title = "Mids",
+                        subtitle = "1.2 kHz",
+                        gainDb = midsDb,
+                        minDb = ThreeBandEqRanges.MIDS_MIN_DB,
+                        maxDb = ThreeBandEqRanges.MIDS_MAX_DB,
+                        maxLabel = "+3",
+                        minLabel = "-6",
+                        isBypassed = effectivelyBypassed,
+                        isInteractive = threeBandEnabled,
+                        accentColor = WarmAmber,
+                        accentGlowColor = WarmAmber.copy(alpha = 0.95f),
+                        onGainChange = onMidsChange,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .testTag("three_band_mids_slider"),
+                        semanticsLabel = "Mids Peaking at 1.2 kHz"
+                    )
 
-            ThreeBandFaderColumn(
-                title = "Treble",
-                subtitle = "> 3.3 kHz",
-                gainDb = trebleDb,
-                minDb = ThreeBandEqRanges.TREBLE_MIN_DB,
-                maxDb = ThreeBandEqRanges.TREBLE_MAX_DB,
-                maxLabel = "+7",
-                minLabel = "-6",
-                isBypassed = effectivelyBypassed,
-                accentColor = AnalyzerCyan,
-                accentGlowColor = AnalyzerCyan,
-                onGainChange = onTrebleChange,
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .testTag("three_band_treble_slider"),
-                semanticsLabel = "Treble High-Shelf above 3.3 kHz"
-            )
+                    ThreeBandFaderColumn(
+                        title = "Treble",
+                        subtitle = "> 3.3 kHz",
+                        gainDb = trebleDb,
+                        minDb = ThreeBandEqRanges.TREBLE_MIN_DB,
+                        maxDb = ThreeBandEqRanges.TREBLE_MAX_DB,
+                        maxLabel = "+7",
+                        minLabel = "-6",
+                        isBypassed = effectivelyBypassed,
+                        isInteractive = threeBandEnabled,
+                        accentColor = AnalyzerCyan,
+                        accentGlowColor = AnalyzerCyan,
+                        onGainChange = onTrebleChange,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .testTag("three_band_treble_slider"),
+                        semanticsLabel = "Treble High-Shelf above 3.3 kHz"
+                    )
+                }
+
+                Text(
+                    text = if (threeBandEnabled) {
+                        "Bass (-7..+7 dB) • Mids 300Hz–4.7kHz (-6..+3 dB) • Treble (-6..+7 dB) • Double-tap to zero"
+                    } else {
+                        "3-Band Tone EQ bypassed at 0 dB while 10-Band EQ shapes the audio"
+                    },
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.5.sp),
+                    color = TextMuted,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            if (!threeBandEnabled) {
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    awaitPointerEvent(PointerEventPass.Initial).changes.forEach { it.consume() }
+                                }
+                            }
+                        }
+                )
+            }
         }
-
-        Text(
-            text = "Bass (-7..+7 dB) • Mids 300Hz–4.7kHz (-6..+3 dB) • Treble (-6..+7 dB) • Double-tap to zero",
-            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.5.sp),
-            color = TextMuted,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth()
-        )
     }
 }
 
@@ -315,6 +387,7 @@ private fun ThreeBandFaderColumn(
     maxLabel: String,
     minLabel: String,
     isBypassed: Boolean,
+    isInteractive: Boolean,
     accentColor: Color,
     accentGlowColor: Color,
     onGainChange: (Float) -> Unit,
@@ -329,6 +402,7 @@ private fun ThreeBandFaderColumn(
     )
     val latestOnGainChange by rememberUpdatedState(onGainChange)
     val latestGain by rememberUpdatedState(clampedGain)
+    val latestInteractive by rememberUpdatedState(isInteractive)
     var trackHeightPx by remember { mutableFloatStateOf(1f) }
     var dragGain by remember { mutableFloatStateOf(clampedGain) }
 
@@ -429,7 +503,8 @@ private fun ThreeBandFaderColumn(
                     .weight(1f)
                     .fillMaxHeight()
                     .onSizeChanged { trackHeightPx = it.height.toFloat().coerceAtLeast(1f) }
-                    .pointerInput(title, minDb, maxDb) {
+                    .pointerInput(title, minDb, maxDb, isInteractive) {
+                        if (!latestInteractive) return@pointerInput
                         detectTapGestures(
                             onDoubleTap = { latestOnGainChange(0f) },
                             onTap = { offset ->
@@ -441,7 +516,8 @@ private fun ThreeBandFaderColumn(
                             }
                         )
                     }
-                    .pointerInput(title, minDb, maxDb) {
+                    .pointerInput(title, minDb, maxDb, isInteractive) {
+                        if (!latestInteractive) return@pointerInput
                         detectVerticalDragGestures(
                             onDragStart = { offset ->
                                 val capPad = 11.dp.toPx()

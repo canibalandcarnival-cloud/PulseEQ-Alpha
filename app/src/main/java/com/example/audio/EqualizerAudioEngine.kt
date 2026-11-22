@@ -189,7 +189,11 @@ class EqualizerAudioEngine(private val context: Context) {
         private set
 
     @Volatile
-    var currentThreeBandEnabled: Boolean = true
+    var currentTenBandEnabled: Boolean = true
+        private set
+
+    @Volatile
+    var currentThreeBandEnabled: Boolean = false
         private set
 
     @Volatile
@@ -358,6 +362,7 @@ class EqualizerAudioEngine(private val context: Context) {
             bgSoundPreset = currentBgSoundPreset,
             bgSoundVolume = currentBgSoundVolume,
             voiceIsolationEnabled = currentVoiceIsolationEnabled,
+            tenBandEnabled = currentTenBandEnabled,
             threeBandEnabled = currentThreeBandEnabled,
             threeBandBassDb = currentThreeBandBassDb,
             threeBandMidsDb = currentThreeBandMidsDb,
@@ -544,6 +549,7 @@ class EqualizerAudioEngine(private val context: Context) {
         bgSoundPreset: BackgroundSoundPreset = currentBgSoundPreset,
         bgSoundVolume: Float = currentBgSoundVolume,
         voiceIsolationEnabled: Boolean = currentVoiceIsolationEnabled,
+        tenBandEnabled: Boolean = currentTenBandEnabled,
         threeBandEnabled: Boolean = currentThreeBandEnabled,
         threeBandBassDb: Float = currentThreeBandBassDb,
         threeBandMidsDb: Float = currentThreeBandMidsDb,
@@ -557,6 +563,9 @@ class EqualizerAudioEngine(private val context: Context) {
         loudnessMaximizerEnabled: Boolean = currentLoudnessMaximizerEnabled,
         loudnessBoostPercent: Float = currentLoudnessBoostPercent
     ) {
+        val normalizedThreeBand = threeBandEnabled && !tenBandEnabled
+        val normalizedTenBand = !normalizedThreeBand
+
         currentTarget = target
         currentGainsDb = gainsDb
         currentPreampDb = preampDb
@@ -574,7 +583,8 @@ class EqualizerAudioEngine(private val context: Context) {
         currentBgSoundPreset = bgSoundPreset
         currentBgSoundVolume = bgSoundVolume
         currentVoiceIsolationEnabled = voiceIsolationEnabled
-        currentThreeBandEnabled = threeBandEnabled
+        currentTenBandEnabled = normalizedTenBand
+        currentThreeBandEnabled = normalizedThreeBand
         currentThreeBandBassDb = threeBandBassDb
         currentThreeBandMidsDb = threeBandMidsDb
         currentThreeBandTrebleDb = threeBandTrebleDb
@@ -625,7 +635,8 @@ class EqualizerAudioEngine(private val context: Context) {
             abCompareHeld = isAbHeld,
             bgSoundPreset = bgSoundPreset,
             bgSoundVolume = bgSoundVolume,
-            threeBandEnabled = threeBandEnabled,
+            tenBandEnabled = normalizedTenBand,
+            threeBandEnabled = normalizedThreeBand,
             threeBandBassDb = threeBandBassDb,
             threeBandMidsDb = threeBandMidsDb,
             threeBandTrebleDb = threeBandTrebleDb,
@@ -647,7 +658,9 @@ class EqualizerAudioEngine(private val context: Context) {
         val effectiveActive = !currentBypassed && !isAbHeld
         val isSpeakerDspActive = effectiveActive && (currentTarget == OutputTarget.SPEAKER) && currentSpeakerDspEnabled
         val isSpatialActive = effectiveActive && currentSpatialMode != SpatialMode.OFF
-        val threeBandActive = currentThreeBandEnabled &&
+        val useThreeBand = currentThreeBandEnabled && !currentTenBandEnabled
+        val useTenBand = !useThreeBand
+        val threeBandActive = useThreeBand &&
             (kotlin.math.abs(currentThreeBandBassDb) > 0.01f ||
                 kotlin.math.abs(currentThreeBandMidsDb) > 0.01f ||
                 kotlin.math.abs(currentThreeBandTrebleDb) > 0.01f)
@@ -664,7 +677,8 @@ class EqualizerAudioEngine(private val context: Context) {
                     dp.enabled = !currentBypassed
                     if (isAbHeld && !currentBypassed) {
                         // A/B Compare: bypass all tonal/dynamics stages and match perceived loudness
-                        val threeBandAvg = if (currentThreeBandEnabled) {
+                        val activeBandGains = if (useTenBand) currentGainsDb else List(10) { 0f }
+                        val threeBandAvg = if (useThreeBand) {
                             (currentThreeBandBassDb * 0.25f + currentThreeBandMidsDb * 0.50f + currentThreeBandTrebleDb * 0.25f)
                         } else {
                             0f
@@ -681,7 +695,7 @@ class EqualizerAudioEngine(private val context: Context) {
                             0f
                         }
                         val matchGainDb = AudiogramCheckEngine.computeLoudnessMatchGainDb(
-                            bandGainsDb = currentGainsDb,
+                            bandGainsDb = activeBandGains,
                             preampDb = currentPreampDb + threeBandAvg + accommodationsMatchBoost + loudnessMatchBoost,
                             lateNightEnabled = currentLateNightEnabled,
                             nightIntensity = currentNightIntensity,
@@ -705,8 +719,12 @@ class EqualizerAudioEngine(private val context: Context) {
                         val scGain = if (currentSoundCheckEnabled) systemSoundCheckTrimDb else 0f
                         dp.setInputGainAllChannelsTo(currentPreampDb + scGain + duckDb)
                         for (i in 0 until 10) {
-                            val tenBandGain = currentGainsDb.getOrElse(i) { 0f }
-                                .coerceIn(EqPresetsCatalog.MIN_GAIN_DB, EqPresetsCatalog.MAX_GAIN_DB)
+                            val tenBandGain = if (useTenBand) {
+                                currentGainsDb.getOrElse(i) { 0f }
+                                    .coerceIn(EqPresetsCatalog.MIN_GAIN_DB, EqPresetsCatalog.MAX_GAIN_DB)
+                            } else {
+                                0f
+                            }
                             val toneOffset = if (threeBandActive) {
                                 ThreeBandToneFilter.computeCombinedResponseDbAt(
                                     freqHz = EqPresetsCatalog.BANDS[i].frequencyHz.toDouble(),
@@ -895,8 +913,17 @@ class EqualizerAudioEngine(private val context: Context) {
                         for (b in 0 until numBands) {
                             val centerHz = legEq.getCenterFreq(b.toShort()) / 1000f
                             val speakerOffset = if (isSpeakerDspActive && centerHz < 110f) -10f else 0f
-                            val mappedDb = interpolateGainForFrequency(centerHz, currentGainsDb) +
-                                currentPreampDb * 0.5f + speakerOffset
+                            val activeEqDb = if (useTenBand) {
+                                interpolateGainForFrequency(centerHz, currentGainsDb)
+                            } else {
+                                ThreeBandToneFilter.computeCombinedResponseDbAt(
+                                    freqHz = centerHz.toDouble(),
+                                    bassDb = currentThreeBandBassDb,
+                                    midsDb = currentThreeBandMidsDb,
+                                    trebleDb = currentThreeBandTrebleDb
+                                )
+                            }
+                            val mappedDb = activeEqDb + currentPreampDb * 0.5f + speakerOffset
                             val levelMb = (mappedDb * 100f).toInt().coerceIn(minMb, maxMb).toShort()
                             legEq.setBandLevel(b.toShort(), levelMb)
                         }
@@ -910,6 +937,7 @@ class EqualizerAudioEngine(private val context: Context) {
         val sessionCount = AudioSessionRegistry.activeSessions.value.size
         val accMediaActive = effectiveActive && currentAccommodationsEnabled && currentAccommodationsApplyToMedia
         val loudnessMaxActive = effectiveActive && currentLoudnessMaximizerEnabled
+        val activeEqPrefix = if (useThreeBand) "3-Band" else "10-Band"
         _dspStatusLabel.value = when {
             isAbHeld -> "A/B Compare: Original"
             currentBypassed -> "DSP Bypassed"
@@ -921,14 +949,14 @@ class EqualizerAudioEngine(private val context: Context) {
             isSpeakerDspActive && currentLateNightEnabled -> "Speaker DSP + Late Night"
             isSpeakerDspActive -> "iPhone Speaker DSP"
             anyDpActive && sessionCount > 0 -> {
-                if (currentLateNightEnabled) "App DSP + Late Night ($sessionCount)" else "App DSP ($sessionCount active)"
+                if (currentLateNightEnabled) "App DSP + Late Night ($sessionCount)" else "$activeEqPrefix App DSP ($sessionCount)"
             }
             anyDpActive -> {
-                if (currentLateNightEnabled) "Global DSP + Late Night" else "10-Band Global DSP"
+                if (currentLateNightEnabled) "Global DSP + Late Night" else "$activeEqPrefix Global DSP"
             }
             anyLegacyActive -> "System EQ Active"
             !_globalMixFallbackEnabled.value && sessionCount == 0 -> "Waiting for Media App"
-            else -> if (currentLateNightEnabled) "Studio DSP + Late Night" else "Studio 10-Band DSP"
+            else -> if (currentLateNightEnabled) "Studio DSP + Late Night" else "$activeEqPrefix Studio DSP"
         }
     }
 
@@ -1133,6 +1161,7 @@ class EqualizerAudioEngine(private val context: Context) {
             abCompareHeld = _abCompareHeld.value,
             bgSoundPreset = currentBgSoundPreset,
             bgSoundVolume = currentBgSoundVolume,
+            tenBandEnabled = currentTenBandEnabled,
             threeBandEnabled = currentThreeBandEnabled,
             threeBandBassDb = currentThreeBandBassDb,
             threeBandMidsDb = currentThreeBandMidsDb,
