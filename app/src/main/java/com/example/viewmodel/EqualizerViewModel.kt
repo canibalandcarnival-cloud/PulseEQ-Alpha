@@ -286,6 +286,21 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
         commitProfile(updated)
     }
 
+    fun toggleSpeakerDsp() {
+        val current = currentProfile()
+        val updated = current.copy(speakerDspEnabled = !current.speakerDspEnabled)
+        commitProfile(updated)
+    }
+
+    fun toggleVirtualBass() {
+        val current = currentProfile()
+        val updated = current.copy(
+            virtualBassEnabled = !current.virtualBassEnabled,
+            speakerDspEnabled = if (!current.virtualBassEnabled) true else current.speakerDspEnabled
+        )
+        commitProfile(updated)
+    }
+
     fun toggleBypass() {
         val current = currentProfile()
         val updated = current.copy(isBypassed = !current.isBypassed)
@@ -329,11 +344,14 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun applyToAudioEngine(profile: OutputEqProfile) {
         audioEngine.applyParameters(
+            target = profile.target,
             gainsDb = profile.bandGainsDb,
             preampDb = profile.preampDb,
             isBypassed = profile.isBypassed,
             lateNightEnabled = profile.lateNightEnabled,
-            nightIntensity = profile.nightIntensity
+            nightIntensity = profile.nightIntensity,
+            speakerDspEnabled = profile.speakerDspEnabled,
+            virtualBassEnabled = profile.virtualBassEnabled
         )
     }
 

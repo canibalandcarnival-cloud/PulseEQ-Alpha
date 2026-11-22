@@ -40,6 +40,8 @@ class EqPreferencesRepository(private val context: Context) {
         fun presetKey(target: OutputTarget) = stringPreferencesKey("preset_${target.id}")
         fun lateNightKey(target: OutputTarget) = booleanPreferencesKey("late_night_${target.id}")
         fun nightIntensityKey(target: OutputTarget) = stringPreferencesKey("night_intensity_${target.id}")
+        fun speakerDspKey(target: OutputTarget) = booleanPreferencesKey("speaker_dsp_${target.id}")
+        fun virtualBassKey(target: OutputTarget) = booleanPreferencesKey("virtual_bass_${target.id}")
     }
 
     val preferencesFlow: Flow<StoredEqPreferences> = context.eqDataStore.data.map { prefs ->
@@ -77,7 +79,9 @@ class EqPreferencesRepository(private val context: Context) {
                 selectedPresetId = prefs[Keys.presetKey(target)]
                     ?: OutputEqProfile.defaultPresetIdForTarget(target),
                 lateNightEnabled = prefs[Keys.lateNightKey(target)] ?: false,
-                nightIntensity = intensity
+                nightIntensity = intensity,
+                speakerDspEnabled = prefs[Keys.speakerDspKey(target)] ?: (target == OutputTarget.SPEAKER),
+                virtualBassEnabled = prefs[Keys.virtualBassKey(target)] ?: (target == OutputTarget.SPEAKER)
             )
         }
 
@@ -122,6 +126,8 @@ class EqPreferencesRepository(private val context: Context) {
             prefs[Keys.presetKey(profile.target)] = profile.selectedPresetId
             prefs[Keys.lateNightKey(profile.target)] = profile.lateNightEnabled
             prefs[Keys.nightIntensityKey(profile.target)] = profile.nightIntensity.name
+            prefs[Keys.speakerDspKey(profile.target)] = profile.speakerDspEnabled
+            prefs[Keys.virtualBassKey(profile.target)] = profile.virtualBassEnabled
         }
     }
 }

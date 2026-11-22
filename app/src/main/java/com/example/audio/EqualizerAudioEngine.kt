@@ -87,10 +87,22 @@ class EqualizerAudioEngine(private val context: Context) {
     private val _visualizerFrame = MutableStateFlow(VisualizerFrame())
     val visualizerFrame: StateFlow<VisualizerFrame> = _visualizerFrame.asStateFlow()
 
-    // Upper cutoff frequencies for the 10 octave-spaced bands (32Hz..16kHz)
+    // Upper cutoff frequencies for the 10 user PreEq bands (32Hz..16kHz)
     private val bandUpperCutoffsHz = floatArrayOf(
         45f, 90f, 180f, 355f, 710f, 1400f, 2800f, 5600f, 11200f, 20000f
     )
+
+    // Upper cutoff frequencies for the 6 PostEq iPhone Speaker DSP shaping bands:
+    // [0]: <70Hz steep cut, [1]: 70-110Hz HPF shoulder, [2]: 110-250Hz virtual bass shelf,
+    // [3]: 250-550Hz boxiness dip (400Hz -3dB), [4]: 550-2800Hz vocal clarity (2kHz +2dB),
+    // [5]: 2800-4800Hz screech tame (3.5kHz -1.5dB), [6]: 4800-20kHz crisp air (10kHz +2.5dB)
+    private val speakerPostEqCutoffsHz = floatArrayOf(
+        70f, 110f, 250f, 550f, 2800f, 4800f, 20000f
+    )
+
+    @Volatile
+    var currentTarget: OutputTarget = OutputTarget.SPEAKER
+        private set
 
     @Volatile
     var currentGainsDb: List<Float> = List(10) { 0f }
@@ -110,6 +122,14 @@ class EqualizerAudioEngine(private val context: Context) {
 
     @Volatile
     var currentNightIntensity: NightIntensity = NightIntensity.STANDARD
+        private set
+
+    @Volatile
+    var currentSpeakerDspEnabled: Boolean = true
+        private set
+
+    @Volatile
+    var currentVirtualBassEnabled: Boolean = true
         private set
 
     private val deviceCallback = object : AudioDeviceCallback() {
@@ -239,13 +259,11 @@ class EqualizerAudioEngine(private val context: Context) {
             }
         }
 
-        // Detach effects for closed sessions or disabled Session 0
         val toRemove = sessionEffects.keys.filter { it !in targetSessions }
         for (id in toRemove) {
             sessionEffects.remove(id)?.release()
         }
 
-        // Attach effects for newly detected media sessions or Session 0
         for (sessionId in targetSessions) {
             if (!sessionEffects.containsKey(sessionId)) {
                 createEffectForSession(sessionId)?.let { created ->
@@ -265,14 +283,20 @@ class EqualizerAudioEngine(private val context: Context) {
                     2,
                     true, 10,
                     true, 1,
-                    false, 0,
+                    true, speakerPostEqCutoffsHz.size,
                     true
                 )
-                val eq = DynamicsProcessing.Eq(true, true, 10)
+                val preEq = DynamicsProcessing.Eq(true, true, 10)
                 for (i in 0 until 10) {
-                    eq.setBand(i, DynamicsProcessing.EqBand(true, bandUpperCutoffsHz[i], 0f))
+                    preEq.setBand(i, DynamicsProcessing.EqBand(true, bandUpperCutoffsHz[i], 0f))
                 }
-                builder.setPreEqAllChannelsTo(eq)
+                builder.setPreEqAllChannelsTo(preEq)
+
+                val postEq = DynamicsProcessing.Eq(true, false, speakerPostEqCutoffsHz.size)
+                for (i in speakerPostEqCutoffsHz.indices) {
+                    postEq.setBand(i, DynamicsProcessing.EqBand(true, speakerPostEqCutoffsHz[i], 0f))
+                }
+                builder.setPostEqAllChannelsTo(postEq)
 
                 val mbc = DynamicsProcessing.Mbc(true, false, 1)
                 mbc.setBand(
@@ -322,26 +346,42 @@ class EqualizerAudioEngine(private val context: Context) {
     }
 
     fun applyParameters(
+        target: OutputTarget = currentTarget,
         gainsDb: List<Float>,
         preampDb: Float,
         isBypassed: Boolean,
         lateNightEnabled: Boolean = currentLateNightEnabled,
-        nightIntensity: NightIntensity = currentNightIntensity
+        nightIntensity: NightIntensity = currentNightIntensity,
+        speakerDspEnabled: Boolean = currentSpeakerDspEnabled,
+        virtualBassEnabled: Boolean = currentVirtualBassEnabled
     ) {
+        currentTarget = target
         currentGainsDb = gainsDb
         currentPreampDb = preampDb
         currentBypassed = isBypassed
         currentLateNightEnabled = lateNightEnabled
         currentNightIntensity = nightIntensity
+        currentSpeakerDspEnabled = speakerDspEnabled
+        currentVirtualBassEnabled = virtualBassEnabled
 
-        // Always update the internal 10-band biquad + dynamic compressor test synth engine
-        testSynthesizer.updateEq(gainsDb, preampDb, isBypassed, lateNightEnabled, nightIntensity)
+        val isSpeakerDspActive = (target == OutputTarget.SPEAKER) && speakerDspEnabled
+
+        testSynthesizer.updateEq(
+            gainsDb = gainsDb,
+            preampDb = preampDb,
+            isBypassed = isBypassed,
+            lateNightEnabled = lateNightEnabled,
+            nightIntensity = nightIntensity,
+            speakerDspEnabled = isSpeakerDspActive,
+            virtualBassEnabled = isSpeakerDspActive && virtualBassEnabled
+        )
         applyToAllSessions()
     }
 
     private fun applyToAllSessions() {
         var anyDpActive = false
         var anyLegacyActive = false
+        val isSpeakerDspActive = (currentTarget == OutputTarget.SPEAKER) && currentSpeakerDspEnabled
 
         for (bundle in sessionEffects.values) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && bundle.dynamicsProcessing != null) {
@@ -359,6 +399,31 @@ class EqualizerAudioEngine(private val context: Context) {
                             )
                         }
 
+                        // PostEq stage: iPhone Speaker DSP curve (110Hz steep cut, virtual bass warmth,
+                        // 400Hz -3dB boxiness dip, 2kHz +2dB clarity, 3.5kHz -1.5dB tame, 10kHz +2.5dB air)
+                        val postEqGains = if (isSpeakerDspActive) {
+                            floatArrayOf(
+                                -12.0f, // <70Hz steep sub-bass protection
+                                -10.0f, // 70-110Hz steep HPF shoulder
+                                if (currentVirtualBassEnabled) 2.2f else 0.0f, // 120-250Hz harmonic punch
+                                -3.0f,  // 400Hz surgical boxiness removal
+                                2.0f,   // 2kHz crisp vocal clarity
+                                -1.5f,  // 3.5kHz harshness tame
+                                2.5f    // 10kHz airy detail
+                            )
+                        } else {
+                            FloatArray(speakerPostEqCutoffsHz.size) { 0f }
+                        }
+                        val postEq = DynamicsProcessing.Eq(true, isSpeakerDspActive, speakerPostEqCutoffsHz.size)
+                        for (i in speakerPostEqCutoffsHz.indices) {
+                            postEq.setBand(
+                                i,
+                                DynamicsProcessing.EqBand(isSpeakerDspActive, speakerPostEqCutoffsHz[i], postEqGains[i])
+                            )
+                        }
+                        dp.setPostEqAllChannelsTo(postEq)
+
+                        // Mbc stage: Late Night 4:1 compressor
                         val compEnabled = currentLateNightEnabled
                         val mbc = DynamicsProcessing.Mbc(true, compEnabled, 1)
                         mbc.setBand(
@@ -379,8 +444,19 @@ class EqualizerAudioEngine(private val context: Context) {
                         )
                         dp.setMbcAllChannelsTo(mbc)
 
-                        val limiterCeiling = if (compEnabled) -0.5f else -0.2f
-                        dp.setLimiterAllChannelsTo(
+                        // Limiter stage: iPhone Smart Speaker Limiter (-6dB, 12:1, 1ms/80ms, +3dB makeup)
+                        val limiter = if (isSpeakerDspActive) {
+                            DynamicsProcessing.Limiter(
+                                true,
+                                true,
+                                0,
+                                1.0f,
+                                80.0f,
+                                12.0f,
+                                -6.0f,
+                                3.0f
+                            )
+                        } else {
                             DynamicsProcessing.Limiter(
                                 true,
                                 true,
@@ -388,10 +464,11 @@ class EqualizerAudioEngine(private val context: Context) {
                                 1.0f,
                                 60.0f,
                                 10.0f,
-                                limiterCeiling,
+                                -0.5f,
                                 0.0f
                             )
-                        )
+                        }
+                        dp.setLimiterAllChannelsTo(limiter)
                     }
                     anyDpActive = true
                 } catch (_: Throwable) {
@@ -407,7 +484,9 @@ class EqualizerAudioEngine(private val context: Context) {
                         val numBands = legEq.numberOfBands.toInt()
                         for (b in 0 until numBands) {
                             val centerHz = legEq.getCenterFreq(b.toShort()) / 1000f
-                            val mappedDb = interpolateGainForFrequency(centerHz, currentGainsDb) + currentPreampDb * 0.5f
+                            val speakerOffset = if (isSpeakerDspActive && centerHz < 110f) -10f else 0f
+                            val mappedDb = interpolateGainForFrequency(centerHz, currentGainsDb) +
+                                currentPreampDb * 0.5f + speakerOffset
                             val levelMb = (mappedDb * 100f).toInt().coerceIn(minMb, maxMb).toShort()
                             legEq.setBandLevel(b.toShort(), levelMb)
                         }
@@ -421,6 +500,8 @@ class EqualizerAudioEngine(private val context: Context) {
         val sessionCount = AudioSessionRegistry.activeSessions.value.size
         _dspStatusLabel.value = when {
             currentBypassed -> "DSP Bypassed"
+            isSpeakerDspActive && currentLateNightEnabled -> "Speaker DSP + Late Night"
+            isSpeakerDspActive -> "iPhone Speaker DSP"
             anyDpActive && sessionCount > 0 -> {
                 if (currentLateNightEnabled) "App DSP + Late Night ($sessionCount)" else "App DSP ($sessionCount active)"
             }
@@ -483,7 +564,9 @@ class EqualizerAudioEngine(private val context: Context) {
                         }
                         val live = peak > 0.01f
                         val peakDb = if (peak > 1e-4f) (20f * log10(peak)).coerceIn(-60f, 0f) else -60f
-                        val grDb = if (live && currentLateNightEnabled && !currentBypassed) {
+
+                        val isSpeakerDspActive = (currentTarget == OutputTarget.SPEAKER) && currentSpeakerDspEnabled
+                        val lateNightGr = if (live && currentLateNightEnabled && !currentBypassed) {
                             DynamicRangeCompressor.computeGainReductionDb(
                                 inputDb = peakDb,
                                 thresholdDb = currentNightIntensity.thresholdDb,
@@ -493,10 +576,21 @@ class EqualizerAudioEngine(private val context: Context) {
                         } else {
                             0f
                         }
+                        val speakerLimiterGr = if (live && isSpeakerDspActive && !currentBypassed) {
+                            DynamicRangeCompressor.computeGainReductionDb(
+                                inputDb = peakDb,
+                                thresholdDb = -6f,
+                                kneeDb = 4f,
+                                ratio = 12f
+                            )
+                        } else {
+                            0f
+                        }
+
                         _systemVisualizerFrame.value = _systemVisualizerFrame.value.copy(
                             waveformSamples = samples,
                             peakDb = peakDb,
-                            gainReductionDb = grDb,
+                            gainReductionDb = minOf(lateNightGr, speakerLimiterGr),
                             isSignalLive = live
                         )
                     }
@@ -555,12 +649,15 @@ class EqualizerAudioEngine(private val context: Context) {
 
     fun setTestAudioSource(source: TestAudioSource) {
         testSynthesizer.setSource(source)
+        val isSpeakerDspActive = (currentTarget == OutputTarget.SPEAKER) && currentSpeakerDspEnabled
         testSynthesizer.updateEq(
-            currentGainsDb,
-            currentPreampDb,
-            currentBypassed,
-            currentLateNightEnabled,
-            currentNightIntensity
+            gainsDb = currentGainsDb,
+            preampDb = currentPreampDb,
+            isBypassed = currentBypassed,
+            lateNightEnabled = currentLateNightEnabled,
+            nightIntensity = currentNightIntensity,
+            speakerDspEnabled = isSpeakerDspActive,
+            virtualBassEnabled = isSpeakerDspActive && currentVirtualBassEnabled
         )
     }
 

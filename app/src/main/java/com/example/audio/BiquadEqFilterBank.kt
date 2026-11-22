@@ -28,8 +28,95 @@ import kotlin.math.sin
 import kotlin.math.tanh
 
 /**
- * Real-time soft-knee Dynamic Range Compressor matching the Web Audio DynamicsCompressorNode
- * specification (Threshold, 20 dB Knee, 4:1 Ratio, 5ms Attack, 250ms Release, Makeup Gain).
+ * Reusable single stereo biquad filter supporting Peaking EQ, High-Pass, and Band-Pass modes.
+ */
+class StereoBiquad {
+    private var b0 = 1.0
+    private var b1 = 0.0
+    private var b2 = 0.0
+    private var a1 = 0.0
+    private var a2 = 0.0
+
+    private var z1L = 0.0
+    private var z2L = 0.0
+    private var z1R = 0.0
+    private var z2R = 0.0
+
+    fun setPeaking(sampleRate: Int, freqHz: Double, q: Double, gainDb: Double) {
+        val a = 10.0.pow(gainDb / 40.0)
+        val w0 = 2.0 * PI * freqHz / sampleRate
+        val cosW0 = cos(w0)
+        val alpha = sin(w0) / (2.0 * q)
+
+        val nb0 = 1.0 + alpha * a
+        val nb1 = -2.0 * cosW0
+        val nb2 = 1.0 - alpha * a
+        val na0 = 1.0 + alpha / a
+        val na1 = -2.0 * cosW0
+        val na2 = 1.0 - alpha / a
+
+        b0 = nb0 / na0
+        b1 = nb1 / na0
+        b2 = nb2 / na0
+        a1 = na1 / na0
+        a2 = na2 / na0
+    }
+
+    fun setHighPass(sampleRate: Int, freqHz: Double, q: Double) {
+        val w0 = 2.0 * PI * freqHz / sampleRate
+        val cosW0 = cos(w0)
+        val alpha = sin(w0) / (2.0 * q)
+
+        val nb0 = (1.0 + cosW0) * 0.5
+        val nb1 = -(1.0 + cosW0)
+        val nb2 = (1.0 + cosW0) * 0.5
+        val na0 = 1.0 + alpha
+        val na1 = -2.0 * cosW0
+        val na2 = 1.0 - alpha
+
+        b0 = nb0 / na0
+        b1 = nb1 / na0
+        b2 = nb2 / na0
+        a1 = na1 / na0
+        a2 = na2 / na0
+    }
+
+    fun setBandPass(sampleRate: Int, freqHz: Double, q: Double) {
+        val w0 = 2.0 * PI * freqHz / sampleRate
+        val cosW0 = cos(w0)
+        val alpha = sin(w0) / (2.0 * q)
+
+        val nb0 = alpha
+        val nb1 = 0.0
+        val nb2 = -alpha
+        val na0 = 1.0 + alpha
+        val na1 = -2.0 * cosW0
+        val na2 = 1.0 - alpha
+
+        b0 = nb0 / na0
+        b1 = nb1 / na0
+        b2 = nb2 / na0
+        a1 = na1 / na0
+        a2 = na2 / na0
+    }
+
+    fun processStereo(inL: Double, inR: Double): Pair<Double, Double> {
+        val outL = b0 * inL + z1L
+        z1L = b1 * inL - a1 * outL + z2L
+        z2L = b2 * inL - a2 * outL
+
+        val outR = b0 * inR + z1R
+        z1R = b1 * inR - a1 * outR + z2R
+        z2R = b2 * inR - a2 * outR
+
+        return outL to outR
+    }
+}
+
+/**
+ * Real-time soft-knee Dynamic Range Compressor / Smart Limiter.
+ * Used both for Late Night Mode (20 dB knee, 4:1 ratio, 5ms/250ms) and
+ * iPhone Speaker Smart Limiter (-6 dB threshold, 12:1 ratio, 1ms/80ms, +3 dB makeup).
  */
 class DynamicRangeCompressor(private val sampleRate: Int = 44100) {
 
@@ -57,13 +144,33 @@ class DynamicRangeCompressor(private val sampleRate: Int = 44100) {
         private set
 
     fun configure(isEnabled: Boolean, intensity: NightIntensity) {
+        configureCustom(
+            isEnabled = isEnabled,
+            threshold = intensity.thresholdDb,
+            knee = intensity.kneeDb,
+            compRatio = intensity.ratio,
+            attackMs = intensity.attackMs,
+            releaseMs = intensity.releaseMs,
+            makeupGainDb = intensity.makeupGainDb
+        )
+    }
+
+    fun configureCustom(
+        isEnabled: Boolean,
+        threshold: Float,
+        knee: Float,
+        compRatio: Float,
+        attackMs: Float,
+        releaseMs: Float,
+        makeupGainDb: Float
+    ) {
         enabled = isEnabled
-        thresholdDb = intensity.thresholdDb
-        kneeDb = intensity.kneeDb
-        ratio = intensity.ratio
-        makeupGainLinear = 10.0.pow(intensity.makeupGainDb / 20.0)
-        attackCoeff = exp(-1.0 / ((intensity.attackMs / 1000.0) * sampleRate))
-        releaseCoeff = exp(-1.0 / ((intensity.releaseMs / 1000.0) * sampleRate))
+        thresholdDb = threshold
+        kneeDb = knee
+        ratio = compRatio
+        makeupGainLinear = 10.0.pow(makeupGainDb / 20.0)
+        attackCoeff = exp(-1.0 / ((attackMs.coerceAtLeast(0.1f) / 1000.0) * sampleRate))
+        releaseCoeff = exp(-1.0 / ((releaseMs.coerceAtLeast(1f) / 1000.0) * sampleRate))
         if (!isEnabled) {
             latestGainReductionDb = 0f
         }
@@ -124,28 +231,107 @@ class DynamicRangeCompressor(private val sampleRate: Int = 44100) {
 }
 
 /**
- * Cascaded 10-band stereo biquad peaking EQ filter + preamp + dynamic range compressor + soft limiter
- * matching exact center frequencies: 32, 64, 125, 250, 500, 1k, 2k, 4k, 8k, 16k Hz.
+ * 4-Stage "iPhone Speaker DSP" Chain tailored for mobile micro-drivers:
+ * 1. 110Hz Steep High-Pass Filter (4th-order Butterworth, 24 dB/octave)
+ * 2. Psychoacoustic Virtual Bass (120Hz-250Hz harmonic exciter/waveshaper)
+ * 3. Boxiness & Resonance Correction (400Hz -3dB narrow Q, 2kHz +2dB, 3.5kHz -1.5dB, 10kHz +2.5dB)
+ * 4. Smart Speaker Limiter (-6 dB threshold, 12:1 ratio, 1ms attack, 80ms release, +3 dB makeup)
+ */
+class PhoneSpeakerDspChain(sampleRate: Int = 44100) {
+
+    // Stage 1: Cascaded 4th-order Butterworth HPF @ 110Hz (24 dB/oct)
+    private val hpfStage1 = StereoBiquad().apply { setHighPass(sampleRate, 110.0, 0.5411961) }
+    private val hpfStage2 = StereoBiquad().apply { setHighPass(sampleRate, 110.0, 1.3065630) }
+
+    // Stage 2: Psychoacoustic Virtual Bass (extract 40-110Hz -> waveshape -> bandpass 120-250Hz)
+    private val subExtractor = StereoBiquad().apply { setBandPass(sampleRate, 72.0, 0.95) }
+    private val harmonicBandPass = StereoBiquad().apply { setBandPass(sampleRate, 180.0, 1.25) }
+
+    // Stage 3: Boxiness & Tinny Resonance Removal
+    private val boxinessDip400Hz = StereoBiquad().apply { setPeaking(sampleRate, 400.0, 3.2, -3.0) }
+    private val vocalClarity2kHz = StereoBiquad().apply { setPeaking(sampleRate, 2000.0, 1.2, 2.0) }
+    private val screechTame3500Hz = StereoBiquad().apply { setPeaking(sampleRate, 3500.0, 2.0, -1.5) }
+    private val crispAir10kHz = StereoBiquad().apply { setPeaking(sampleRate, 10000.0, 1.0, 2.5) }
+
+    // Stage 4: iPhone-Style Smart Speaker Limiter
+    private val smartLimiter = DynamicRangeCompressor(sampleRate).apply {
+        configureCustom(
+            isEnabled = true,
+            threshold = -6f,
+            knee = 4f,
+            compRatio = 12f,
+            attackMs = 1f,
+            releaseMs = 80f,
+            makeupGainDb = 3f
+        )
+    }
+
+    @Volatile
+    var speakerDspEnabled: Boolean = false
+
+    @Volatile
+    var virtualBassEnabled: Boolean = false
+
+    val latestLimiterReductionDb: Float
+        get() = if (speakerDspEnabled) smartLimiter.latestGainReductionDb else 0f
+
+    fun configure(isSpeakerDspEnabled: Boolean, isVirtualBassEnabled: Boolean) {
+        speakerDspEnabled = isSpeakerDspEnabled
+        virtualBassEnabled = isVirtualBassEnabled
+        smartLimiter.configureCustom(
+            isEnabled = isSpeakerDspEnabled,
+            threshold = -6f,
+            knee = 4f,
+            compRatio = 12f,
+            attackMs = 1f,
+            releaseMs = 80f,
+            makeupGainDb = 3f
+        )
+    }
+
+    fun processStereoSample(inL: Double, inR: Double): Pair<Double, Double> {
+        if (!speakerDspEnabled) return inL to inR
+
+        // Stage 2 extraction happens pre-HPF so sub-bass energy below 110Hz feeds harmonic synthesis
+        val (harmL, harmR) = if (virtualBassEnabled) {
+            val (subL, subR) = subExtractor.processStereo(inL, inR)
+            val shapedL = tanh(subL * 3.2) + 0.35 * (subL * subL)
+            val shapedR = tanh(subR * 3.2) + 0.35 * (subR * subR)
+            harmonicBandPass.processStereo(shapedL, shapedR)
+        } else {
+            0.0 to 0.0
+        }
+
+        // Stage 1: 24 dB/octave steep high-pass at 110Hz
+        val (hp1L, hp1R) = hpfStage1.processStereo(inL, inR)
+        val (hp2L, hp2R) = hpfStage2.processStereo(hp1L, hp1R)
+
+        // Blend synthesized 120Hz-250Hz virtual bass harmonics back into protected signal
+        var l = hp2L + harmL * 0.48
+        var r = hp2R + harmR * 0.48
+
+        // Stage 3: Boxiness & tinny resonance shaping
+        val (bL, bR) = boxinessDip400Hz.processStereo(l, r)
+        val (vL, vR) = vocalClarity2kHz.processStereo(bL, bR)
+        val (sL, sR) = screechTame3500Hz.processStereo(vL, vR)
+        val (aL, aR) = crispAir10kHz.processStereo(sL, sR)
+        l = aL
+        r = aR
+
+        // Stage 4: Smart Speaker Limiter (-6dB, 12:1, 1ms/80ms, +3dB makeup)
+        return smartLimiter.processStereoSample(l, r)
+    }
+}
+
+/**
+ * Cascaded 10-band stereo biquad peaking EQ filter + preamp + Late Night compressor +
+ * Phone Speaker DSP chain + soft clip guard.
  */
 class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
 
-    private class BiquadCoeffs(
-        var b0: Double = 1.0,
-        var b1: Double = 0.0,
-        var b2: Double = 0.0,
-        var a1: Double = 0.0,
-        var a2: Double = 0.0
-    )
-
-    private class ChannelState {
-        val z1 = DoubleArray(10)
-        val z2 = DoubleArray(10)
-    }
-
-    private val coeffs = Array(10) { BiquadCoeffs() }
-    private val leftState = ChannelState()
-    private val rightState = ChannelState()
-    private val compressor = DynamicRangeCompressor(sampleRate)
+    private val bandFilters = Array(10) { StereoBiquad() }
+    private val lateNightCompressor = DynamicRangeCompressor(sampleRate)
+    private val speakerDspChain = PhoneSpeakerDspChain(sampleRate)
 
     @Volatile
     private var preampLinear: Double = 1.0
@@ -154,10 +340,24 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
     private var bypassed: Boolean = false
 
     val latestGainReductionDb: Float
-        get() = if (bypassed) 0f else compressor.latestGainReductionDb
+        get() = when {
+            bypassed -> 0f
+            lateNightCompressor.latestGainReductionDb < -0.05f || speakerDspChain.latestLimiterReductionDb < -0.05f -> {
+                minOf(lateNightCompressor.latestGainReductionDb, speakerDspChain.latestLimiterReductionDb)
+            }
+            else -> 0f
+        }
 
     init {
-        updateParameters(List(10) { 0f }, 0f, false, false, NightIntensity.STANDARD)
+        updateParameters(
+            gainsDb = List(10) { 0f },
+            preampDb = 0f,
+            isBypassed = false,
+            lateNightEnabled = false,
+            nightIntensity = NightIntensity.STANDARD,
+            speakerDspEnabled = false,
+            virtualBassEnabled = false
+        )
     }
 
     fun updateParameters(
@@ -165,33 +365,22 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         preampDb: Float,
         isBypassed: Boolean,
         lateNightEnabled: Boolean = false,
-        nightIntensity: NightIntensity = NightIntensity.STANDARD
+        nightIntensity: NightIntensity = NightIntensity.STANDARD,
+        speakerDspEnabled: Boolean = false,
+        virtualBassEnabled: Boolean = false
     ) {
         bypassed = isBypassed
         preampLinear = 10.0.pow(preampDb.toDouble() / 20.0)
-        compressor.configure(isEnabled = lateNightEnabled && !isBypassed, intensity = nightIntensity)
+        lateNightCompressor.configure(isEnabled = lateNightEnabled && !isBypassed, intensity = nightIntensity)
+        speakerDspChain.configure(
+            isSpeakerDspEnabled = speakerDspEnabled && !isBypassed,
+            isVirtualBassEnabled = virtualBassEnabled && !isBypassed
+        )
 
-        val q = 1.414
         for (i in 0 until 10) {
             val freq = EqPresetsCatalog.BANDS[i].frequencyHz.toDouble()
             val db = gainsDb.getOrElse(i) { 0f }.toDouble()
-            val a = 10.0.pow(db / 40.0)
-            val w0 = 2.0 * PI * freq / sampleRate
-            val cosW0 = cos(w0)
-            val alpha = sin(w0) / (2.0 * q)
-
-            val b0 = 1.0 + alpha * a
-            val b1 = -2.0 * cosW0
-            val b2 = 1.0 - alpha * a
-            val a0 = 1.0 + alpha / a
-            val a1 = -2.0 * cosW0
-            val a2 = 1.0 - alpha / a
-
-            coeffs[i].b0 = b0 / a0
-            coeffs[i].b1 = b1 / a0
-            coeffs[i].b2 = b2 / a0
-            coeffs[i].a1 = a1 / a0
-            coeffs[i].a2 = a2 / a0
+            bandFilters[i].setPeaking(sampleRate, freq, 1.414, db)
         }
     }
 
@@ -203,29 +392,22 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         var r = inR * preampLinear
 
         for (band in 0 until 10) {
-            val c = coeffs[band]
-
-            val outL = c.b0 * l + leftState.z1[band]
-            leftState.z1[band] = c.b1 * l - c.a1 * outL + leftState.z2[band]
-            leftState.z2[band] = c.b2 * l - c.a2 * outL
-            l = outL
-
-            val outR = c.b0 * r + rightState.z1[band]
-            rightState.z1[band] = c.b1 * r - c.a1 * outR + rightState.z2[band]
-            rightState.z2[band] = c.b2 * r - c.a2 * outR
-            r = outR
+            val (nextL, nextR) = bandFilters[band].processStereo(l, r)
+            l = nextL
+            r = nextR
         }
 
-        val (compL, compR) = compressor.processStereoSample(l, r)
+        val (compL, compR) = lateNightCompressor.processStereoSample(l, r)
+        val (spkL, spkR) = speakerDspChain.processStereoSample(compL, compR)
 
-        // Soft studio limiter to prevent digital clipping when boosting +12dB
-        return tanh(compL * 0.9) to tanh(compR * 0.9)
+        // Final safety ceiling to prevent digital clipping
+        return tanh(spkL * 0.92) to tanh(spkR * 0.92)
     }
 }
 
 /**
  * Built-in real-time audio synthesizer so users can audition and visualize
- * Speaker / Headphone / Bluetooth EQ tuning & Late Night compression immediately.
+ * Speaker DSP, Headphones, Bluetooth EQ tuning & Late Night compression immediately.
  */
 class TestAudioSynthesizer {
     private val sampleRate = 44100
@@ -250,9 +432,19 @@ class TestAudioSynthesizer {
         preampDb: Float,
         isBypassed: Boolean,
         lateNightEnabled: Boolean,
-        nightIntensity: NightIntensity
+        nightIntensity: NightIntensity,
+        speakerDspEnabled: Boolean,
+        virtualBassEnabled: Boolean
     ) {
-        filterBank.updateParameters(gainsDb, preampDb, isBypassed, lateNightEnabled, nightIntensity)
+        filterBank.updateParameters(
+            gainsDb = gainsDb,
+            preampDb = preampDb,
+            isBypassed = isBypassed,
+            lateNightEnabled = lateNightEnabled,
+            nightIntensity = nightIntensity,
+            speakerDspEnabled = speakerDspEnabled,
+            virtualBassEnabled = virtualBassEnabled
+        )
     }
 
     fun setSource(source: TestAudioSource) {
@@ -325,7 +517,6 @@ class TestAudioSynthesizer {
             val monoAnalysis = DoubleArray(512)
             var sampleCursor = 0L
 
-            // Voss-McCartney pink noise state
             val pinkRows = DoubleArray(16)
             var pinkRunningSum = 0.0
             var pinkCounter = 0
@@ -336,7 +527,6 @@ class TestAudioSynthesizer {
                     val t = sampleCursor.toDouble() / sampleRate
                     val (rawL, rawR) = when (source) {
                         TestAudioSource.AMBIENT_CHORD -> {
-                            // Dynamic range swells + full-spectrum harmonics so compression is clearly audible & visible
                             val swell = 0.45 + 0.55 * abs(sin(2.0 * PI * 0.28 * t))
                             val sub = sin(2.0 * PI * 55.0 * t) * 0.24
                             val bass = sin(2.0 * PI * 110.0 * t) * 0.22
@@ -353,7 +543,6 @@ class TestAudioSynthesizer {
                         }
 
                         TestAudioSource.BASS_GROOVE -> {
-                            // 120 BPM electronic kick + bassline + hi-hat transient (great for GR meter)
                             val beatPos = (t * 2.0) % 1.0
                             val kickEnv = exp(-beatPos * 11.0)
                             val kickFreq = 42.0 + 110.0 * exp(-beatPos * 26.0)

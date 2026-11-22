@@ -85,4 +85,36 @@ class ExampleUnitTest {
         val (boostedL, _) = bank.processStereoSample(0.25, 0.25)
         assertTrue("Preamp +6dB should boost output magnitude", abs(boostedL) > 0.35)
     }
+
+    @Test
+    fun phone_speaker_dsp_attenuates_sub_bass_and_generates_virtual_bass_harmonics() {
+        val sampleRate = 44100
+        val noVirtualBass = com.example.audio.PhoneSpeakerDspChain(sampleRate).apply {
+            configure(isSpeakerDspEnabled = true, isVirtualBassEnabled = false)
+        }
+        val withVirtualBass = com.example.audio.PhoneSpeakerDspChain(sampleRate).apply {
+            configure(isSpeakerDspEnabled = true, isVirtualBassEnabled = true)
+        }
+
+        // Feed pure 50Hz sub-bass sine wave (well below 110Hz HPF cutoff)
+        var rmsNoVirtual = 0.0
+        var rmsWithVirtual = 0.0
+        val numSamples = 4410 // 100ms
+        for (i in 0 until numSamples) {
+            val s = 0.5 * kotlin.math.sin(2.0 * Math.PI * 50.0 * i / sampleRate)
+            val (outNo, _) = noVirtualBass.processStereoSample(s, s)
+            val (outYes, _) = withVirtualBass.processStereoSample(s, s)
+            if (i > 2205) { // steady-state second half
+                rmsNoVirtual += outNo * outNo
+                rmsWithVirtual += outYes * outYes
+            }
+        }
+        rmsNoVirtual = kotlin.math.sqrt(rmsNoVirtual / 2205)
+        rmsWithVirtual = kotlin.math.sqrt(rmsWithVirtual / 2205)
+
+        // 24dB/oct HPF at 110Hz cuts 50Hz (>1 octave below) by >24dB (<0.06x input RMS 0.353)
+        assertTrue("110Hz 24dB/oct HPF should strongly attenuate 50Hz sub-bass", rmsNoVirtual < 0.06)
+        // Virtual Bass should synthesize audible 120-250Hz harmonics above the HPF-only baseline
+        assertTrue("Virtual Bass should add harmonic energy above HPF-only baseline", rmsWithVirtual > rmsNoVirtual * 1.4)
+    }
 }

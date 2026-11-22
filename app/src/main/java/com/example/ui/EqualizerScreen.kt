@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -47,6 +48,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.model.OutputTarget
 import com.example.ui.components.AudioRoutingServiceCard
 import com.example.ui.components.AudioVisualizerPanel
 import com.example.ui.components.EqualizerConsole
@@ -55,6 +57,7 @@ import com.example.ui.components.MasterActionBar
 import com.example.ui.components.OutputDeviceSelector
 import com.example.ui.components.PresetQuickStrip
 import com.example.ui.components.PresetsBrowserSheet
+import com.example.ui.components.SpeakerDspCard
 import com.example.ui.theme.AnalyzerCyan
 import com.example.ui.theme.RouteEmerald
 import com.example.ui.theme.SignalCoral
@@ -222,6 +225,16 @@ private fun CompactConsoleLayout(
             onPreampChange = viewModel::updatePreamp
         )
 
+        AnimatedVisibility(visible = uiState.selectedTarget == OutputTarget.SPEAKER) {
+            SpeakerDspCard(
+                speakerDspEnabled = profile.speakerDspEnabled,
+                virtualBassEnabled = profile.virtualBassEnabled,
+                isBypassed = profile.isBypassed,
+                onToggleSpeakerDsp = viewModel::toggleSpeakerDsp,
+                onToggleVirtualBass = viewModel::toggleVirtualBass
+            )
+        }
+
         LateNightDynamicsCard(
             lateNightEnabled = profile.lateNightEnabled,
             isBypassed = profile.isBypassed,
@@ -333,6 +346,16 @@ private fun WideConsoleLayout(
                     onBandGainChange = viewModel::updateBandGain,
                     onPreampChange = viewModel::updatePreamp
                 )
+
+                AnimatedVisibility(visible = uiState.selectedTarget == OutputTarget.SPEAKER) {
+                    SpeakerDspCard(
+                        speakerDspEnabled = profile.speakerDspEnabled,
+                        virtualBassEnabled = profile.virtualBassEnabled,
+                        isBypassed = profile.isBypassed,
+                        onToggleSpeakerDsp = viewModel::toggleSpeakerDsp,
+                        onToggleVirtualBass = viewModel::toggleVirtualBass
+                    )
+                }
 
                 LateNightDynamicsCard(
                     lateNightEnabled = profile.lateNightEnabled,

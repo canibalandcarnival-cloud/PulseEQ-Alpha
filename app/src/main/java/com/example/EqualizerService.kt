@@ -78,11 +78,14 @@ class EqualizerService : Service() {
 
             ACTION_TOGGLE_BYPASS -> {
                 audioEngine.applyParameters(
+                    target = audioEngine.currentTarget,
                     gainsDb = audioEngine.currentGainsDb,
                     preampDb = audioEngine.currentPreampDb,
                     isBypassed = !audioEngine.currentBypassed,
                     lateNightEnabled = audioEngine.currentLateNightEnabled,
-                    nightIntensity = audioEngine.currentNightIntensity
+                    nightIntensity = audioEngine.currentNightIntensity,
+                    speakerDspEnabled = audioEngine.currentSpeakerDspEnabled,
+                    virtualBassEnabled = audioEngine.currentVirtualBassEnabled
                 )
             }
 

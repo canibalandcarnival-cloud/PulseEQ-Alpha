@@ -87,7 +87,9 @@ data class OutputEqProfile(
     val isBypassed: Boolean = false,
     val selectedPresetId: String = defaultPresetIdForTarget(target),
     val lateNightEnabled: Boolean = false,
-    val nightIntensity: NightIntensity = NightIntensity.STANDARD
+    val nightIntensity: NightIntensity = NightIntensity.STANDARD,
+    val speakerDspEnabled: Boolean = (target == OutputTarget.SPEAKER),
+    val virtualBassEnabled: Boolean = (target == OutputTarget.SPEAKER)
 ) {
     companion object {
         fun defaultGainsForTarget(target: OutputTarget): List<Float> = when (target) {
