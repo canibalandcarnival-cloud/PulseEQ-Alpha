@@ -61,6 +61,7 @@ import com.example.ui.components.PresetQuickStrip
 import com.example.ui.components.PresetsBrowserSheet
 import com.example.ui.components.SpatialAudioCard
 import com.example.ui.components.SpeakerDspCard
+import com.example.ui.components.ThreeBandEqualizerCard
 import com.example.ui.theme.AnalyzerCyan
 import com.example.ui.theme.RouteEmerald
 import com.example.ui.theme.SignalCoral
@@ -249,7 +250,11 @@ private fun CompactConsoleLayout(
             hasAudioPermission = uiState.hasAudioPermission,
             onSelectMode = viewModel::setVisualizerMode,
             onCycleTestAudio = viewModel::cycleTestAudioSource,
-            onRequestAudioPermission = onRequestAudioPermission
+            onRequestAudioPermission = onRequestAudioPermission,
+            threeBandEnabled = profile.threeBandEnabled,
+            threeBandBassDb = profile.threeBandBassDb,
+            threeBandMidsDb = profile.threeBandMidsDb,
+            threeBandTrebleDb = profile.threeBandTrebleDb
         )
 
         MasterActionBar(
@@ -266,6 +271,19 @@ private fun CompactConsoleLayout(
             isBypassed = profile.isBypassed,
             onBandGainChange = viewModel::updateBandGain,
             onPreampChange = viewModel::updatePreamp
+        )
+
+        ThreeBandEqualizerCard(
+            threeBandEnabled = profile.threeBandEnabled,
+            bassDb = profile.threeBandBassDb,
+            midsDb = profile.threeBandMidsDb,
+            trebleDb = profile.threeBandTrebleDb,
+            isMasterBypassed = profile.isBypassed,
+            onBassChange = viewModel::updateThreeBandBass,
+            onMidsChange = viewModel::updateThreeBandMids,
+            onTrebleChange = viewModel::updateThreeBandTreble,
+            onToggleEnabled = viewModel::toggleThreeBandEnabled,
+            onReset = viewModel::resetThreeBand
         )
 
         AnimatedVisibility(visible = uiState.selectedTarget == OutputTarget.SPEAKER) {
@@ -382,7 +400,11 @@ private fun WideConsoleLayout(
                     hasAudioPermission = uiState.hasAudioPermission,
                     onSelectMode = viewModel::setVisualizerMode,
                     onCycleTestAudio = viewModel::cycleTestAudioSource,
-                    onRequestAudioPermission = onRequestAudioPermission
+                    onRequestAudioPermission = onRequestAudioPermission,
+                    threeBandEnabled = profile.threeBandEnabled,
+                    threeBandBassDb = profile.threeBandBassDb,
+                    threeBandMidsDb = profile.threeBandMidsDb,
+                    threeBandTrebleDb = profile.threeBandTrebleDb
                 )
 
                 PresetQuickStrip(
@@ -417,6 +439,19 @@ private fun WideConsoleLayout(
                     isBypassed = profile.isBypassed,
                     onBandGainChange = viewModel::updateBandGain,
                     onPreampChange = viewModel::updatePreamp
+                )
+
+                ThreeBandEqualizerCard(
+                    threeBandEnabled = profile.threeBandEnabled,
+                    bassDb = profile.threeBandBassDb,
+                    midsDb = profile.threeBandMidsDb,
+                    trebleDb = profile.threeBandTrebleDb,
+                    isMasterBypassed = profile.isBypassed,
+                    onBassChange = viewModel::updateThreeBandBass,
+                    onMidsChange = viewModel::updateThreeBandMids,
+                    onTrebleChange = viewModel::updateThreeBandTreble,
+                    onToggleEnabled = viewModel::toggleThreeBandEnabled,
+                    onReset = viewModel::resetThreeBand
                 )
 
                 AnimatedVisibility(visible = uiState.selectedTarget == OutputTarget.SPEAKER) {

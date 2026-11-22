@@ -52,6 +52,10 @@ class EqPreferencesRepository(private val context: Context) {
         fun bgSoundVolumeKey(target: OutputTarget) = floatPreferencesKey("bg_sound_volume_${target.id}")
         fun voiceIsolationKey(target: OutputTarget) = booleanPreferencesKey("voice_isolation_${target.id}")
         fun audiogramCurveKey(target: OutputTarget) = stringPreferencesKey("audiogram_curve_${target.id}")
+        fun threeBandEnabledKey(target: OutputTarget) = booleanPreferencesKey("three_band_enabled_${target.id}")
+        fun threeBandBassKey(target: OutputTarget) = floatPreferencesKey("three_band_bass_${target.id}")
+        fun threeBandMidsKey(target: OutputTarget) = floatPreferencesKey("three_band_mids_${target.id}")
+        fun threeBandTrebleKey(target: OutputTarget) = floatPreferencesKey("three_band_treble_${target.id}")
     }
 
     val preferencesFlow: Flow<StoredEqPreferences> = context.eqDataStore.data.map { prefs ->
@@ -116,7 +120,14 @@ class EqPreferencesRepository(private val context: Context) {
                 backgroundSoundPreset = bgPreset,
                 backgroundSoundVolume = (prefs[Keys.bgSoundVolumeKey(target)] ?: 0.28f).coerceIn(0f, 1f),
                 voiceIsolationEnabled = prefs[Keys.voiceIsolationKey(target)] ?: false,
-                audiogramGainsDb = parsedAudiogram
+                audiogramGainsDb = parsedAudiogram,
+                threeBandEnabled = prefs[Keys.threeBandEnabledKey(target)] ?: true,
+                threeBandBassDb = (prefs[Keys.threeBandBassKey(target)] ?: 0f)
+                    .coerceIn(com.example.model.ThreeBandEqRanges.BASS_MIN_DB, com.example.model.ThreeBandEqRanges.BASS_MAX_DB),
+                threeBandMidsDb = (prefs[Keys.threeBandMidsKey(target)] ?: 0f)
+                    .coerceIn(com.example.model.ThreeBandEqRanges.MIDS_MIN_DB, com.example.model.ThreeBandEqRanges.MIDS_MAX_DB),
+                threeBandTrebleDb = (prefs[Keys.threeBandTrebleKey(target)] ?: 0f)
+                    .coerceIn(com.example.model.ThreeBandEqRanges.TREBLE_MIN_DB, com.example.model.ThreeBandEqRanges.TREBLE_MAX_DB)
             )
         }
 
@@ -178,6 +189,10 @@ class EqPreferencesRepository(private val context: Context) {
             } else {
                 prefs.remove(Keys.audiogramCurveKey(profile.target))
             }
+            prefs[Keys.threeBandEnabledKey(profile.target)] = profile.threeBandEnabled
+            prefs[Keys.threeBandBassKey(profile.target)] = profile.threeBandBassDb
+            prefs[Keys.threeBandMidsKey(profile.target)] = profile.threeBandMidsDb
+            prefs[Keys.threeBandTrebleKey(profile.target)] = profile.threeBandTrebleDb
         }
     }
 }

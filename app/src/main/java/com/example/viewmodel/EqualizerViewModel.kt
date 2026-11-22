@@ -18,6 +18,7 @@ import com.example.model.OutputEqProfile
 import com.example.model.OutputTarget
 import com.example.model.SpatialMode
 import com.example.model.TestAudioSource
+import com.example.model.ThreeBandEqRanges
 import com.example.model.VisualizerFrame
 import com.example.model.VisualizerMode
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -411,6 +412,41 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
         commitProfile(updated)
     }
 
+    fun updateThreeBandBass(rawDb: Float) {
+        val clamped = snapHalfDbRange(rawDb, ThreeBandEqRanges.BASS_MIN_DB, ThreeBandEqRanges.BASS_MAX_DB)
+        val updated = currentProfile().copy(threeBandBassDb = clamped, threeBandEnabled = true)
+        commitProfile(updated)
+    }
+
+    fun updateThreeBandMids(rawDb: Float) {
+        val clamped = snapHalfDbRange(rawDb, ThreeBandEqRanges.MIDS_MIN_DB, ThreeBandEqRanges.MIDS_MAX_DB)
+        val updated = currentProfile().copy(threeBandMidsDb = clamped, threeBandEnabled = true)
+        commitProfile(updated)
+    }
+
+    fun updateThreeBandTreble(rawDb: Float) {
+        val clamped = snapHalfDbRange(rawDb, ThreeBandEqRanges.TREBLE_MIN_DB, ThreeBandEqRanges.TREBLE_MAX_DB)
+        val updated = currentProfile().copy(threeBandTrebleDb = clamped, threeBandEnabled = true)
+        commitProfile(updated)
+    }
+
+    fun toggleThreeBandEnabled() {
+        val current = currentProfile()
+        val updated = current.copy(threeBandEnabled = !current.threeBandEnabled)
+        commitProfile(updated)
+    }
+
+    fun resetThreeBand() {
+        val current = currentProfile()
+        val updated = current.copy(
+            threeBandEnabled = true,
+            threeBandBassDb = 0f,
+            threeBandMidsDb = 0f,
+            threeBandTrebleDb = 0f
+        )
+        commitProfile(updated)
+    }
+
     fun setAbCompareHeld(held: Boolean) {
         audioEngine.setAbCompareHeld(held)
     }
@@ -507,7 +543,11 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             conversationAwarenessEnabled = profile.conversationAwarenessEnabled,
             bgSoundPreset = profile.backgroundSoundPreset,
             bgSoundVolume = profile.backgroundSoundVolume,
-            voiceIsolationEnabled = profile.voiceIsolationEnabled
+            voiceIsolationEnabled = profile.voiceIsolationEnabled,
+            threeBandEnabled = profile.threeBandEnabled,
+            threeBandBassDb = profile.threeBandBassDb,
+            threeBandMidsDb = profile.threeBandMidsDb,
+            threeBandTrebleDb = profile.threeBandTrebleDb
         )
     }
 
@@ -522,8 +562,12 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun snapHalfDb(value: Float): Float {
-        val clamped = value.coerceIn(EqPresetsCatalog.MIN_GAIN_DB, EqPresetsCatalog.MAX_GAIN_DB)
-        return (clamped * 2f).roundToInt() / 2f
+        return snapHalfDbRange(value, EqPresetsCatalog.MIN_GAIN_DB, EqPresetsCatalog.MAX_GAIN_DB)
+    }
+
+    private fun snapHalfDbRange(value: Float, minDb: Float, maxDb: Float): Float {
+        val clamped = value.coerceIn(minDb, maxDb)
+        return ((clamped * 2f).roundToInt() / 2f).coerceIn(minDb, maxDb)
     }
 
     private fun findMatchingPresetId(gains: List<Float>): String {

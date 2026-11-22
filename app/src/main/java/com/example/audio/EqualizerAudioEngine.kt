@@ -183,6 +183,22 @@ class EqualizerAudioEngine(private val context: Context) {
         private set
 
     @Volatile
+    var currentThreeBandEnabled: Boolean = true
+        private set
+
+    @Volatile
+    var currentThreeBandBassDb: Float = 0f
+        private set
+
+    @Volatile
+    var currentThreeBandMidsDb: Float = 0f
+        private set
+
+    @Volatile
+    var currentThreeBandTrebleDb: Float = 0f
+        private set
+
+    @Volatile
     private var systemSoundCheckTrimDb: Float = 0f
 
     @Volatile
@@ -286,7 +302,11 @@ class EqualizerAudioEngine(private val context: Context) {
             conversationAwarenessEnabled = currentConversationAwarenessEnabled,
             bgSoundPreset = currentBgSoundPreset,
             bgSoundVolume = currentBgSoundVolume,
-            voiceIsolationEnabled = currentVoiceIsolationEnabled
+            voiceIsolationEnabled = currentVoiceIsolationEnabled,
+            threeBandEnabled = currentThreeBandEnabled,
+            threeBandBassDb = currentThreeBandBassDb,
+            threeBandMidsDb = currentThreeBandMidsDb,
+            threeBandTrebleDb = currentThreeBandTrebleDb
         )
     }
 
@@ -460,7 +480,11 @@ class EqualizerAudioEngine(private val context: Context) {
         conversationAwarenessEnabled: Boolean = currentConversationAwarenessEnabled,
         bgSoundPreset: BackgroundSoundPreset = currentBgSoundPreset,
         bgSoundVolume: Float = currentBgSoundVolume,
-        voiceIsolationEnabled: Boolean = currentVoiceIsolationEnabled
+        voiceIsolationEnabled: Boolean = currentVoiceIsolationEnabled,
+        threeBandEnabled: Boolean = currentThreeBandEnabled,
+        threeBandBassDb: Float = currentThreeBandBassDb,
+        threeBandMidsDb: Float = currentThreeBandMidsDb,
+        threeBandTrebleDb: Float = currentThreeBandTrebleDb
     ) {
         currentTarget = target
         currentGainsDb = gainsDb
@@ -479,6 +503,10 @@ class EqualizerAudioEngine(private val context: Context) {
         currentBgSoundPreset = bgSoundPreset
         currentBgSoundVolume = bgSoundVolume
         currentVoiceIsolationEnabled = voiceIsolationEnabled
+        currentThreeBandEnabled = threeBandEnabled
+        currentThreeBandBassDb = threeBandBassDb
+        currentThreeBandMidsDb = threeBandMidsDb
+        currentThreeBandTrebleDb = threeBandTrebleDb
 
         val isSpeakerDspActive = (target == OutputTarget.SPEAKER) && speakerDspEnabled
         val isAbHeld = _abCompareHeld.value
@@ -507,7 +535,11 @@ class EqualizerAudioEngine(private val context: Context) {
             voiceIsolationEnabled = voiceIsolationEnabled,
             abCompareHeld = isAbHeld,
             bgSoundPreset = bgSoundPreset,
-            bgSoundVolume = bgSoundVolume
+            bgSoundVolume = bgSoundVolume,
+            threeBandEnabled = threeBandEnabled,
+            threeBandBassDb = threeBandBassDb,
+            threeBandMidsDb = threeBandMidsDb,
+            threeBandTrebleDb = threeBandTrebleDb
         )
         applyToAllSessions()
     }
@@ -519,6 +551,10 @@ class EqualizerAudioEngine(private val context: Context) {
         val effectiveActive = !currentBypassed && !isAbHeld
         val isSpeakerDspActive = effectiveActive && (currentTarget == OutputTarget.SPEAKER) && currentSpeakerDspEnabled
         val isSpatialActive = effectiveActive && currentSpatialMode != SpatialMode.OFF
+        val threeBandActive = currentThreeBandEnabled &&
+            (kotlin.math.abs(currentThreeBandBassDb) > 0.01f ||
+                kotlin.math.abs(currentThreeBandMidsDb) > 0.01f ||
+                kotlin.math.abs(currentThreeBandTrebleDb) > 0.01f)
         val duckDb = if (currentDuckGainLinear < 0.99f) {
             (20.0 * log10(currentDuckGainLinear.toDouble().coerceAtLeast(0.15))).toFloat()
         } else {
@@ -532,9 +568,14 @@ class EqualizerAudioEngine(private val context: Context) {
                     dp.enabled = !currentBypassed
                     if (isAbHeld && !currentBypassed) {
                         // A/B Compare: bypass all tonal/dynamics stages and match perceived loudness
+                        val threeBandAvg = if (currentThreeBandEnabled) {
+                            (currentThreeBandBassDb * 0.25f + currentThreeBandMidsDb * 0.50f + currentThreeBandTrebleDb * 0.25f)
+                        } else {
+                            0f
+                        }
                         val matchGainDb = AudiogramCheckEngine.computeLoudnessMatchGainDb(
                             bandGainsDb = currentGainsDb,
-                            preampDb = currentPreampDb,
+                            preampDb = currentPreampDb + threeBandAvg,
                             lateNightEnabled = currentLateNightEnabled,
                             nightIntensity = currentNightIntensity,
                             target = currentTarget,
@@ -555,11 +596,22 @@ class EqualizerAudioEngine(private val context: Context) {
                         val scGain = if (currentSoundCheckEnabled) systemSoundCheckTrimDb else 0f
                         dp.setInputGainAllChannelsTo(currentPreampDb + scGain + duckDb)
                         for (i in 0 until 10) {
-                            val gain = currentGainsDb.getOrElse(i) { 0f }
+                            val tenBandGain = currentGainsDb.getOrElse(i) { 0f }
                                 .coerceIn(EqPresetsCatalog.MIN_GAIN_DB, EqPresetsCatalog.MAX_GAIN_DB)
+                            val toneOffset = if (threeBandActive) {
+                                ThreeBandToneFilter.computeCombinedResponseDbAt(
+                                    freqHz = EqPresetsCatalog.BANDS[i].frequencyHz.toDouble(),
+                                    bassDb = currentThreeBandBassDb,
+                                    midsDb = currentThreeBandMidsDb,
+                                    trebleDb = currentThreeBandTrebleDb
+                                )
+                            } else {
+                                0f
+                            }
+                            val combinedGain = (tenBandGain + toneOffset).coerceIn(-15f, 15f)
                             dp.setPreEqBandAllChannelsTo(
                                 i,
-                                DynamicsProcessing.EqBand(true, bandUpperCutoffsHz[i], gain)
+                                DynamicsProcessing.EqBand(true, bandUpperCutoffsHz[i], combinedGain)
                             )
                         }
 
@@ -873,7 +925,11 @@ class EqualizerAudioEngine(private val context: Context) {
             voiceIsolationEnabled = currentVoiceIsolationEnabled,
             abCompareHeld = _abCompareHeld.value,
             bgSoundPreset = currentBgSoundPreset,
-            bgSoundVolume = currentBgSoundVolume
+            bgSoundVolume = currentBgSoundVolume,
+            threeBandEnabled = currentThreeBandEnabled,
+            threeBandBassDb = currentThreeBandBassDb,
+            threeBandMidsDb = currentThreeBandMidsDb,
+            threeBandTrebleDb = currentThreeBandTrebleDb
         )
     }
 

@@ -278,4 +278,99 @@ class ExampleUnitTest {
             assertTrue("Gain $gain within -12..+12 dB", gain in -12f..12f)
         }
     }
+
+    @Test
+    fun three_band_tone_filter_targets_correct_bands_and_enforces_asymmetric_limits() {
+        val sampleRate = 44100
+
+        // 1. Bass low-shelf (<250 Hz, -7..+7 dB) boosts 100 Hz while keeping 6 kHz near unity
+        val bassBoostAt100Hz = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
+            freqHz = 100.0,
+            bassDb = 7.0f,
+            midsDb = 0f,
+            trebleDb = 0f,
+            sampleRate = sampleRate
+        )
+        val bassBoostAt6kHz = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
+            freqHz = 6000.0,
+            bassDb = 7.0f,
+            midsDb = 0f,
+            trebleDb = 0f,
+            sampleRate = sampleRate
+        )
+        assertTrue("Bass +7dB should boost 100Hz clearly", bassBoostAt100Hz > 5.0f)
+        assertTrue("Bass +7dB should leave 6kHz near 0 dB", abs(bassBoostAt6kHz) < 0.3f)
+
+        // 2. Mids peaking (1.2 kHz, spanning ~300 Hz to 4.7 kHz, -6..+3 dB) attenuates 1.2kHz while leaving 50Hz & 12kHz near unity
+        val midsCutAt1200Hz = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
+            freqHz = 1200.0,
+            bassDb = 0f,
+            midsDb = -6.0f,
+            trebleDb = 0f,
+            sampleRate = sampleRate
+        )
+        val midsCutAt50Hz = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
+            freqHz = 50.0,
+            bassDb = 0f,
+            midsDb = -6.0f,
+            trebleDb = 0f,
+            sampleRate = sampleRate
+        )
+        val midsCutAt12kHz = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
+            freqHz = 12000.0,
+            bassDb = 0f,
+            midsDb = -6.0f,
+            trebleDb = 0f,
+            sampleRate = sampleRate
+        )
+        assertTrue("Mids -6dB should attenuate 1.2kHz to ~-6 dB", midsCutAt1200Hz < -5.5f)
+        assertTrue("Mids -6dB should leave 50Hz near unity", abs(midsCutAt50Hz) < 0.6f)
+        assertTrue("Mids -6dB should leave 12kHz near unity", abs(midsCutAt12kHz) < 0.8f)
+
+        // 3. Treble high-shelf (>3.3 kHz, -6..+7 dB) boosts 8kHz while leaving 100Hz near unity
+        val trebleBoostAt8kHz = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
+            freqHz = 8000.0,
+            bassDb = 0f,
+            midsDb = 0f,
+            trebleDb = 7.0f,
+            sampleRate = sampleRate
+        )
+        val trebleBoostAt100Hz = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
+            freqHz = 100.0,
+            bassDb = 0f,
+            midsDb = 0f,
+            trebleDb = 7.0f,
+            sampleRate = sampleRate
+        )
+        assertTrue("Treble +7dB should boost 8kHz clearly", trebleBoostAt8kHz > 5.0f)
+        assertTrue("Treble +7dB should leave 100Hz near 0 dB", abs(trebleBoostAt100Hz) < 0.3f)
+
+        // 4. Clamping respects asymmetric limits (Bass -7..+7, Mids -6..+3, Treble -6..+7)
+        val clampedMidsOver = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
+            freqHz = 1200.0,
+            bassDb = 0f,
+            midsDb = 12.0f, // should clamp to +3.0 dB
+            trebleDb = 0f,
+            sampleRate = sampleRate
+        )
+        assertEquals(3.0f, clampedMidsOver, 0.1f)
+
+        // 5. Real-time sample processing passes cleanly when disabled and boosts when enabled
+        val filter = com.example.audio.ThreeBandToneFilter(sampleRate)
+        filter.configure(isEnabled = false, bassDb = 7f, midsDb = -6f, trebleDb = 7f)
+        val (bypassL, bypassR) = filter.processStereoSample(0.25, -0.25)
+        assertEquals(0.25, bypassL, 1e-6)
+        assertEquals(-0.25, bypassR, 1e-6)
+
+        filter.configure(isEnabled = true, bassDb = 7f, midsDb = 0f, trebleDb = 0f)
+        var outRms = 0.0
+        for (i in 0 until 4410) {
+            val s = 0.2 * kotlin.math.sin(2.0 * Math.PI * 100.0 * i / sampleRate)
+            val (oL, _) = filter.processStereoSample(s, s)
+            if (i > 2205) outRms += oL * oL
+        }
+        outRms = kotlin.math.sqrt(outRms / 2205)
+        val inRms = 0.2 / kotlin.math.sqrt(2.0)
+        assertTrue("Active Bass +7dB should increase 100Hz RMS significantly", outRms > inRms * 1.8)
+    }
 }

@@ -158,7 +158,11 @@ data class OutputEqProfile(
     val backgroundSoundPreset: BackgroundSoundPreset = BackgroundSoundPreset.OFF,
     val backgroundSoundVolume: Float = 0.28f,
     val voiceIsolationEnabled: Boolean = false,
-    val audiogramGainsDb: List<Float>? = null
+    val audiogramGainsDb: List<Float>? = null,
+    val threeBandEnabled: Boolean = true,
+    val threeBandBassDb: Float = 0f,
+    val threeBandMidsDb: Float = 0f,
+    val threeBandTrebleDb: Float = 0f
 ) {
     companion object {
         fun defaultGainsForTarget(target: OutputTarget): List<Float> = when (target) {
@@ -208,6 +212,15 @@ data class VisualizerFrame(
     val gainReductionDb: Float = 0f,
     val isSignalLive: Boolean = false
 )
+
+object ThreeBandEqRanges {
+    const val BASS_MIN_DB = -7f
+    const val BASS_MAX_DB = 7f
+    const val MIDS_MIN_DB = -6f
+    const val MIDS_MAX_DB = 3f
+    const val TREBLE_MIN_DB = -6f
+    const val TREBLE_MAX_DB = 7f
+}
 
 object EqPresetsCatalog {
     const val MIN_GAIN_DB = -12f

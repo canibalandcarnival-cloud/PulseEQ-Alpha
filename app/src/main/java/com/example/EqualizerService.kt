@@ -94,7 +94,11 @@ class EqualizerService : Service() {
                     conversationAwarenessEnabled = audioEngine.currentConversationAwarenessEnabled,
                     bgSoundPreset = audioEngine.currentBgSoundPreset,
                     bgSoundVolume = audioEngine.currentBgSoundVolume,
-                    voiceIsolationEnabled = audioEngine.currentVoiceIsolationEnabled
+                    voiceIsolationEnabled = audioEngine.currentVoiceIsolationEnabled,
+                    threeBandEnabled = audioEngine.currentThreeBandEnabled,
+                    threeBandBassDb = audioEngine.currentThreeBandBassDb,
+                    threeBandMidsDb = audioEngine.currentThreeBandMidsDb,
+                    threeBandTrebleDb = audioEngine.currentThreeBandTrebleDb
                 )
             }
 

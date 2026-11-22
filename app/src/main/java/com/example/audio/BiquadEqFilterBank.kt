@@ -9,6 +9,7 @@ import com.example.model.NightIntensity
 import com.example.model.OutputTarget
 import com.example.model.SpatialMode
 import com.example.model.TestAudioSource
+import com.example.model.ThreeBandEqRanges
 import com.example.model.VisualizerFrame
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -143,6 +144,44 @@ class StereoBiquad {
         b2 = nb2 / na0
         a1 = na1 / na0
         a2 = na2 / na0
+    }
+
+    fun setLowShelf(sampleRate: Int, freqHz: Double, q: Double, gainDb: Double) {
+        val a = 10.0.pow(gainDb / 40.0)
+        val w0 = 2.0 * PI * freqHz / sampleRate
+        val cosW0 = cos(w0)
+        val sinW0 = sin(w0)
+        val alpha = sinW0 / (2.0 * q)
+        val twoSqrtAAlpha = 2.0 * sqrt(a) * alpha
+
+        val nb0 = a * ((a + 1.0) - (a - 1.0) * cosW0 + twoSqrtAAlpha)
+        val nb1 = 2.0 * a * ((a - 1.0) - (a + 1.0) * cosW0)
+        val nb2 = a * ((a + 1.0) - (a - 1.0) * cosW0 - twoSqrtAAlpha)
+        val na0 = (a + 1.0) + (a - 1.0) * cosW0 + twoSqrtAAlpha
+        val na1 = -2.0 * ((a - 1.0) + (a + 1.0) * cosW0)
+        val na2 = (a + 1.0) + (a - 1.0) * cosW0 - twoSqrtAAlpha
+
+        b0 = nb0 / na0
+        b1 = nb1 / na0
+        b2 = nb2 / na0
+        a1 = na1 / na0
+        a2 = na2 / na0
+    }
+
+    fun magnitudeDbAt(sampleRate: Int, freqHz: Double): Double {
+        val w = 2.0 * PI * freqHz / sampleRate
+        val cosW = cos(w)
+        val sinW = sin(w)
+        val cos2W = cos(2.0 * w)
+        val sin2W = sin(2.0 * w)
+
+        val numRe = b0 + b1 * cosW + b2 * cos2W
+        val numIm = -(b1 * sinW + b2 * sin2W)
+        val denRe = 1.0 + a1 * cosW + a2 * cos2W
+        val denIm = -(a1 * sinW + a2 * sin2W)
+
+        val magSq = (numRe * numRe + numIm * numIm) / (denRe * denRe + denIm * denIm).coerceAtLeast(1e-18)
+        return 10.0 * log10(magSq.coerceAtLeast(1e-12))
     }
 
     fun processStereo(inL: Double, inR: Double): Pair<Double, Double> {
@@ -369,12 +408,94 @@ class PhoneSpeakerDspChain(sampleRate: Int = 44100) {
 }
 
 /**
- * Cascaded 10-band stereo biquad peaking EQ filter + preamp + Late Night compressor +
- * Phone Speaker DSP chain + soft clip guard.
+ * Dedicated 3-Band Tone Equalizer:
+ * - Bass: Low-shelf filter targeting below 250 Hz (-7 dB to +7 dB)
+ * - Mids: Broad peaking filter centered around 1.2 kHz (spanning ~300 Hz to 4.7 kHz, -6 dB to +3 dB)
+ * - Treble: High-shelf filter targeting above 3.3 kHz (-6 dB to +7 dB)
+ */
+class ThreeBandToneFilter(private val sampleRate: Int = 44100) {
+    private val bassLowShelf = StereoBiquad()
+    private val midsPeaking = StereoBiquad()
+    private val trebleHighShelf = StereoBiquad()
+
+    @Volatile
+    private var enabled: Boolean = true
+
+    init {
+        configure(isEnabled = true, bassDb = 0f, midsDb = 0f, trebleDb = 0f)
+    }
+
+    fun configure(
+        isEnabled: Boolean,
+        bassDb: Float,
+        midsDb: Float,
+        trebleDb: Float
+    ) {
+        enabled = isEnabled
+        val clampedBass = bassDb.coerceIn(ThreeBandEqRanges.BASS_MIN_DB, ThreeBandEqRanges.BASS_MAX_DB).toDouble()
+        val clampedMids = midsDb.coerceIn(ThreeBandEqRanges.MIDS_MIN_DB, ThreeBandEqRanges.MIDS_MAX_DB).toDouble()
+        val clampedTreble = trebleDb.coerceIn(ThreeBandEqRanges.TREBLE_MIN_DB, ThreeBandEqRanges.TREBLE_MAX_DB).toDouble()
+
+        bassLowShelf.setLowShelf(sampleRate, 250.0, 0.7071, clampedBass)
+        // Q = 0.28 centered at 1200 Hz gives -3dB skirt span ~300 Hz to 4.7 kHz
+        midsPeaking.setPeaking(sampleRate, 1200.0, 0.28, clampedMids)
+        trebleHighShelf.setHighShelf(sampleRate, 3300.0, 0.7071, clampedTreble)
+    }
+
+    fun processStereoSample(inL: Double, inR: Double): Pair<Double, Double> {
+        if (!enabled) return inL to inR
+        val (bL, bR) = bassLowShelf.processStereo(inL, inR)
+        val (mL, mR) = midsPeaking.processStereo(bL, bR)
+        return trebleHighShelf.processStereo(mL, mR)
+    }
+
+    companion object {
+        fun computeCombinedResponseDbAt(
+            freqHz: Double,
+            bassDb: Float,
+            midsDb: Float,
+            trebleDb: Float,
+            sampleRate: Int = 44100
+        ): Float {
+            val bass = StereoBiquad().apply {
+                setLowShelf(
+                    sampleRate,
+                    250.0,
+                    0.7071,
+                    bassDb.coerceIn(ThreeBandEqRanges.BASS_MIN_DB, ThreeBandEqRanges.BASS_MAX_DB).toDouble()
+                )
+            }
+            val mids = StereoBiquad().apply {
+                setPeaking(
+                    sampleRate,
+                    1200.0,
+                    0.28,
+                    midsDb.coerceIn(ThreeBandEqRanges.MIDS_MIN_DB, ThreeBandEqRanges.MIDS_MAX_DB).toDouble()
+                )
+            }
+            val treble = StereoBiquad().apply {
+                setHighShelf(
+                    sampleRate,
+                    3300.0,
+                    0.7071,
+                    trebleDb.coerceIn(ThreeBandEqRanges.TREBLE_MIN_DB, ThreeBandEqRanges.TREBLE_MAX_DB).toDouble()
+                )
+            }
+            return (bass.magnitudeDbAt(sampleRate, freqHz) +
+                mids.magnitudeDbAt(sampleRate, freqHz) +
+                treble.magnitudeDbAt(sampleRate, freqHz)).toFloat()
+        }
+    }
+}
+
+/**
+ * Cascaded 10-band stereo biquad peaking EQ filter + 3-band Bass/Mids/Treble tone stage +
+ * preamp + Sound Check + Voice Isolation + Late Night compressor + Spatial Audio + Phone Speaker DSP.
  */
 class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
 
     private val bandFilters = Array(10) { StereoBiquad() }
+    private val threeBandToneFilter = ThreeBandToneFilter(sampleRate)
     private val lateNightCompressor = DynamicRangeCompressor(sampleRate)
     private val speakerDspChain = PhoneSpeakerDspChain(sampleRate)
     private val spatialAudioEngine = SpatialAudioEngine(sampleRate)
@@ -430,7 +551,11 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             vocalAnchor = true,
             soundCheckEnabled = false,
             voiceIsolationEnabled = false,
-            abCompareHeld = false
+            abCompareHeld = false,
+            threeBandEnabled = true,
+            threeBandBassDb = 0f,
+            threeBandMidsDb = 0f,
+            threeBandTrebleDb = 0f
         )
     }
 
@@ -449,7 +574,11 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         vocalAnchor: Boolean = true,
         soundCheckEnabled: Boolean = false,
         voiceIsolationEnabled: Boolean = false,
-        abCompareHeld: Boolean = false
+        abCompareHeld: Boolean = false,
+        threeBandEnabled: Boolean = true,
+        threeBandBassDb: Float = 0f,
+        threeBandMidsDb: Float = 0f,
+        threeBandTrebleDb: Float = 0f
     ) {
         bypassed = isBypassed
         this.abCompareHeld = abCompareHeld
@@ -458,6 +587,12 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         val effectiveProcessing = !isBypassed && !abCompareHeld
         soundCheckNormalizer.enabled = soundCheckEnabled && effectiveProcessing
         voiceIsolationProcessor.enabled = voiceIsolationEnabled && effectiveProcessing
+        threeBandToneFilter.configure(
+            isEnabled = threeBandEnabled && effectiveProcessing,
+            bassDb = threeBandBassDb,
+            midsDb = threeBandMidsDb,
+            trebleDb = threeBandTrebleDb
+        )
         lateNightCompressor.configure(isEnabled = lateNightEnabled && effectiveProcessing, intensity = nightIntensity)
         speakerDspChain.configure(
             isSpeakerDspEnabled = speakerDspEnabled && effectiveProcessing,
@@ -471,9 +606,14 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             vocalAnchor = vocalAnchor
         )
 
+        val threeBandAvg = if (threeBandEnabled) {
+            (threeBandBassDb * 0.25f + threeBandMidsDb * 0.50f + threeBandTrebleDb * 0.25f)
+        } else {
+            0f
+        }
         val matchDb = AudiogramCheckEngine.computeLoudnessMatchGainDb(
             bandGainsDb = gainsDb,
-            preampDb = preampDb,
+            preampDb = preampDb + threeBandAvg,
             lateNightEnabled = lateNightEnabled,
             nightIntensity = nightIntensity,
             target = outputTarget,
@@ -511,7 +651,8 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             r = nextR
         }
 
-        val (isoL, isoR) = voiceIsolationProcessor.processStereoSample(l, r)
+        val (toneL, toneR) = threeBandToneFilter.processStereoSample(l, r)
+        val (isoL, isoR) = voiceIsolationProcessor.processStereoSample(toneL, toneR)
         val (compL, compR) = lateNightCompressor.processStereoSample(isoL, isoR)
         val (spatL, spatR) = spatialAudioEngine.processStereoSample(compL, compR)
         val (spkL, spkR) = speakerDspChain.processStereoSample(spatL, spatR)
@@ -581,7 +722,11 @@ class TestAudioSynthesizer {
         voiceIsolationEnabled: Boolean = false,
         abCompareHeld: Boolean = false,
         bgSoundPreset: BackgroundSoundPreset = BackgroundSoundPreset.OFF,
-        bgSoundVolume: Float = 0.28f
+        bgSoundVolume: Float = 0.28f,
+        threeBandEnabled: Boolean = true,
+        threeBandBassDb: Float = 0f,
+        threeBandMidsDb: Float = 0f,
+        threeBandTrebleDb: Float = 0f
     ) {
         backgroundPreset = bgSoundPreset
         backgroundVolume = bgSoundVolume
@@ -600,7 +745,11 @@ class TestAudioSynthesizer {
             vocalAnchor = vocalAnchor,
             soundCheckEnabled = soundCheckEnabled,
             voiceIsolationEnabled = voiceIsolationEnabled,
-            abCompareHeld = abCompareHeld
+            abCompareHeld = abCompareHeld,
+            threeBandEnabled = threeBandEnabled,
+            threeBandBassDb = threeBandBassDb,
+            threeBandMidsDb = threeBandMidsDb,
+            threeBandTrebleDb = threeBandTrebleDb
         )
     }
 

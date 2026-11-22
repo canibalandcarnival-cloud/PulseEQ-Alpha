@@ -47,6 +47,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.audio.ThreeBandToneFilter
 import com.example.model.EqPresetsCatalog
 import com.example.model.TestAudioSource
 import com.example.model.VisualizerFrame
@@ -81,11 +82,26 @@ fun AudioVisualizerPanel(
     onSelectMode: (VisualizerMode) -> Unit,
     onCycleTestAudio: () -> Unit,
     onRequestAudioPermission: () -> Unit,
+    threeBandEnabled: Boolean = false,
+    threeBandBassDb: Float = 0f,
+    threeBandMidsDb: Float = 0f,
+    threeBandTrebleDb: Float = 0f,
     modifier: Modifier = Modifier
 ) {
     // Animate EQ response curve points for smooth transitions on preset changes
     val animatedCurveGains = bandGainsDb.mapIndexed { index, gain ->
-        val target = if (isBypassed) 0f else (gain + preampDb * 0.5f)
+        val freqHz = EqPresetsCatalog.BANDS.getOrNull(index)?.frequencyHz?.toDouble() ?: 1000.0
+        val toneOffset = if (threeBandEnabled && !isBypassed) {
+            ThreeBandToneFilter.computeCombinedResponseDbAt(
+                freqHz = freqHz,
+                bassDb = threeBandBassDb,
+                midsDb = threeBandMidsDb,
+                trebleDb = threeBandTrebleDb
+            )
+        } else {
+            0f
+        }
+        val target = if (isBypassed) 0f else (gain + toneOffset + preampDb * 0.5f)
             .coerceIn(EqPresetsCatalog.MIN_GAIN_DB, EqPresetsCatalog.MAX_GAIN_DB)
         val anim by animateFloatAsState(
             targetValue = target,
