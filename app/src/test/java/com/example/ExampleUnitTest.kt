@@ -117,4 +117,94 @@ class ExampleUnitTest {
         // Virtual Bass should synthesize audible 120-250Hz harmonics above the HPF-only baseline
         assertTrue("Virtual Bass should add harmonic energy above HPF-only baseline", rmsWithVirtual > rmsNoVirtual * 1.4)
     }
+
+    @Test
+    fun spatial_studio_micro_ambience_ir_is_strictly_28ms_and_rapidly_decays() {
+        val sampleRate = 44100
+        val (irL, irR) = com.example.audio.AppleStudioMicroAmbienceConvolver.generateStudioMicroAmbienceIr(sampleRate)
+        val expectedSamples = kotlin.math.round(sampleRate * 0.028).toInt()
+        assertEquals(expectedSamples, irL.size)
+        assertEquals(expectedSamples, irR.size)
+
+        var earlyPeak = 0f
+        var tailPeak = 0f
+        for (i in 0 until irL.size / 3) {
+            earlyPeak = maxOf(earlyPeak, abs(irL[i]), abs(irR[i]))
+        }
+        for (i in (irL.size * 3 / 4) until irL.size) {
+            tailPeak = maxOf(tailPeak, abs(irL[i]), abs(irR[i]))
+        }
+        assertTrue("Early studio IR must have non-zero micro-reflections", earlyPeak > 0.01f)
+        assertTrue("28ms IR tail should decay rapidly for zero echo", tailPeak < earlyPeak * 0.15f)
+    }
+
+    @Test
+    fun spatial_engine_routes_712_hrtf_on_headphones_and_switches_to_xtc_on_speaker() {
+        val sampleRate = 44100
+        val engine = com.example.audio.SpatialAudioEngine(sampleRate)
+
+        // 1. OFF mode is bit-transparent
+        engine.configure(
+            mode = com.example.model.SpatialMode.OFF,
+            target = com.example.model.OutputTarget.HEADPHONES,
+            spatialDepth = 0.8f,
+            heightPresence = 0.8f,
+            vocalAnchor = true
+        )
+        val (offL, offR) = engine.processStereoSample(0.4, -0.2)
+        assertEquals(0.4, offL, 1e-6)
+        assertEquals(-0.2, offR, 1e-6)
+
+        // 2. Pure mono <120Hz bass stays symmetric/mono in Center Front (0°, 0°)
+        engine.configure(
+            mode = com.example.model.SpatialMode.ATMOS_MUSIC,
+            target = com.example.model.OutputTarget.HEADPHONES,
+            spatialDepth = 0.8f,
+            heightPresence = 0.8f,
+            vocalAnchor = true
+        )
+        var maxStereoDiffAt80Hz = 0.0
+        for (i in 0 until 2000) {
+            val s = 0.4 * kotlin.math.sin(2.0 * Math.PI * 80.0 * i / sampleRate)
+            val (l, r) = engine.processStereoSample(s, s)
+            if (i > 1000) {
+                maxStereoDiffAt80Hz = maxOf(maxStereoDiffAt80Hz, abs(l - r))
+            }
+        }
+        assertTrue("Mono 80Hz sub-bass should remain locked to center", maxStereoDiffAt80Hz < 0.02)
+
+        // 3. Stereo 3.2kHz signal on Headphones HRTF vs Phone Speaker 0.18ms XTC produces distinct outputs
+        val hrtfEngine = com.example.audio.SpatialAudioEngine(sampleRate).apply {
+            configure(
+                mode = com.example.model.SpatialMode.ATMOS_CINEMA,
+                target = com.example.model.OutputTarget.HEADPHONES,
+                spatialDepth = 0.9f,
+                heightPresence = 0.9f,
+                vocalAnchor = true
+            )
+        }
+        val xtcEngine = com.example.audio.SpatialAudioEngine(sampleRate).apply {
+            configure(
+                mode = com.example.model.SpatialMode.ATMOS_CINEMA,
+                target = com.example.model.OutputTarget.SPEAKER,
+                spatialDepth = 0.9f,
+                heightPresence = 0.9f,
+                vocalAnchor = true
+            )
+        }
+        var diffHrtfVsXtc = 0.0
+        var stereoWidthXtc = 0.0
+        for (i in 0 until 2000) {
+            val sigL = 0.4 * kotlin.math.sin(2.0 * Math.PI * 3200.0 * i / sampleRate)
+            val sigR = 0.1 * kotlin.math.sin(2.0 * Math.PI * 3200.0 * i / sampleRate)
+            val (hL, _) = hrtfEngine.processStereoSample(sigL, sigR)
+            val (xL, xR) = xtcEngine.processStereoSample(sigL, sigR)
+            if (i > 1000) {
+                diffHrtfVsXtc += abs(hL - xL)
+                stereoWidthXtc += abs(xL - xR)
+            }
+        }
+        assertTrue("Phone Speaker XTC should differ distinctly from Headphone HRTF", diffHrtfVsXtc > 10.0)
+        assertTrue("Phone Speaker XTC should project wide L/R separation", stereoWidthXtc > 50.0)
+    }
 }

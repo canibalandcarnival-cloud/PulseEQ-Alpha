@@ -5,6 +5,8 @@ import android.media.AudioFormat
 import android.media.AudioTrack
 import com.example.model.EqPresetsCatalog
 import com.example.model.NightIntensity
+import com.example.model.OutputTarget
+import com.example.model.SpatialMode
 import com.example.model.TestAudioSource
 import com.example.model.VisualizerFrame
 import kotlinx.coroutines.CoroutineScope
@@ -25,6 +27,7 @@ import kotlin.math.log10
 import kotlin.math.max
 import kotlin.math.pow
 import kotlin.math.sin
+import kotlin.math.sqrt
 import kotlin.math.tanh
 
 /**
@@ -92,6 +95,47 @@ class StereoBiquad {
         val na0 = 1.0 + alpha
         val na1 = -2.0 * cosW0
         val na2 = 1.0 - alpha
+
+        b0 = nb0 / na0
+        b1 = nb1 / na0
+        b2 = nb2 / na0
+        a1 = na1 / na0
+        a2 = na2 / na0
+    }
+
+    fun setLowPass(sampleRate: Int, freqHz: Double, q: Double) {
+        val w0 = 2.0 * PI * freqHz / sampleRate
+        val cosW0 = cos(w0)
+        val alpha = sin(w0) / (2.0 * q)
+
+        val nb0 = (1.0 - cosW0) * 0.5
+        val nb1 = 1.0 - cosW0
+        val nb2 = (1.0 - cosW0) * 0.5
+        val na0 = 1.0 + alpha
+        val na1 = -2.0 * cosW0
+        val na2 = 1.0 - alpha
+
+        b0 = nb0 / na0
+        b1 = nb1 / na0
+        b2 = nb2 / na0
+        a1 = na1 / na0
+        a2 = na2 / na0
+    }
+
+    fun setHighShelf(sampleRate: Int, freqHz: Double, q: Double, gainDb: Double) {
+        val a = 10.0.pow(gainDb / 40.0)
+        val w0 = 2.0 * PI * freqHz / sampleRate
+        val cosW0 = cos(w0)
+        val sinW0 = sin(w0)
+        val alpha = sinW0 / (2.0 * q)
+        val twoSqrtAAlpha = 2.0 * sqrt(a) * alpha
+
+        val nb0 = a * ((a + 1.0) + (a - 1.0) * cosW0 + twoSqrtAAlpha)
+        val nb1 = -2.0 * a * ((a - 1.0) + (a + 1.0) * cosW0)
+        val nb2 = a * ((a + 1.0) + (a - 1.0) * cosW0 - twoSqrtAAlpha)
+        val na0 = (a + 1.0) - (a - 1.0) * cosW0 + twoSqrtAAlpha
+        val na1 = 2.0 * ((a - 1.0) - (a + 1.0) * cosW0)
+        val na2 = (a + 1.0) - (a - 1.0) * cosW0 - twoSqrtAAlpha
 
         b0 = nb0 / na0
         b1 = nb1 / na0
@@ -332,6 +376,7 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
     private val bandFilters = Array(10) { StereoBiquad() }
     private val lateNightCompressor = DynamicRangeCompressor(sampleRate)
     private val speakerDspChain = PhoneSpeakerDspChain(sampleRate)
+    private val spatialAudioEngine = SpatialAudioEngine(sampleRate)
 
     @Volatile
     private var preampLinear: Double = 1.0
@@ -356,7 +401,12 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             lateNightEnabled = false,
             nightIntensity = NightIntensity.STANDARD,
             speakerDspEnabled = false,
-            virtualBassEnabled = false
+            virtualBassEnabled = false,
+            outputTarget = OutputTarget.HEADPHONES,
+            spatialMode = SpatialMode.OFF,
+            spatialDepth = SpatialMode.ATMOS_MUSIC.defaultDepth,
+            heightPresence = SpatialMode.ATMOS_MUSIC.defaultHeight,
+            vocalAnchor = true
         )
     }
 
@@ -367,7 +417,12 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         lateNightEnabled: Boolean = false,
         nightIntensity: NightIntensity = NightIntensity.STANDARD,
         speakerDspEnabled: Boolean = false,
-        virtualBassEnabled: Boolean = false
+        virtualBassEnabled: Boolean = false,
+        outputTarget: OutputTarget = OutputTarget.HEADPHONES,
+        spatialMode: SpatialMode = SpatialMode.OFF,
+        spatialDepth: Float = SpatialMode.ATMOS_MUSIC.defaultDepth,
+        heightPresence: Float = SpatialMode.ATMOS_MUSIC.defaultHeight,
+        vocalAnchor: Boolean = true
     ) {
         bypassed = isBypassed
         preampLinear = 10.0.pow(preampDb.toDouble() / 20.0)
@@ -375,6 +430,13 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         speakerDspChain.configure(
             isSpeakerDspEnabled = speakerDspEnabled && !isBypassed,
             isVirtualBassEnabled = virtualBassEnabled && !isBypassed
+        )
+        spatialAudioEngine.configure(
+            mode = if (isBypassed) SpatialMode.OFF else spatialMode,
+            target = outputTarget,
+            spatialDepth = spatialDepth,
+            heightPresence = heightPresence,
+            vocalAnchor = vocalAnchor
         )
 
         for (i in 0 until 10) {
@@ -398,7 +460,8 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         }
 
         val (compL, compR) = lateNightCompressor.processStereoSample(l, r)
-        val (spkL, spkR) = speakerDspChain.processStereoSample(compL, compR)
+        val (spatL, spatR) = spatialAudioEngine.processStereoSample(compL, compR)
+        val (spkL, spkR) = speakerDspChain.processStereoSample(spatL, spatR)
 
         // Final safety ceiling to prevent digital clipping
         return tanh(spkL * 0.92) to tanh(spkR * 0.92)
@@ -407,7 +470,7 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
 
 /**
  * Built-in real-time audio synthesizer so users can audition and visualize
- * Speaker DSP, Headphones, Bluetooth EQ tuning & Late Night compression immediately.
+ * Speaker DSP, Headphones, Bluetooth EQ tuning, Spatial Atmos & Late Night compression immediately.
  */
 class TestAudioSynthesizer {
     private val sampleRate = 44100
@@ -434,7 +497,12 @@ class TestAudioSynthesizer {
         lateNightEnabled: Boolean,
         nightIntensity: NightIntensity,
         speakerDspEnabled: Boolean,
-        virtualBassEnabled: Boolean
+        virtualBassEnabled: Boolean,
+        outputTarget: OutputTarget,
+        spatialMode: SpatialMode,
+        spatialDepth: Float,
+        heightPresence: Float,
+        vocalAnchor: Boolean
     ) {
         filterBank.updateParameters(
             gainsDb = gainsDb,
@@ -443,7 +511,12 @@ class TestAudioSynthesizer {
             lateNightEnabled = lateNightEnabled,
             nightIntensity = nightIntensity,
             speakerDspEnabled = speakerDspEnabled,
-            virtualBassEnabled = virtualBassEnabled
+            virtualBassEnabled = virtualBassEnabled,
+            outputTarget = outputTarget,
+            spatialMode = spatialMode,
+            spatialDepth = spatialDepth,
+            heightPresence = heightPresence,
+            vocalAnchor = vocalAnchor
         )
     }
 

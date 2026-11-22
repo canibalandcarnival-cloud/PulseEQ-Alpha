@@ -16,6 +16,7 @@ import com.example.model.ConnectedDeviceState
 import com.example.model.EqPresetsCatalog
 import com.example.model.NightIntensity
 import com.example.model.OutputTarget
+import com.example.model.SpatialMode
 import com.example.model.TestAudioSource
 import com.example.model.VisualizerFrame
 import kotlinx.coroutines.CoroutineScope
@@ -130,6 +131,22 @@ class EqualizerAudioEngine(private val context: Context) {
 
     @Volatile
     var currentVirtualBassEnabled: Boolean = true
+        private set
+
+    @Volatile
+    var currentSpatialMode: SpatialMode = SpatialMode.OFF
+        private set
+
+    @Volatile
+    var currentSpatialDepth: Float = SpatialMode.ATMOS_MUSIC.defaultDepth
+        private set
+
+    @Volatile
+    var currentHeightPresence: Float = SpatialMode.ATMOS_MUSIC.defaultHeight
+        private set
+
+    @Volatile
+    var currentVocalAnchor: Boolean = true
         private set
 
     private val deviceCallback = object : AudioDeviceCallback() {
@@ -353,7 +370,11 @@ class EqualizerAudioEngine(private val context: Context) {
         lateNightEnabled: Boolean = currentLateNightEnabled,
         nightIntensity: NightIntensity = currentNightIntensity,
         speakerDspEnabled: Boolean = currentSpeakerDspEnabled,
-        virtualBassEnabled: Boolean = currentVirtualBassEnabled
+        virtualBassEnabled: Boolean = currentVirtualBassEnabled,
+        spatialMode: SpatialMode = currentSpatialMode,
+        spatialDepth: Float = currentSpatialDepth,
+        heightPresence: Float = currentHeightPresence,
+        vocalAnchor: Boolean = currentVocalAnchor
     ) {
         currentTarget = target
         currentGainsDb = gainsDb
@@ -363,6 +384,10 @@ class EqualizerAudioEngine(private val context: Context) {
         currentNightIntensity = nightIntensity
         currentSpeakerDspEnabled = speakerDspEnabled
         currentVirtualBassEnabled = virtualBassEnabled
+        currentSpatialMode = spatialMode
+        currentSpatialDepth = spatialDepth
+        currentHeightPresence = heightPresence
+        currentVocalAnchor = vocalAnchor
 
         val isSpeakerDspActive = (target == OutputTarget.SPEAKER) && speakerDspEnabled
 
@@ -373,7 +398,12 @@ class EqualizerAudioEngine(private val context: Context) {
             lateNightEnabled = lateNightEnabled,
             nightIntensity = nightIntensity,
             speakerDspEnabled = isSpeakerDspActive,
-            virtualBassEnabled = isSpeakerDspActive && virtualBassEnabled
+            virtualBassEnabled = isSpeakerDspActive && virtualBassEnabled,
+            outputTarget = target,
+            spatialMode = spatialMode,
+            spatialDepth = spatialDepth,
+            heightPresence = heightPresence,
+            vocalAnchor = vocalAnchor
         )
         applyToAllSessions()
     }
@@ -382,6 +412,7 @@ class EqualizerAudioEngine(private val context: Context) {
         var anyDpActive = false
         var anyLegacyActive = false
         val isSpeakerDspActive = (currentTarget == OutputTarget.SPEAKER) && currentSpeakerDspEnabled
+        val isSpatialActive = currentSpatialMode != SpatialMode.OFF
 
         for (bundle in sessionEffects.values) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && bundle.dynamicsProcessing != null) {
@@ -399,26 +430,36 @@ class EqualizerAudioEngine(private val context: Context) {
                             )
                         }
 
-                        // PostEq stage: iPhone Speaker DSP curve (110Hz steep cut, virtual bass warmth,
-                        // 400Hz -3dB boxiness dip, 2kHz +2dB clarity, 3.5kHz -1.5dB tame, 10kHz +2.5dB air)
-                        val postEqGains = if (isSpeakerDspActive) {
-                            floatArrayOf(
+                        // PostEq stage: iPhone Speaker DSP curve OR Pinna Height Atmos contour on Headphones/BT
+                        val heightScale = currentHeightPresence.coerceIn(0f, 1f)
+                        val cinemaBoost = if (currentSpatialMode == SpatialMode.ATMOS_CINEMA) 1.25f else 1.0f
+                        val postEqEnabled = isSpeakerDspActive || isSpatialActive
+                        val postEqGains = when {
+                            isSpeakerDspActive -> floatArrayOf(
                                 -12.0f, // <70Hz steep sub-bass protection
                                 -10.0f, // 70-110Hz steep HPF shoulder
                                 if (currentVirtualBassEnabled) 2.2f else 0.0f, // 120-250Hz harmonic punch
                                 -3.0f,  // 400Hz surgical boxiness removal
-                                2.0f,   // 2kHz crisp vocal clarity
+                                if (isSpatialActive && currentVocalAnchor) 2.6f else 2.0f, // 2kHz vocal clarity
                                 -1.5f,  // 3.5kHz harshness tame
-                                2.5f    // 10kHz airy detail
+                                if (isSpatialActive) 2.5f + 1.5f * heightScale else 2.5f // 10kHz air + height shelf
                             )
-                        } else {
-                            FloatArray(speakerPostEqCutoffsHz.size) { 0f }
+                            isSpatialActive -> floatArrayOf(
+                                0.4f, // Tight <70Hz center mono punch
+                                0.2f, // 70-110Hz anchor
+                                0.0f,
+                                0.0f,
+                                if (currentVocalAnchor) 1.4f else 0.0f, // Vocal Anchor lock
+                                (-1.8f * heightScale * cinemaBoost).coerceIn(-3.5f, 0f), // Pinna dip zone
+                                (2.4f * heightScale * cinemaBoost).coerceIn(0f, 3.5f)   // 12kHz height air shelf
+                            )
+                            else -> FloatArray(speakerPostEqCutoffsHz.size) { 0f }
                         }
-                        val postEq = DynamicsProcessing.Eq(true, isSpeakerDspActive, speakerPostEqCutoffsHz.size)
+                        val postEq = DynamicsProcessing.Eq(true, postEqEnabled, speakerPostEqCutoffsHz.size)
                         for (i in speakerPostEqCutoffsHz.indices) {
                             postEq.setBand(
                                 i,
-                                DynamicsProcessing.EqBand(isSpeakerDspActive, speakerPostEqCutoffsHz[i], postEqGains[i])
+                                DynamicsProcessing.EqBand(postEqEnabled, speakerPostEqCutoffsHz[i], postEqGains[i])
                             )
                         }
                         dp.setPostEqAllChannelsTo(postEq)
@@ -500,6 +541,8 @@ class EqualizerAudioEngine(private val context: Context) {
         val sessionCount = AudioSessionRegistry.activeSessions.value.size
         _dspStatusLabel.value = when {
             currentBypassed -> "DSP Bypassed"
+            isSpatialActive && currentTarget == OutputTarget.SPEAKER -> "Speaker XTC Spatial"
+            isSpatialActive -> "Spatial ${currentSpatialMode.label}"
             isSpeakerDspActive && currentLateNightEnabled -> "Speaker DSP + Late Night"
             isSpeakerDspActive -> "iPhone Speaker DSP"
             anyDpActive && sessionCount > 0 -> {
@@ -657,7 +700,12 @@ class EqualizerAudioEngine(private val context: Context) {
             lateNightEnabled = currentLateNightEnabled,
             nightIntensity = currentNightIntensity,
             speakerDspEnabled = isSpeakerDspActive,
-            virtualBassEnabled = isSpeakerDspActive && currentVirtualBassEnabled
+            virtualBassEnabled = isSpeakerDspActive && currentVirtualBassEnabled,
+            outputTarget = currentTarget,
+            spatialMode = currentSpatialMode,
+            spatialDepth = currentSpatialDepth,
+            heightPresence = currentHeightPresence,
+            vocalAnchor = currentVocalAnchor
         )
     }
 

@@ -57,6 +57,7 @@ import com.example.ui.components.MasterActionBar
 import com.example.ui.components.OutputDeviceSelector
 import com.example.ui.components.PresetQuickStrip
 import com.example.ui.components.PresetsBrowserSheet
+import com.example.ui.components.SpatialAudioCard
 import com.example.ui.components.SpeakerDspCard
 import com.example.ui.theme.AnalyzerCyan
 import com.example.ui.theme.RouteEmerald
@@ -244,6 +245,19 @@ private fun CompactConsoleLayout(
             onSelectIntensity = viewModel::setNightIntensity
         )
 
+        SpatialAudioCard(
+            spatialMode = profile.spatialMode,
+            outputTarget = uiState.selectedTarget,
+            spatialDepth = profile.spatialDepth,
+            heightPresence = profile.heightPresence,
+            vocalAnchor = profile.vocalAnchor,
+            isBypassed = profile.isBypassed,
+            onSelectMode = viewModel::setSpatialMode,
+            onDepthChange = viewModel::updateSpatialDepth,
+            onHeightChange = viewModel::updateHeightPresence,
+            onToggleVocalAnchor = viewModel::toggleVocalAnchor
+        )
+
         PresetQuickStrip(
             selectedPresetId = profile.selectedPresetId,
             onSelectPreset = viewModel::applyPreset
@@ -364,6 +378,19 @@ private fun WideConsoleLayout(
                     gainReductionDb = uiState.visualizerFrame.gainReductionDb,
                     onToggleLateNight = viewModel::toggleLateNightMode,
                     onSelectIntensity = viewModel::setNightIntensity
+                )
+
+                SpatialAudioCard(
+                    spatialMode = profile.spatialMode,
+                    outputTarget = uiState.selectedTarget,
+                    spatialDepth = profile.spatialDepth,
+                    heightPresence = profile.heightPresence,
+                    vocalAnchor = profile.vocalAnchor,
+                    isBypassed = profile.isBypassed,
+                    onSelectMode = viewModel::setSpatialMode,
+                    onDepthChange = viewModel::updateSpatialDepth,
+                    onHeightChange = viewModel::updateHeightPresence,
+                    onToggleVocalAnchor = viewModel::toggleVocalAnchor
                 )
             }
         }

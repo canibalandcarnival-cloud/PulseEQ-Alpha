@@ -13,6 +13,7 @@ import com.example.model.EqPresetsCatalog
 import com.example.model.NightIntensity
 import com.example.model.OutputEqProfile
 import com.example.model.OutputTarget
+import com.example.model.SpatialMode
 import com.example.model.TestAudioSource
 import com.example.model.VisualizerFrame
 import com.example.model.VisualizerMode
@@ -301,6 +302,55 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
         commitProfile(updated)
     }
 
+    fun setSpatialMode(mode: SpatialMode) {
+        val current = currentProfile()
+        val updated = when (mode) {
+            SpatialMode.OFF -> current.copy(spatialMode = SpatialMode.OFF)
+            SpatialMode.ATMOS_MUSIC,
+            SpatialMode.ATMOS_CINEMA -> current.copy(
+                spatialMode = mode,
+                spatialDepth = mode.defaultDepth,
+                heightPresence = mode.defaultHeight,
+                isBypassed = false
+            )
+        }
+        commitProfile(updated)
+    }
+
+    fun updateSpatialDepth(depth: Float) {
+        val current = currentProfile()
+        val clamped = ((depth * 100f).roundToInt() / 100f).coerceIn(0f, 1f)
+        val updated = current.copy(
+            spatialDepth = clamped,
+            spatialMode = if (current.spatialMode == SpatialMode.OFF && clamped > 0f) {
+                SpatialMode.ATMOS_MUSIC
+            } else {
+                current.spatialMode
+            }
+        )
+        commitProfile(updated)
+    }
+
+    fun updateHeightPresence(height: Float) {
+        val current = currentProfile()
+        val clamped = ((height * 100f).roundToInt() / 100f).coerceIn(0f, 1f)
+        val updated = current.copy(
+            heightPresence = clamped,
+            spatialMode = if (current.spatialMode == SpatialMode.OFF && clamped > 0f) {
+                SpatialMode.ATMOS_MUSIC
+            } else {
+                current.spatialMode
+            }
+        )
+        commitProfile(updated)
+    }
+
+    fun toggleVocalAnchor() {
+        val current = currentProfile()
+        val updated = current.copy(vocalAnchor = !current.vocalAnchor)
+        commitProfile(updated)
+    }
+
     fun toggleBypass() {
         val current = currentProfile()
         val updated = current.copy(isBypassed = !current.isBypassed)
@@ -351,7 +401,11 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             lateNightEnabled = profile.lateNightEnabled,
             nightIntensity = profile.nightIntensity,
             speakerDspEnabled = profile.speakerDspEnabled,
-            virtualBassEnabled = profile.virtualBassEnabled
+            virtualBassEnabled = profile.virtualBassEnabled,
+            spatialMode = profile.spatialMode,
+            spatialDepth = profile.spatialDepth,
+            heightPresence = profile.heightPresence,
+            vocalAnchor = profile.vocalAnchor
         )
     }
 

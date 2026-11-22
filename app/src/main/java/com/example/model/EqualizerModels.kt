@@ -79,6 +79,32 @@ enum class NightIntensity(
     )
 }
 
+enum class SpatialMode(
+    val label: String,
+    val subtitle: String,
+    val defaultDepth: Float,
+    val defaultHeight: Float
+) {
+    OFF(
+        label = "Off",
+        subtitle = "Stereo Direct",
+        defaultDepth = 0.0f,
+        defaultHeight = 0.0f
+    ),
+    ATMOS_MUSIC(
+        label = "Atmos Music",
+        subtitle = "Balanced Studio",
+        defaultDepth = 0.65f,
+        defaultHeight = 0.58f
+    ),
+    ATMOS_CINEMA(
+        label = "Atmos Cinema",
+        subtitle = "Wide 3D & Height",
+        defaultDepth = 0.92f,
+        defaultHeight = 0.88f
+    )
+}
+
 @Immutable
 data class OutputEqProfile(
     val target: OutputTarget,
@@ -89,7 +115,11 @@ data class OutputEqProfile(
     val lateNightEnabled: Boolean = false,
     val nightIntensity: NightIntensity = NightIntensity.STANDARD,
     val speakerDspEnabled: Boolean = (target == OutputTarget.SPEAKER),
-    val virtualBassEnabled: Boolean = (target == OutputTarget.SPEAKER)
+    val virtualBassEnabled: Boolean = (target == OutputTarget.SPEAKER),
+    val spatialMode: SpatialMode = SpatialMode.OFF,
+    val spatialDepth: Float = SpatialMode.ATMOS_MUSIC.defaultDepth,
+    val heightPresence: Float = SpatialMode.ATMOS_MUSIC.defaultHeight,
+    val vocalAnchor: Boolean = true
 ) {
     companion object {
         fun defaultGainsForTarget(target: OutputTarget): List<Float> = when (target) {
