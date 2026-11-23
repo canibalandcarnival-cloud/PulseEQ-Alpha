@@ -175,6 +175,26 @@ enum class AccommodationToneProfile(
     )
 }
 
+enum class SpeakerTuningProfile(
+    val id: String,
+    val label: String,
+    val subtitleTag: String,
+    val detailSummary: String
+) {
+    PRO_MAX_MUSIC(
+        id = "pro_max_music",
+        label = "18 Pro Max Music",
+        subtitleTag = "Rich Bass & Air",
+        detailSummary = "88Hz HPF • 135Hz +3.5 • 340Hz -3.5 • 3k +2 • 6.8k -2.5 • 11.5k +3.5dB"
+    ),
+    PRO_WARM_DIALOGUE(
+        id = "pro_warm_dialogue",
+        label = "18 Pro",
+        subtitleTag = "Warm Spoken Dialogue",
+        detailSummary = "100Hz HPF • 150Hz +1.5 • 340Hz -2 • 1.8kHz +3.2 • 6.8k -3.0dB"
+    )
+}
+
 enum class SoftSoundIntensity(
     val id: String,
     val label: String,
@@ -269,7 +289,8 @@ data class OutputEqProfile(
     val nightIntensity: NightIntensity = NightIntensity.STANDARD,
     val speakerDspEnabled: Boolean = (target == OutputTarget.SPEAKER),
     val virtualBassEnabled: Boolean = (target == OutputTarget.SPEAKER),
-    val landscapeStereoStage: Boolean = false,
+    val landscapeStereoStage: Boolean = (target == OutputTarget.SPEAKER),
+    val speakerTuningProfile: SpeakerTuningProfile = SpeakerTuningProfile.PRO_MAX_MUSIC,
     val audioMixMode: AudioMixMode = AudioMixMode.STANDARD,
     val spatialMode: SpatialMode = SpatialMode.OFF,
     val spatialDepth: Float = SpatialMode.ATMOS_MUSIC.defaultDepth,
@@ -369,23 +390,36 @@ object LoudnessMaximizerSpecs {
 }
 
 object FlagshipSpeakerSpecs {
-    const val SUB_BASS_HPF_HZ = 95.0
-    const val BOXINESS_CUT_HZ = 380.0
-    const val BOXINESS_CUT_DB = -3.0
-    const val PRESENCE_1_HZ = 1800.0
-    const val PRESENCE_1_DB = 2.0
-    const val PRESENCE_2_HZ = 3200.0
-    const val PRESENCE_2_DB = 2.5
-    const val AIR_HZ = 9500.0
-    const val AIR_DB = 3.0
-    const val XTC_CROSSFEED_GAIN = 0.20
-    const val XTC_DELAY_SEC = 0.00018
-    const val RMS_THRESHOLD_DB = -18.0f
-    const val RMS_RATIO = 3.5f
-    const val RMS_KNEE_DB = 12.0f
-    const val RMS_ATTACK_MS = 4.0f
-    const val RMS_RELEASE_MS = 120.0f
-    const val RMS_MAKEUP_DB = 5.5f
+    const val SUB_BASS_HPF_HZ = 88.0
+    const val CHAMBER_BASS_HZ = 135.0
+    const val CHAMBER_BASS_Q = 1.1
+    const val CHAMBER_BASS_DB = 3.5
+    const val BOXINESS_CUT_HZ = 340.0
+    const val BOXINESS_CUT_Q = 1.4
+    const val BOXINESS_CUT_DB = -3.5
+    const val PRESENCE_HZ = 3000.0
+    const val PRESENCE_Q = 1.2
+    const val PRESENCE_DB = 2.0
+    const val DE_ESSER_HZ = 6800.0
+    const val DE_ESSER_Q = 3.5
+    const val DE_ESSER_DB = -2.5
+    const val AIR_SHELF_HZ = 11500.0
+    const val AIR_SHELF_Q = 0.707
+    const val AIR_SHELF_DB = 3.5
+
+    // Hybrid Earpiece + Bottom Speaker Crossover Simulation
+    const val HYBRID_CROSSOVER_BASS_HZ = 180.0
+    const val XTC_CROSSFEED_GAIN = 0.22
+    const val XTC_DELAY_SEC = 0.00019
+
+    // Apple Dynamic Excursion Protection (Smart Bass Limiter -> -0.3 dB Brickwall with +4.5 dB clean makeup)
+    const val EXCURSION_LOW_BAND_HZ = 220.0
+    const val EXCURSION_THRESHOLD_DB = -14.0f
+    const val EXCURSION_RATIO = 6.0f
+    const val EXCURSION_KNEE_DB = 6.0f
+    const val EXCURSION_ATTACK_MS = 3.0f
+    const val EXCURSION_RELEASE_MS = 120.0f
+    const val MAKEUP_GAIN_DB = 4.5f
     const val BRICKWALL_THRESHOLD_DB = -0.3f
     const val BRICKWALL_RATIO = 20.0f
     const val BRICKWALL_ATTACK_MS = 0.5f

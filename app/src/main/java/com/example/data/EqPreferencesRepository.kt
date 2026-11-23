@@ -42,7 +42,8 @@ class EqPreferencesRepository(private val context: Context) {
         fun nightIntensityKey(target: OutputTarget) = stringPreferencesKey("night_intensity_${target.id}")
         fun speakerDspKey(target: OutputTarget) = booleanPreferencesKey("speaker_dsp_${target.id}")
         fun virtualBassKey(target: OutputTarget) = booleanPreferencesKey("virtual_bass_${target.id}")
-        fun landscapeStereoStageKey(target: OutputTarget) = booleanPreferencesKey("landscape_stereo_${target.id}")
+        fun landscapeStereoStageKey(target: OutputTarget) = booleanPreferencesKey("hybrid_dual_speaker_${target.id}")
+        fun speakerTuningProfileKey(target: OutputTarget) = stringPreferencesKey("speaker_tuning_profile_${target.id}")
         fun audioMixModeKey(target: OutputTarget) = stringPreferencesKey("audio_mix_mode_${target.id}")
         fun spatialModeKey(target: OutputTarget) = stringPreferencesKey("spatial_mode_${target.id}")
         fun spatialDepthKey(target: OutputTarget) = floatPreferencesKey("spatial_depth_${target.id}")
@@ -142,7 +143,10 @@ class EqPreferencesRepository(private val context: Context) {
                 nightIntensity = intensity,
                 speakerDspEnabled = prefs[Keys.speakerDspKey(target)] ?: (target == OutputTarget.SPEAKER),
                 virtualBassEnabled = prefs[Keys.virtualBassKey(target)] ?: (target == OutputTarget.SPEAKER),
-                landscapeStereoStage = prefs[Keys.landscapeStereoStageKey(target)] ?: false,
+                landscapeStereoStage = prefs[Keys.landscapeStereoStageKey(target)] ?: (target == OutputTarget.SPEAKER),
+                speakerTuningProfile = com.example.model.SpeakerTuningProfile.entries.firstOrNull {
+                    it.name == prefs[Keys.speakerTuningProfileKey(target)]
+                } ?: com.example.model.SpeakerTuningProfile.PRO_MAX_MUSIC,
                 audioMixMode = audioMixMode,
                 spatialMode = spatialMode,
                 spatialDepth = (prefs[Keys.spatialDepthKey(target)] ?: com.example.model.SpatialMode.ATMOS_MUSIC.defaultDepth)
@@ -224,6 +228,7 @@ class EqPreferencesRepository(private val context: Context) {
             prefs[Keys.speakerDspKey(profile.target)] = profile.speakerDspEnabled
             prefs[Keys.virtualBassKey(profile.target)] = profile.virtualBassEnabled
             prefs[Keys.landscapeStereoStageKey(profile.target)] = profile.landscapeStereoStage
+            prefs[Keys.speakerTuningProfileKey(profile.target)] = profile.speakerTuningProfile.name
             prefs[Keys.audioMixModeKey(profile.target)] = profile.audioMixMode.name
             prefs[Keys.spatialModeKey(profile.target)] = profile.spatialMode.name
             prefs[Keys.spatialDepthKey(profile.target)] = profile.spatialDepth

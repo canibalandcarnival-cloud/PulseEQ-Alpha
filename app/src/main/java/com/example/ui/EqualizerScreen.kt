@@ -402,10 +402,12 @@ private fun CompactConsoleLayout(
                 speakerDspEnabled = profile.speakerDspEnabled,
                 virtualBassEnabled = profile.virtualBassEnabled,
                 landscapeStereoStage = profile.landscapeStereoStage,
+                speakerTuningProfile = profile.speakerTuningProfile,
                 isBypassed = profile.isBypassed,
                 onToggleSpeakerDsp = viewModel::toggleSpeakerDsp,
                 onToggleVirtualBass = viewModel::toggleVirtualBass,
-                onToggleLandscapeStereo = viewModel::toggleLandscapeStereoStage
+                onToggleLandscapeStereo = viewModel::toggleLandscapeStereoStage,
+                onSelectTuningProfile = viewModel::selectSpeakerTuningProfile
             )
         }
 
@@ -621,10 +623,12 @@ private fun WideConsoleLayout(
                         speakerDspEnabled = profile.speakerDspEnabled,
                         virtualBassEnabled = profile.virtualBassEnabled,
                         landscapeStereoStage = profile.landscapeStereoStage,
+                        speakerTuningProfile = profile.speakerTuningProfile,
                         isBypassed = profile.isBypassed,
                         onToggleSpeakerDsp = viewModel::toggleSpeakerDsp,
                         onToggleVirtualBass = viewModel::toggleVirtualBass,
-                        onToggleLandscapeStereo = viewModel::toggleLandscapeStereoStage
+                        onToggleLandscapeStereo = viewModel::toggleLandscapeStereoStage,
+                        onSelectTuningProfile = viewModel::selectSpeakerTuningProfile
                     )
                 }
 

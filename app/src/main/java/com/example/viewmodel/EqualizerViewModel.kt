@@ -22,6 +22,7 @@ import com.example.model.OutputTarget
 import com.example.model.SetupAuditionSlot
 import com.example.model.SoftSoundIntensity
 import com.example.model.SpatialMode
+import com.example.model.SpeakerTuningProfile
 import com.example.model.TestAudioSource
 import com.example.model.ThreeBandEqRanges
 import com.example.model.VisualizerFrame
@@ -375,6 +376,16 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
         val updated = current.copy(
             landscapeStereoStage = next,
             speakerDspEnabled = if (next) true else current.speakerDspEnabled
+        )
+        commitProfile(updated)
+    }
+
+    fun selectSpeakerTuningProfile(profile: SpeakerTuningProfile) {
+        val current = currentProfile()
+        val updated = current.copy(
+            speakerTuningProfile = profile,
+            speakerDspEnabled = true,
+            isBypassed = false
         )
         commitProfile(updated)
     }
@@ -733,6 +744,7 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             speakerDspEnabled = profile.speakerDspEnabled,
             virtualBassEnabled = profile.virtualBassEnabled,
             landscapeStereoStage = profile.landscapeStereoStage,
+            speakerTuningProfile = profile.speakerTuningProfile,
             audioMixMode = profile.audioMixMode,
             spatialMode = profile.spatialMode,
             spatialDepth = profile.spatialDepth,

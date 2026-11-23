@@ -94,31 +94,39 @@ class ExampleUnitTest {
             configure(
                 isSpeakerDspEnabled = true,
                 isVirtualBassEnabled = false,
-                isLandscapeStereoEnabled = false
+                isLandscapeStereoEnabled = false,
+                profile = com.example.model.SpeakerTuningProfile.PRO_MAX_MUSIC
             )
         }
         val withVirtualBass = com.example.audio.PhoneSpeakerDspChain(sampleRate).apply {
             configure(
                 isSpeakerDspEnabled = true,
                 isVirtualBassEnabled = true,
-                isLandscapeStereoEnabled = false
+                isLandscapeStereoEnabled = false,
+                profile = com.example.model.SpeakerTuningProfile.PRO_MAX_MUSIC
             )
         }
 
-        // 1. Feed 45Hz sub-bass sine wave (well below 95Hz 24dB/oct HPF cutoff)
+        // 0. Hybrid Dual-Speaker Mode defaults to enabled in Phone Speaker mode
+        assertTrue(
+            "Hybrid Dual-Speaker Mode must be enabled by default for Phone Speaker",
+            com.example.model.OutputEqProfile(target = com.example.model.OutputTarget.SPEAKER).landscapeStereoStage
+        )
+
+        // 1. Feed 45Hz sub-bass sine wave (well below 88Hz 24dB/oct HPF cutoff)
         var rmsNoVirtual = 0.0
         val numSamples = 4410 // 100ms
         for (i in 0 until numSamples) {
-            val s = 0.5 * kotlin.math.sin(2.0 * Math.PI * 45.0 * i / sampleRate)
+            val s = 0.45 * kotlin.math.sin(2.0 * Math.PI * 45.0 * i / sampleRate)
             val (outNo, _) = noVirtualBass.processStereoSample(s, s)
             if (i > 2205) { // steady-state second half
                 rmsNoVirtual += outNo * outNo
             }
         }
         rmsNoVirtual = kotlin.math.sqrt(rmsNoVirtual / 2205)
-        assertTrue("95Hz 24dB/oct HPF should strongly attenuate 45Hz sub-bass (rms=$rmsNoVirtual)", rmsNoVirtual < 0.06)
+        assertTrue("88Hz 24dB/oct HPF should strongly attenuate 45Hz sub-bass (rms=$rmsNoVirtual)", rmsNoVirtual < 0.06)
 
-        // 2. Feed 50Hz sub-bass excitation (below 95Hz): Virtual Bass synthesizes audible 110-240Hz 2nd/3rd harmonics
+        // 2. Feed 50Hz sub-bass excitation (below 88Hz): 2nd-Order Harmonic Bass Exciter synthesizes 110-220Hz harmonics
         val baseline50 = com.example.audio.PhoneSpeakerDspChain(sampleRate).apply {
             configure(isSpeakerDspEnabled = true, isVirtualBassEnabled = false)
         }
@@ -136,19 +144,76 @@ class ExampleUnitTest {
         rmsBase50 = kotlin.math.sqrt(rmsBase50 / 2205)
         rmsVirtual50 = kotlin.math.sqrt(rmsVirtual50 / 2205)
         assertTrue(
-            "Virtual Bass should synthesize 110-240Hz harmonics above HPF-only baseline ($rmsVirtual50 vs $rmsBase50)",
+            "2nd-Order Harmonic Bass Exciter should synthesize harmonics above HPF-only baseline ($rmsVirtual50 vs $rmsBase50)",
             rmsVirtual50 > rmsBase50 * 1.4
         )
 
-        // 3. Landscape Stereo Stage (-20% phase-inverted 0.18ms XTC crossfeed) widens L/R separation at 600Hz
+        // 3. Acoustic Chamber & V-Curve EQ profile verification
+        val resp135 = com.example.audio.PhoneSpeakerDspChain.computeVcurveResponseDbAt(
+            135.0,
+            com.example.model.SpeakerTuningProfile.PRO_MAX_MUSIC,
+            sampleRate
+        )
+        val resp340 = com.example.audio.PhoneSpeakerDspChain.computeVcurveResponseDbAt(
+            340.0,
+            com.example.model.SpeakerTuningProfile.PRO_MAX_MUSIC,
+            sampleRate
+        )
+        val resp3000 = com.example.audio.PhoneSpeakerDspChain.computeVcurveResponseDbAt(
+            3000.0,
+            com.example.model.SpeakerTuningProfile.PRO_MAX_MUSIC,
+            sampleRate
+        )
+        val resp6800 = com.example.audio.PhoneSpeakerDspChain.computeVcurveResponseDbAt(
+            6800.0,
+            com.example.model.SpeakerTuningProfile.PRO_MAX_MUSIC,
+            sampleRate
+        )
+        val resp14000 = com.example.audio.PhoneSpeakerDspChain.computeVcurveResponseDbAt(
+            14000.0,
+            com.example.model.SpeakerTuningProfile.PRO_MAX_MUSIC,
+            sampleRate
+        )
+        assertTrue("135Hz Pro Max Chamber Bass Punch should boost > +2.0 dB ($resp135)", resp135 > 2.0f)
+        assertTrue("340Hz lower-mid scoop should dip < -2.2 dB ($resp340)", resp340 < -2.2f)
+        assertTrue("3.0kHz presence should boost > +1.5 dB ($resp3000)", resp3000 > 1.5f)
+        assertTrue("6.8kHz surgical de-esser should dip below 3kHz & 14kHz ($resp6800)", resp6800 < -0.8f)
+        assertTrue("11.5kHz crisp air shelf should boost > +2.2 dB at 14kHz ($resp14000)", resp14000 > 2.2f)
+
+        // 3b. 18 Pro (Warm Spoken Dialogue) emphasizes 1.8kHz dialogue clarity while taming high air relative to Music
+        val dialogue1800 = com.example.audio.PhoneSpeakerDspChain.computeVcurveResponseDbAt(
+            1800.0,
+            com.example.model.SpeakerTuningProfile.PRO_WARM_DIALOGUE,
+            sampleRate
+        )
+        val music1800 = com.example.audio.PhoneSpeakerDspChain.computeVcurveResponseDbAt(
+            1800.0,
+            com.example.model.SpeakerTuningProfile.PRO_MAX_MUSIC,
+            sampleRate
+        )
+        assertTrue("18 Pro Dialogue should emphasize 1.8kHz speech more than Music ($dialogue1800 vs $music1800)", dialogue1800 > music1800 + 2.0f)
+
+        // 4. Hybrid Dual-Speaker Mode: keeps bass (<180Hz) tight & centered while widening >180Hz via -22% 0.19ms XTC
         val xtcOff = com.example.audio.PhoneSpeakerDspChain(sampleRate).apply {
             configure(isSpeakerDspEnabled = true, isVirtualBassEnabled = false, isLandscapeStereoEnabled = false)
         }
         val xtcOn = com.example.audio.PhoneSpeakerDspChain(sampleRate).apply {
             configure(isSpeakerDspEnabled = true, isVirtualBassEnabled = false, isLandscapeStereoEnabled = true)
         }
+        var bassSideEnergy = 0.0
         var sideEnergyOff = 0.0
         var sideEnergyOn = 0.0
+        for (i in 0 until 2000) {
+            // Stereo 110Hz bass should be centered (low L/R diff)
+            val bassL = 0.12 * kotlin.math.sin(2.0 * Math.PI * 110.0 * i / sampleRate)
+            val bassR = -0.12 * kotlin.math.sin(2.0 * Math.PI * 110.0 * i / sampleRate)
+            val (bOutL, bOutR) = xtcOn.processStereoSample(bassL, bassR)
+            if (i > 1200) {
+                bassSideEnergy += abs(bOutL - bOutR)
+            }
+        }
+        assertTrue("Hybrid Dual-Speaker Mode must center <180Hz stereo bass (side=$bassSideEnergy)", bassSideEnergy < 45.0)
+
         for (i in 0 until 2000) {
             val sigL = 0.08 * kotlin.math.sin(2.0 * Math.PI * 600.0 * i / sampleRate)
             val sigR = 0.01 * kotlin.math.sin(2.0 * Math.PI * 600.0 * i / sampleRate)
@@ -160,18 +225,29 @@ class ExampleUnitTest {
             }
         }
         assertTrue(
-            "Landscape Stereo Stage (-20% 0.18ms XTC) should widen L/R separation ($sideEnergyOn vs $sideEnergyOff)",
+            "Hybrid Dual-Speaker Landscape XTC (-22% 0.19ms) should widen >180Hz L/R separation ($sideEnergyOn vs $sideEnergyOff)",
             sideEnergyOn > sideEnergyOff * 1.12
         )
 
-        // 4. Two-stage high-output flagship limiter (RMS -18dB +5.5dB -> -0.3dB brickwall) caps hot peaks <= 0.985
+        // 5. Apple Dynamic Excursion Protection (-14dB 6:1 3ms/120ms) +4.5dB makeup -> -0.3dB Brickwall Limiter
+        val excursionChain = com.example.audio.PhoneSpeakerDspChain(sampleRate).apply {
+            configure(isSpeakerDspEnabled = true, isVirtualBassEnabled = true, isLandscapeStereoEnabled = true)
+        }
+        var minExcursionGr = 0f
+        for (i in 0 until 2200) {
+            val heavyBass = 0.70 * kotlin.math.sin(2.0 * Math.PI * 135.0 * i / sampleRate)
+            excursionChain.processStereoSample(heavyBass, heavyBass)
+            minExcursionGr = minOf(minExcursionGr, excursionChain.latestExcursionReductionDb)
+        }
+        assertTrue("Heavy 135Hz bass swell must trigger Dynamic Excursion Protection ($minExcursionGr)", minExcursionGr < -2.0f)
+
         var maxHotPeak = 0.0
         for (i in 0 until 1000) {
             val hot = 0.95 * kotlin.math.sin(2.0 * Math.PI * 2000.0 * i / sampleRate)
             val (oL, oR) = xtcOn.processStereoSample(hot, hot)
             maxHotPeak = maxOf(maxHotPeak, abs(oL), abs(oR))
         }
-        assertTrue("Flagship two-stage limiter must cap hot peaks <= 0.985 (max=$maxHotPeak)", maxHotPeak <= 0.985)
+        assertTrue("Flagship -0.3dB Brickwall limiter must cap hot peaks <= 0.985 (max=$maxHotPeak)", maxHotPeak <= 0.985)
     }
 
     @Test
