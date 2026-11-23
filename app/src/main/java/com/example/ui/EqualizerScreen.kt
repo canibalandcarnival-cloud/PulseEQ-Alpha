@@ -66,24 +66,44 @@ import com.example.ui.components.SpatialAudioCard
 import com.example.ui.components.SpeakerDspCard
 import com.example.ui.components.ThreeBandEqualizerCard
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.material.icons.rounded.CompareArrows
+import androidx.compose.material.icons.rounded.SurroundSound
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import com.example.ui.theme.AnalyzerCyanSoft
-import com.example.ui.theme.StudioSurfaceHighlight
+import com.example.model.SpatialMode
+import com.example.ui.components.AudioMixCard
 import com.example.ui.theme.AnalyzerCyan
+import com.example.ui.theme.AnalyzerCyanSoft
+import com.example.ui.theme.AppleBlue
+import com.example.ui.theme.AppleBlueSoft
+import com.example.ui.theme.AppleGlassBorder
+import com.example.ui.theme.AppleGlassBottom
+import com.example.ui.theme.AppleGlassTile
+import com.example.ui.theme.AppleGlassTop
+import com.example.ui.theme.AppleMint
+import com.example.ui.theme.AppleMintSoft
+import com.example.ui.theme.DynamicIslandBorder
+import com.example.ui.theme.DynamicIslandSurface
 import com.example.ui.theme.RouteEmerald
 import com.example.ui.theme.SignalCoral
 import com.example.ui.theme.SignalCoralSoft
 import com.example.ui.theme.StudioBackground
 import com.example.ui.theme.StudioBorder
 import com.example.ui.theme.StudioSurface
-import com.example.ui.theme.StudioSurfaceElevated
 import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.ui.theme.WarmAmber
 import com.example.viewmodel.EqualizerUiState
 import com.example.viewmodel.EqualizerViewModel
 
@@ -282,7 +302,10 @@ private fun CompactConsoleLayout(
         StudioTopHeader(
             dspStatusLabel = uiState.dspStatusLabel,
             isBypassed = profile.isBypassed,
-            selectedTargetLabel = uiState.selectedTarget.label
+            selectedTargetLabel = uiState.selectedTarget.label,
+            spatialMode = profile.spatialMode,
+            abCompareHeld = uiState.abCompareHeld,
+            onAbCompareHeld = viewModel::setAbCompareHeld
         )
 
         OutputDeviceSelector(
@@ -314,7 +337,8 @@ private fun CompactConsoleLayout(
             accommodationsSoftIntensity = profile.accommodationsSoftIntensity,
             accommodationsApplyToMedia = profile.accommodationsApplyToMedia,
             loudnessMaximizerEnabled = profile.loudnessMaximizerEnabled,
-            outputTarget = uiState.selectedTarget
+            outputTarget = uiState.selectedTarget,
+            audioMixMode = profile.audioMixMode
         )
 
         MasterActionBar(
@@ -323,6 +347,12 @@ private fun CompactConsoleLayout(
             onToggleBypass = viewModel::toggleBypass,
             onReset = viewModel::resetToFlat,
             onOpenPresetsSheet = onOpenPresetsSheet
+        )
+
+        AudioMixCard(
+            audioMixMode = profile.audioMixMode,
+            isBypassed = profile.isBypassed,
+            onSelectMode = viewModel::setAudioMixMode
         )
 
         HeadphoneAccommodationsCard(
@@ -371,9 +401,11 @@ private fun CompactConsoleLayout(
             SpeakerDspCard(
                 speakerDspEnabled = profile.speakerDspEnabled,
                 virtualBassEnabled = profile.virtualBassEnabled,
+                landscapeStereoStage = profile.landscapeStereoStage,
                 isBypassed = profile.isBypassed,
                 onToggleSpeakerDsp = viewModel::toggleSpeakerDsp,
-                onToggleVirtualBass = viewModel::toggleVirtualBass
+                onToggleVirtualBass = viewModel::toggleVirtualBass,
+                onToggleLandscapeStereo = viewModel::toggleLandscapeStereoStage
             )
         }
 
@@ -462,7 +494,10 @@ private fun WideConsoleLayout(
         StudioTopHeader(
             dspStatusLabel = uiState.dspStatusLabel,
             isBypassed = profile.isBypassed,
-            selectedTargetLabel = uiState.selectedTarget.label
+            selectedTargetLabel = uiState.selectedTarget.label,
+            spatialMode = profile.spatialMode,
+            abCompareHeld = uiState.abCompareHeld,
+            onAbCompareHeld = viewModel::setAbCompareHeld
         )
 
         Row(
@@ -503,7 +538,8 @@ private fun WideConsoleLayout(
                     accommodationsSoftIntensity = profile.accommodationsSoftIntensity,
                     accommodationsApplyToMedia = profile.accommodationsApplyToMedia,
                     loudnessMaximizerEnabled = profile.loudnessMaximizerEnabled,
-                    outputTarget = uiState.selectedTarget
+                    outputTarget = uiState.selectedTarget,
+                    audioMixMode = profile.audioMixMode
                 )
 
                 PresetQuickStrip(
@@ -530,6 +566,12 @@ private fun WideConsoleLayout(
                     onToggleBypass = viewModel::toggleBypass,
                     onReset = viewModel::resetToFlat,
                     onOpenPresetsSheet = onOpenPresetsSheet
+                )
+
+                AudioMixCard(
+                    audioMixMode = profile.audioMixMode,
+                    isBypassed = profile.isBypassed,
+                    onSelectMode = viewModel::setAudioMixMode
                 )
 
                 HeadphoneAccommodationsCard(
@@ -578,9 +620,11 @@ private fun WideConsoleLayout(
                     SpeakerDspCard(
                         speakerDspEnabled = profile.speakerDspEnabled,
                         virtualBassEnabled = profile.virtualBassEnabled,
+                        landscapeStereoStage = profile.landscapeStereoStage,
                         isBypassed = profile.isBypassed,
                         onToggleSpeakerDsp = viewModel::toggleSpeakerDsp,
-                        onToggleVirtualBass = viewModel::toggleVirtualBass
+                        onToggleVirtualBass = viewModel::toggleVirtualBass,
+                        onToggleLandscapeStereo = viewModel::toggleLandscapeStereoStage
                     )
                 }
 
@@ -635,70 +679,226 @@ private fun WideConsoleLayout(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun StudioTopHeader(
     dspStatusLabel: String,
     isBypassed: Boolean,
-    selectedTargetLabel: String
+    selectedTargetLabel: String,
+    spatialMode: SpatialMode,
+    abCompareHeld: Boolean,
+    onAbCompareHeld: (Boolean) -> Unit
 ) {
-    Row(
+    DisposableEffect(Unit) {
+        onDispose { onAbCompareHeld(false) }
+    }
+
+    val spatialActive = spatialMode != SpatialMode.OFF && !isBypassed
+
+    Column(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(AppleGlassTop, AppleGlassBottom)
+                            )
+                        )
+                        .border(1.dp, SignalCoral.copy(alpha = 0.65f), RoundedCornerShape(12.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.GraphicEq,
+                        contentDescription = "PulseEQ",
+                        tint = SignalCoral,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "PulseEQ",
+                        style = MaterialTheme.typography.titleLarge.copy(fontSize = 19.sp),
+                        color = TextPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = "iPhone 18 Pro Max • iOS 27 • $selectedTargetLabel",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            // Prominent Quick "Hold to Compare (A/B)" Loudness-Matched Pill Button
+            Row(
                 modifier = Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(SignalCoralSoft)
-                    .border(1.dp, SignalCoral.copy(alpha = 0.6f), RoundedCornerShape(10.dp)),
-                contentAlignment = Alignment.Center
+                    .defaultMinSize(minHeight = 48.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(
+                        if (abCompareHeld) {
+                            WarmAmber.copy(alpha = 0.24f)
+                        } else {
+                            AppleGlassTile
+                        }
+                    )
+                    .border(
+                        width = 1.dp,
+                        color = if (abCompareHeld) WarmAmber else AppleGlassBorder,
+                        shape = RoundedCornerShape(999.dp)
+                    )
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            awaitFirstDown(requireUnconsumed = false)
+                            onAbCompareHeld(true)
+                            waitForUpOrCancellation()
+                            onAbCompareHeld(false)
+                        }
+                    }
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                    .testTag("header_ab_compare_button"),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 Icon(
-                    imageVector = Icons.Rounded.GraphicEq,
-                    contentDescription = "PulseEQ",
-                    tint = SignalCoral,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-            Column {
-                Text(
-                    text = "PulseEQ",
-                    style = MaterialTheme.typography.titleLarge.copy(fontSize = 19.sp),
-                    color = TextPrimary
+                    imageVector = Icons.Rounded.CompareArrows,
+                    contentDescription = "Hold to Compare A/B",
+                    tint = if (abCompareHeld) WarmAmber else AnalyzerCyan,
+                    modifier = Modifier.size(15.dp)
                 )
                 Text(
-                    text = "Tuning: $selectedTargetLabel",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = TextSecondary
+                    text = if (abCompareHeld) "A: ORIG" else "HOLD A/B",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = if (abCompareHeld) WarmAmber else TextPrimary
                 )
             }
         }
 
+        // iOS 27 Dynamic Island Live Status Pill
         Row(
             modifier = Modifier
+                .fillMaxWidth()
                 .clip(RoundedCornerShape(999.dp))
-                .background(StudioSurfaceElevated)
-                .border(1.dp, StudioBorder, RoundedCornerShape(999.dp))
-                .padding(horizontal = 10.dp, vertical = 5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                .background(DynamicIslandSurface)
+                .border(1.dp, DynamicIslandBorder, RoundedCornerShape(999.dp))
+                .padding(horizontal = 12.dp, vertical = 7.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(
-                modifier = Modifier
-                    .size(6.dp)
-                    .clip(CircleShape)
-                    .background(if (isBypassed) TextMuted else RouteEmerald)
-            )
-            Text(
-                text = dspStatusLabel,
-                style = MaterialTheme.typography.labelSmall,
-                color = if (isBypassed) TextMuted else AnalyzerCyan
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(7.dp)
+                        .clip(CircleShape)
+                        .background(
+                            when {
+                                abCompareHeld -> WarmAmber
+                                isBypassed -> TextMuted
+                                else -> RouteEmerald
+                            }
+                        )
+                )
+                Text(
+                    text = if (abCompareHeld) "A/B Compare • Loudness Matched Bypass" else dspStatusLabel,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold
+                    ),
+                    color = when {
+                        abCompareHeld -> WarmAmber
+                        isBypassed -> TextMuted
+                        else -> AnalyzerCyan
+                    },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                // Active Lossless 24-bit Badge
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(AppleMintSoft)
+                        .border(1.dp, AppleMint.copy(alpha = 0.55f), RoundedCornerShape(999.dp))
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                        .testTag("lossless_header_badge"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.GraphicEq,
+                        contentDescription = "Lossless 24-bit Audio",
+                        tint = AppleMint,
+                        modifier = Modifier.size(11.dp)
+                    )
+                    Text(
+                        text = "Lossless 24-bit",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontSize = 8.5.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = AppleMint
+                    )
+                }
+
+                // Active Spatial Audio Pill
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(if (spatialActive) AppleBlueSoft else AppleGlassTile)
+                        .border(
+                            1.dp,
+                            if (spatialActive) AppleBlue.copy(alpha = 0.65f) else AppleGlassBorder,
+                            RoundedCornerShape(999.dp)
+                        )
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                        .testTag("spatial_header_badge"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.SurroundSound,
+                        contentDescription = "Spatial Audio Status",
+                        tint = if (spatialActive) AppleBlue else TextMuted,
+                        modifier = Modifier.size(11.dp)
+                    )
+                    Text(
+                        text = if (spatialActive) "Spatial" else "Stereo",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontSize = 8.5.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = if (spatialActive) AppleBlue else TextMuted
+                    )
+                }
+            }
         }
     }
 }
@@ -716,8 +916,12 @@ private fun EqModeSegmentedSwitcher(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(999.dp))
-            .background(StudioSurface)
-            .border(1.dp, StudioBorder, RoundedCornerShape(999.dp))
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(AppleGlassTop, AppleGlassBottom)
+                )
+            )
+            .border(1.dp, AppleGlassBorder, RoundedCornerShape(999.dp))
             .padding(4.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically

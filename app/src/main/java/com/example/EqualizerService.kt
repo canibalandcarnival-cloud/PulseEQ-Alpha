@@ -86,6 +86,8 @@ class EqualizerService : Service() {
                     nightIntensity = audioEngine.currentNightIntensity,
                     speakerDspEnabled = audioEngine.currentSpeakerDspEnabled,
                     virtualBassEnabled = audioEngine.currentVirtualBassEnabled,
+                    landscapeStereoStage = audioEngine.currentLandscapeStereoStage,
+                    audioMixMode = audioEngine.currentAudioMixMode,
                     spatialMode = audioEngine.currentSpatialMode,
                     spatialDepth = audioEngine.currentSpatialDepth,
                     heightPresence = audioEngine.currentHeightPresence,

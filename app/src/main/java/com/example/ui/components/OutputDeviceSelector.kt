@@ -32,6 +32,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -40,12 +41,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.ConnectedDeviceState
 import com.example.model.OutputTarget
+import com.example.ui.theme.AppleGlassBorder
+import com.example.ui.theme.AppleGlassBottom
+import com.example.ui.theme.AppleGlassTile
+import com.example.ui.theme.AppleGlassTop
 import com.example.ui.theme.RouteEmerald
 import com.example.ui.theme.RouteEmeraldSoft
 import com.example.ui.theme.SignalCoral
-import com.example.ui.theme.SignalCoralSoft
 import com.example.ui.theme.StudioBorder
-import com.example.ui.theme.StudioSurface
 import com.example.ui.theme.StudioSurfaceElevated
 import com.example.ui.theme.StudioSurfaceHighlight
 import com.example.ui.theme.TextMuted
@@ -64,10 +67,14 @@ fun OutputDeviceSelector(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(StudioSurface)
-            .border(1.dp, StudioBorder, RoundedCornerShape(16.dp))
-            .padding(10.dp),
+            .clip(RoundedCornerShape(20.dp))
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(AppleGlassTop, AppleGlassBottom)
+                )
+            )
+            .border(1.dp, AppleGlassBorder, RoundedCornerShape(20.dp))
+            .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Row(
@@ -142,7 +149,7 @@ fun OutputDeviceSelector(
                 }
 
                 val bgColor by animateColorAsState(
-                    targetValue = if (isSelected) StudioSurfaceHighlight else StudioSurfaceElevated,
+                    targetValue = if (isSelected) StudioSurfaceHighlight else AppleGlassTile,
                     animationSpec = tween(180),
                     label = "outputBg"
                 )

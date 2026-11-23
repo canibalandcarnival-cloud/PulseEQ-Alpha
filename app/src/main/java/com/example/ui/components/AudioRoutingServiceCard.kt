@@ -26,6 +26,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -33,11 +34,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.theme.AnalyzerCyan
 import com.example.ui.theme.AnalyzerCyanSoft
+import com.example.ui.theme.AppleGlassBorder
+import com.example.ui.theme.AppleGlassBottom
+import com.example.ui.theme.AppleGlassTop
 import com.example.ui.theme.RouteEmerald
 import com.example.ui.theme.RouteEmeraldSoft
 import com.example.ui.theme.StudioBackground
 import com.example.ui.theme.StudioBorder
-import com.example.ui.theme.StudioSurface
 import com.example.ui.theme.StudioSurfaceElevated
 import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
@@ -56,10 +59,14 @@ fun AudioRoutingServiceCard(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(StudioSurface)
-            .border(1.dp, StudioBorder, RoundedCornerShape(16.dp))
-            .padding(12.dp),
+            .clip(RoundedCornerShape(20.dp))
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(AppleGlassTop, AppleGlassBottom)
+                )
+            )
+            .border(1.dp, AppleGlassBorder, RoundedCornerShape(20.dp))
+            .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         // Row 1: Persistent Foreground Service Status

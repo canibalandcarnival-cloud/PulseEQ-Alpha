@@ -6,6 +6,7 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.MediaRecorder
+import com.example.model.AudioMixMode
 import com.example.model.BackgroundSoundPreset
 import com.example.model.EqPresetsCatalog
 import com.example.model.HearingCheckUiState
@@ -741,7 +742,8 @@ class AudiogramCheckEngine {
             nightIntensity: NightIntensity,
             target: OutputTarget,
             speakerDspEnabled: Boolean,
-            spatialMode: SpatialMode
+            spatialMode: SpatialMode,
+            audioMixMode: AudioMixMode = AudioMixMode.STANDARD
         ): Float {
             // Mid/speech-weighted average of user EQ bands (125Hz..8kHz carry highest loudness weight)
             val weights = floatArrayOf(0.05f, 0.08f, 0.10f, 0.12f, 0.14f, 0.16f, 0.14f, 0.10f, 0.07f, 0.04f)
@@ -750,9 +752,16 @@ class AudiogramCheckEngine {
                 weightedEq += bandGainsDb.getOrElse(i) { 0f } * weights[i]
             }
             val lateNightBoost = if (lateNightEnabled) nightIntensity.makeupGainDb * 0.6f else 0f
-            val speakerBoost = if (target == OutputTarget.SPEAKER && speakerDspEnabled) 1.5f else 0f
+            val speakerBoost = if (target == OutputTarget.SPEAKER && speakerDspEnabled) 2.5f else 0f
             val spatialBoost = if (spatialMode != SpatialMode.OFF) -0.8f else 0f
-            return (preampDb + weightedEq + lateNightBoost + speakerBoost + spatialBoost).coerceIn(-12f, 12f)
+            val audioMixShift = when (audioMixMode) {
+                AudioMixMode.STANDARD -> 0f
+                AudioMixMode.IN_FRAME -> 0.4f
+                AudioMixMode.STUDIO -> 0.6f
+                AudioMixMode.CINEMATIC -> 0.8f
+            }
+            return (preampDb + weightedEq + lateNightBoost + speakerBoost + spatialBoost + audioMixShift)
+                .coerceIn(-12f, 12f)
         }
     }
 }

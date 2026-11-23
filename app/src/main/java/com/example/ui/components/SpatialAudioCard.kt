@@ -50,13 +50,16 @@ import com.example.model.OutputTarget
 import com.example.model.SpatialMode
 import com.example.ui.theme.AnalyzerCyan
 import com.example.ui.theme.AnalyzerCyanSoft
+import com.example.ui.theme.AppleGlassBorder
+import com.example.ui.theme.AppleGlassBottom
+import com.example.ui.theme.AppleGlassTile
+import com.example.ui.theme.AppleGlassTop
 import com.example.ui.theme.RouteEmerald
 import com.example.ui.theme.RouteEmeraldSoft
 import com.example.ui.theme.SignalCoral
 import com.example.ui.theme.SignalCoralSoft
 import com.example.ui.theme.StudioBackground
 import com.example.ui.theme.StudioBorder
-import com.example.ui.theme.StudioSurface
 import com.example.ui.theme.StudioSurfaceElevated
 import com.example.ui.theme.StudioSurfaceHighlight
 import com.example.ui.theme.TextMuted
@@ -92,7 +95,7 @@ fun SpatialAudioCard(
     }
 
     val borderColor by animateColorAsState(
-        targetValue = if (active) accentColor.copy(alpha = 0.65f) else StudioBorder,
+        targetValue = if (active) accentColor.copy(alpha = 0.65f) else AppleGlassBorder,
         animationSpec = tween(220),
         label = "spatialBorder"
     )
@@ -100,10 +103,14 @@ fun SpatialAudioCard(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(StudioSurface)
-            .border(1.dp, borderColor, RoundedCornerShape(16.dp))
-            .padding(12.dp),
+            .clip(RoundedCornerShape(20.dp))
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(AppleGlassTop, AppleGlassBottom)
+                )
+            )
+            .border(1.dp, borderColor, RoundedCornerShape(20.dp))
+            .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         // Header Row
@@ -149,8 +156,8 @@ fun SpatialAudioCard(
                         text = when {
                             !active -> "7.1.2 HRTF binaural & speaker XTC standby"
                             isSpeakerXtc -> "Speaker Mode: 0.18ms Acoustic Crosstalk Cancel"
-                            spatialMode == SpatialMode.ATMOS_CINEMA -> "7.1.2 Wide HRTF • +45° Height • 28ms Studio IR"
-                            else -> "7.1.2 Studio HRTF • Pinna Curve • 28ms IR"
+                            spatialMode == SpatialMode.ATMOS_CINEMA -> "7.1.2 Wide HRTF • +45° Height • 25ms Studio IR"
+                            else -> "7.1.2 Studio HRTF • Pinna Curve • 25ms IR"
                         },
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.5.sp),
                         color = if (active) accentColor else TextMuted,
@@ -349,7 +356,7 @@ fun SpatialAudioCard(
                         color = AnalyzerCyan
                     )
                     SpatialStageChip(
-                        text = "28ms Studio IR (3.5kHz LPF • 10%)",
+                        text = "25ms Studio IR (3.5kHz LPF • 10%)",
                         isActive = active,
                         color = RouteEmerald
                     )
@@ -415,7 +422,7 @@ private fun SpatialSoundstageRadar(
                 style = Stroke(width = 1.dp.toPx())
             )
 
-            // Ambient 28ms Studio halo
+            // Ambient 25ms Studio halo
             if (active) {
                 drawCircle(
                     brush = Brush.radialGradient(
@@ -597,7 +604,7 @@ private fun SpatialStageChip(
     color: Color
 ) {
     val bg = when {
-        !isActive -> StudioSurfaceElevated
+        !isActive -> AppleGlassTile
         color == AnalyzerCyan -> AnalyzerCyanSoft
         color == RouteEmerald -> RouteEmeraldSoft
         color == SignalCoral -> SignalCoralSoft

@@ -4,8 +4,10 @@ import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
 import com.example.model.AccommodationToneProfile
+import com.example.model.AudioMixMode
 import com.example.model.BackgroundSoundPreset
 import com.example.model.EqPresetsCatalog
+import com.example.model.FlagshipSpeakerSpecs
 import com.example.model.NightIntensity
 import com.example.model.OutputTarget
 import com.example.model.SoftSoundIntensity
@@ -317,38 +319,73 @@ class DynamicRangeCompressor(private val sampleRate: Int = 44100) {
 }
 
 /**
- * 4-Stage "iPhone Speaker DSP" Chain tailored for mobile micro-drivers:
- * 1. 110Hz Steep High-Pass Filter (4th-order Butterworth, 24 dB/octave)
- * 2. Psychoacoustic Virtual Bass (120Hz-250Hz harmonic exciter/waveshaper)
- * 3. Boxiness & Resonance Correction (400Hz -3dB narrow Q, 2kHz +2dB, 3.5kHz -1.5dB, 10kHz +2.5dB)
- * 4. Smart Speaker Limiter (-6 dB threshold, 12:1 ratio, 1ms attack, 80ms release, +3 dB makeup)
+ * iPhone 18 Pro Max (iOS 27) Flagship Speaker DSP Chain tailored for mobile micro-drivers:
+ * 1. Acoustic Enclosure Tuning: 95Hz Steep High-Pass Filter (4th-order Butterworth, 24 dB/octave)
+ * 2. Psychoacoustic Virtual Bass (110Hz–240Hz warm 2nd/3rd harmonic exciter)
+ * 3. Chassis Boxiness & Flagship Presence (380Hz -3.0dB, 1.8kHz +2.0dB, 3.2kHz +2.5dB, 9.5kHz +3.0dB)
+ * 3.5 Landscape Stereo Widener & Acoustic Crosstalk Cancellation (-20% phase-inverted crossfeed @ 0.18ms)
+ * 4. Two-Stage High-Output Limiter: RMS Maximizer (-18dB, 3.5:1, +5.5dB makeup) -> -0.3dB Brickwall Limiter (20:1)
  */
-class PhoneSpeakerDspChain(sampleRate: Int = 44100) {
+class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
 
-    // Stage 1: Cascaded 4th-order Butterworth HPF @ 110Hz (24 dB/oct)
-    private val hpfStage1 = StereoBiquad().apply { setHighPass(sampleRate, 110.0, 0.5411961) }
-    private val hpfStage2 = StereoBiquad().apply { setHighPass(sampleRate, 110.0, 1.3065630) }
+    // Stage 1: Cascaded 4th-order Butterworth HPF @ 95Hz (24 dB/oct)
+    private val hpfStage1 = StereoBiquad().apply {
+        setHighPass(sampleRate, FlagshipSpeakerSpecs.SUB_BASS_HPF_HZ, 0.5411961)
+    }
+    private val hpfStage2 = StereoBiquad().apply {
+        setHighPass(sampleRate, FlagshipSpeakerSpecs.SUB_BASS_HPF_HZ, 1.3065630)
+    }
 
-    // Stage 2: Psychoacoustic Virtual Bass (extract 40-110Hz -> waveshape -> bandpass 120-250Hz)
-    private val subExtractor = StereoBiquad().apply { setBandPass(sampleRate, 72.0, 0.95) }
-    private val harmonicBandPass = StereoBiquad().apply { setBandPass(sampleRate, 180.0, 1.25) }
+    // Stage 2: Psychoacoustic Virtual Bass (extract 40-95Hz -> warm 2nd/3rd harmonics -> bandpass 110Hz-240Hz)
+    private val subExtractor = StereoBiquad().apply { setBandPass(sampleRate, 65.0, 0.90) }
+    private val harmonicBandPass = StereoBiquad().apply { setBandPass(sampleRate, 162.0, 1.15) }
 
-    // Stage 3: Boxiness & Tinny Resonance Removal
-    private val boxinessDip400Hz = StereoBiquad().apply { setPeaking(sampleRate, 400.0, 3.2, -3.0) }
-    private val vocalClarity2kHz = StereoBiquad().apply { setPeaking(sampleRate, 2000.0, 1.2, 2.0) }
-    private val screechTame3500Hz = StereoBiquad().apply { setPeaking(sampleRate, 3500.0, 2.0, -1.5) }
-    private val crispAir10kHz = StereoBiquad().apply { setPeaking(sampleRate, 10000.0, 1.0, 2.5) }
+    // Stage 3: Chassis Boxiness Removal & Flagship Presence Curve
+    private val boxinessDip380Hz = StereoBiquad().apply {
+        setPeaking(sampleRate, FlagshipSpeakerSpecs.BOXINESS_CUT_HZ, 3.2, FlagshipSpeakerSpecs.BOXINESS_CUT_DB)
+    }
+    private val presence1800Hz = StereoBiquad().apply {
+        setPeaking(sampleRate, FlagshipSpeakerSpecs.PRESENCE_1_HZ, 1.25, FlagshipSpeakerSpecs.PRESENCE_1_DB)
+    }
+    private val presence3200Hz = StereoBiquad().apply {
+        setPeaking(sampleRate, FlagshipSpeakerSpecs.PRESENCE_2_HZ, 1.45, FlagshipSpeakerSpecs.PRESENCE_2_DB)
+    }
+    private val crispAir9500Hz = StereoBiquad().apply {
+        setPeaking(sampleRate, FlagshipSpeakerSpecs.AIR_HZ, 0.95, FlagshipSpeakerSpecs.AIR_DB)
+    }
 
-    // Stage 4: iPhone-Style Smart Speaker Limiter
-    private val smartLimiter = DynamicRangeCompressor(sampleRate).apply {
+    // Stage 3.5: Landscape Stereo Widener & Acoustic Crosstalk Cancellation (-20% @ 0.18ms above 150Hz)
+    private val xtcHighPass150 = StereoBiquad().apply { setHighPass(sampleRate, 150.0, 0.7071) }
+    private val xtcDelaySamples: Double = FlagshipSpeakerSpecs.XTC_DELAY_SEC * sampleRate
+    private val xtcBufSize = 64
+    private val xtcMask = xtcBufSize - 1
+    private val xtcRingL = DoubleArray(xtcBufSize)
+    private val xtcRingR = DoubleArray(xtcBufSize)
+    private var xtcWriteIdx = 0
+
+    // Stage 4a: Smooth RMS Maximizer (-18 dB, 3.5:1, +5.5 dB makeup)
+    private val rmsMaximizer = DynamicRangeCompressor(sampleRate).apply {
         configureCustom(
             isEnabled = true,
-            threshold = -6f,
-            knee = 4f,
-            compRatio = 12f,
-            attackMs = 1f,
-            releaseMs = 80f,
-            makeupGainDb = 3f
+            threshold = FlagshipSpeakerSpecs.RMS_THRESHOLD_DB,
+            knee = FlagshipSpeakerSpecs.RMS_KNEE_DB,
+            compRatio = FlagshipSpeakerSpecs.RMS_RATIO,
+            attackMs = FlagshipSpeakerSpecs.RMS_ATTACK_MS,
+            releaseMs = FlagshipSpeakerSpecs.RMS_RELEASE_MS,
+            makeupGainDb = FlagshipSpeakerSpecs.RMS_MAKEUP_DB
+        )
+    }
+
+    // Stage 4b: -0.3 dB Zero-Clipping Brickwall Limiter (20:1, 0.5ms / 40ms)
+    private val brickwallLimiter = DynamicRangeCompressor(sampleRate).apply {
+        configureCustom(
+            isEnabled = true,
+            threshold = FlagshipSpeakerSpecs.BRICKWALL_THRESHOLD_DB,
+            knee = 0f,
+            compRatio = FlagshipSpeakerSpecs.BRICKWALL_RATIO,
+            attackMs = FlagshipSpeakerSpecs.BRICKWALL_ATTACK_MS,
+            releaseMs = FlagshipSpeakerSpecs.BRICKWALL_RELEASE_MS,
+            makeupGainDb = 0f
         )
     }
 
@@ -358,54 +395,99 @@ class PhoneSpeakerDspChain(sampleRate: Int = 44100) {
     @Volatile
     var virtualBassEnabled: Boolean = false
 
-    val latestLimiterReductionDb: Float
-        get() = if (speakerDspEnabled) smartLimiter.latestGainReductionDb else 0f
+    @Volatile
+    var landscapeStereoEnabled: Boolean = false
 
-    fun configure(isSpeakerDspEnabled: Boolean, isVirtualBassEnabled: Boolean) {
+    val latestLimiterReductionDb: Float
+        get() = if (speakerDspEnabled) {
+            minOf(rmsMaximizer.latestGainReductionDb, brickwallLimiter.latestGainReductionDb)
+        } else {
+            0f
+        }
+
+    fun configure(
+        isSpeakerDspEnabled: Boolean,
+        isVirtualBassEnabled: Boolean,
+        isLandscapeStereoEnabled: Boolean = false
+    ) {
         speakerDspEnabled = isSpeakerDspEnabled
         virtualBassEnabled = isVirtualBassEnabled
-        smartLimiter.configureCustom(
+        landscapeStereoEnabled = isLandscapeStereoEnabled
+        rmsMaximizer.configureCustom(
             isEnabled = isSpeakerDspEnabled,
-            threshold = -6f,
-            knee = 4f,
-            compRatio = 12f,
-            attackMs = 1f,
-            releaseMs = 80f,
-            makeupGainDb = 3f
+            threshold = FlagshipSpeakerSpecs.RMS_THRESHOLD_DB,
+            knee = FlagshipSpeakerSpecs.RMS_KNEE_DB,
+            compRatio = FlagshipSpeakerSpecs.RMS_RATIO,
+            attackMs = FlagshipSpeakerSpecs.RMS_ATTACK_MS,
+            releaseMs = FlagshipSpeakerSpecs.RMS_RELEASE_MS,
+            makeupGainDb = FlagshipSpeakerSpecs.RMS_MAKEUP_DB
         )
+        brickwallLimiter.configureCustom(
+            isEnabled = isSpeakerDspEnabled,
+            threshold = FlagshipSpeakerSpecs.BRICKWALL_THRESHOLD_DB,
+            knee = 0f,
+            compRatio = FlagshipSpeakerSpecs.BRICKWALL_RATIO,
+            attackMs = FlagshipSpeakerSpecs.BRICKWALL_ATTACK_MS,
+            releaseMs = FlagshipSpeakerSpecs.BRICKWALL_RELEASE_MS,
+            makeupGainDb = 0f
+        )
+    }
+
+    private fun readXtcDelayed(ring: DoubleArray): Double {
+        val intD = xtcDelaySamples.toInt()
+        val frac = xtcDelaySamples - intD
+        val idx0 = (xtcWriteIdx - intD) and xtcMask
+        val idx1 = (xtcWriteIdx - intD - 1) and xtcMask
+        return ring[idx0] * (1.0 - frac) + ring[idx1] * frac
     }
 
     fun processStereoSample(inL: Double, inR: Double): Pair<Double, Double> {
         if (!speakerDspEnabled) return inL to inR
 
-        // Stage 2 extraction happens pre-HPF so sub-bass energy below 110Hz feeds harmonic synthesis
+        // Stage 2 extraction happens pre-HPF so sub-bass energy below 95Hz feeds 2nd/3rd harmonic synthesis
         val (harmL, harmR) = if (virtualBassEnabled) {
             val (subL, subR) = subExtractor.processStereo(inL, inR)
-            val shapedL = tanh(subL * 3.2) + 0.35 * (subL * subL)
-            val shapedR = tanh(subR * 3.2) + 0.35 * (subR * subR)
+            // Warm even (2nd: x^2) + odd (3rd: tanh / x^3) harmonic saturator tuned for micro-drivers
+            val shapedL = tanh(subL * 3.2) + 0.55 * (subL * subL) - 0.14 * (subL * subL * subL)
+            val shapedR = tanh(subR * 3.2) + 0.55 * (subR * subR) - 0.14 * (subR * subR * subR)
             harmonicBandPass.processStereo(shapedL, shapedR)
         } else {
             0.0 to 0.0
         }
 
-        // Stage 1: 24 dB/octave steep high-pass at 110Hz
+        // Stage 1: 24 dB/octave steep high-pass at 95Hz
         val (hp1L, hp1R) = hpfStage1.processStereo(inL, inR)
         val (hp2L, hp2R) = hpfStage2.processStereo(hp1L, hp1R)
 
-        // Blend synthesized 120Hz-250Hz virtual bass harmonics back into protected signal
-        var l = hp2L + harmL * 0.48
-        var r = hp2R + harmR * 0.48
+        // Blend synthesized 110Hz-240Hz virtual bass harmonics back into protected signal
+        var l = hp2L + harmL * 0.68
+        var r = hp2R + harmR * 0.68
 
-        // Stage 3: Boxiness & tinny resonance shaping
-        val (bL, bR) = boxinessDip400Hz.processStereo(l, r)
-        val (vL, vR) = vocalClarity2kHz.processStereo(bL, bR)
-        val (sL, sR) = screechTame3500Hz.processStereo(vL, vR)
-        val (aL, aR) = crispAir10kHz.processStereo(sL, sR)
+        // Stage 3: Chassis boxiness cut (380Hz -3.0dB) & flagship presence curve (1.8kHz, 3.2kHz, 9.5kHz)
+        val (bL, bR) = boxinessDip380Hz.processStereo(l, r)
+        val (p1L, p1R) = presence1800Hz.processStereo(bL, bR)
+        val (p2L, p2R) = presence3200Hz.processStereo(p1L, p1R)
+        val (aL, aR) = crispAir9500Hz.processStereo(p2L, p2R)
         l = aL
         r = aR
 
-        // Stage 4: Smart Speaker Limiter (-6dB, 12:1, 1ms/80ms, +3dB makeup)
-        return smartLimiter.processStereoSample(l, r)
+        // Stage 3.5: Landscape Stereo Widener & Crosstalk Cancellation (-20% inverted crossfeed delayed by 0.18ms)
+        val (hpXtcL, hpXtcR) = xtcHighPass150.processStereo(l, r)
+        xtcRingL[xtcWriteIdx] = hpXtcL
+        xtcRingR[xtcWriteIdx] = hpXtcR
+        val delayedXtcL = readXtcDelayed(xtcRingL)
+        val delayedXtcR = readXtcDelayed(xtcRingR)
+        xtcWriteIdx = (xtcWriteIdx + 1) and xtcMask
+        if (landscapeStereoEnabled) {
+            val crossGain = FlagshipSpeakerSpecs.XTC_CROSSFEED_GAIN
+            l -= crossGain * delayedXtcR
+            r -= crossGain * delayedXtcL
+        }
+
+        // Stage 4: Two-Stage Flagship Limiter (RMS Maximizer -18dB 3.5:1 +5.5dB -> -0.3dB Brickwall)
+        val (rmsL, rmsR) = rmsMaximizer.processStereoSample(l, r)
+        val (limL, limR) = brickwallLimiter.processStereoSample(rmsL, rmsR)
+        return limL.coerceIn(-0.985, 0.985) to limR.coerceIn(-0.985, 0.985)
     }
 }
 
@@ -511,6 +593,7 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
     private val headphoneAccommodationsProcessor = HeadphoneAccommodationsProcessor(sampleRate)
     private val bandFilters = Array(10) { StereoBiquad() }
     private val threeBandToneFilter = ThreeBandToneFilter(sampleRate)
+    private val audioMixStemShaper = AudioMixStemShaper(sampleRate)
     private val lateNightCompressor = DynamicRangeCompressor(sampleRate)
     private val speakerDspChain = PhoneSpeakerDspChain(sampleRate)
     private val loudnessMaximizerChain = IphoneLoudnessMaximizerChain(sampleRate)
@@ -599,6 +682,8 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         nightIntensity: NightIntensity = NightIntensity.STANDARD,
         speakerDspEnabled: Boolean = false,
         virtualBassEnabled: Boolean = false,
+        landscapeStereoStage: Boolean = false,
+        audioMixMode: AudioMixMode = AudioMixMode.STANDARD,
         outputTarget: OutputTarget = OutputTarget.HEADPHONES,
         spatialMode: SpatialMode = SpatialMode.OFF,
         spatialDepth: Float = SpatialMode.ATMOS_MUSIC.defaultDepth,
@@ -631,6 +716,7 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
 
         soundCheckNormalizer.enabled = soundCheckEnabled && effectiveProcessing
         voiceIsolationProcessor.enabled = voiceIsolationEnabled && effectiveProcessing
+        audioMixStemShaper.mode = if (effectiveProcessing) audioMixMode else AudioMixMode.STANDARD
         headphoneAccommodationsProcessor.configure(
             isEnabled = accommodationsEnabled && accommodationsApplyToMedia && effectiveProcessing,
             profile = accommodationsToneProfile,
@@ -646,7 +732,8 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         lateNightCompressor.configure(isEnabled = lateNightEnabled && effectiveProcessing, intensity = nightIntensity)
         speakerDspChain.configure(
             isSpeakerDspEnabled = speakerDspEnabled && effectiveProcessing,
-            isVirtualBassEnabled = virtualBassEnabled && effectiveProcessing
+            isVirtualBassEnabled = virtualBassEnabled && effectiveProcessing,
+            isLandscapeStereoEnabled = landscapeStereoStage && effectiveProcessing
         )
         spatialAudioEngine.configure(
             mode = if (effectiveProcessing) spatialMode else SpatialMode.OFF,
@@ -685,7 +772,8 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             nightIntensity = nightIntensity,
             target = outputTarget,
             speakerDspEnabled = speakerDspEnabled,
-            spatialMode = spatialMode
+            spatialMode = spatialMode,
+            audioMixMode = audioMixMode
         )
         abLoudnessMatchLinear = 10.0.pow(matchDb.toDouble() / 20.0)
 
@@ -725,14 +813,15 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         }
 
         val (toneL, toneR) = threeBandToneFilter.processStereoSample(l, r)
-        val (isoL, isoR) = voiceIsolationProcessor.processStereoSample(toneL, toneR)
+        val (mixL, mixR) = audioMixStemShaper.processStereoSample(toneL, toneR)
+        val (isoL, isoR) = voiceIsolationProcessor.processStereoSample(mixL, mixR)
         val (compL, compR) = lateNightCompressor.processStereoSample(isoL, isoR)
         val (spatL, spatR) = spatialAudioEngine.processStereoSample(compL, compR)
         val (spkL, spkR) = speakerDspChain.processStereoSample(spatL, spatR)
         val (maxL, maxR) = loudnessMaximizerChain.processStereoSample(spkL, spkR)
 
         // Final safety ceiling + Conversation Awareness auto-ducking
-        return if (loudnessMaximizerChain.enabled) {
+        return if (loudnessMaximizerChain.enabled || speakerDspChain.speakerDspEnabled) {
             (maxL * duck).coerceIn(-0.99, 0.99) to (maxR * duck).coerceIn(-0.99, 0.99)
         } else {
             tanh(maxL * duck * 0.92) to tanh(maxR * duck * 0.92)
@@ -803,6 +892,8 @@ class TestAudioSynthesizer {
         nightIntensity: NightIntensity,
         speakerDspEnabled: Boolean,
         virtualBassEnabled: Boolean,
+        landscapeStereoStage: Boolean = false,
+        audioMixMode: AudioMixMode = AudioMixMode.STANDARD,
         outputTarget: OutputTarget,
         spatialMode: SpatialMode,
         spatialDepth: Float,
@@ -836,6 +927,8 @@ class TestAudioSynthesizer {
             nightIntensity = nightIntensity,
             speakerDspEnabled = speakerDspEnabled,
             virtualBassEnabled = virtualBassEnabled,
+            landscapeStereoStage = landscapeStereoStage,
+            audioMixMode = audioMixMode,
             outputTarget = outputTarget,
             spatialMode = spatialMode,
             spatialDepth = spatialDepth,

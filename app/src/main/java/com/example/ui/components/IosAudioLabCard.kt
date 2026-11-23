@@ -44,6 +44,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
@@ -58,13 +59,14 @@ import com.example.model.OutputEqProfile
 import com.example.model.SpatialMode
 import com.example.ui.theme.AnalyzerCyan
 import com.example.ui.theme.AnalyzerCyanSoft
+import com.example.ui.theme.AppleGlassBorder
+import com.example.ui.theme.AppleGlassBottom
+import com.example.ui.theme.AppleGlassTop
 import com.example.ui.theme.RouteEmerald
-import com.example.ui.theme.RouteEmeraldSoft
 import com.example.ui.theme.SignalCoral
 import com.example.ui.theme.SignalCoralSoft
 import com.example.ui.theme.StudioBackground
 import com.example.ui.theme.StudioBorder
-import com.example.ui.theme.StudioSurface
 import com.example.ui.theme.StudioSurfaceElevated
 import com.example.ui.theme.StudioSurfaceHighlight
 import com.example.ui.theme.TextMuted
@@ -107,7 +109,7 @@ fun IosAudioLabCard(
         targetValue = when {
             abCompareHeld -> WarmAmber.copy(alpha = 0.85f)
             anyLabActive -> AnalyzerCyan.copy(alpha = 0.6f)
-            else -> StudioBorder
+            else -> AppleGlassBorder
         },
         animationSpec = tween(200),
         label = "iosLabBorder"
@@ -116,10 +118,14 @@ fun IosAudioLabCard(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(StudioSurface)
-            .border(1.dp, borderColor, RoundedCornerShape(16.dp))
-            .padding(12.dp),
+            .clip(RoundedCornerShape(20.dp))
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(AppleGlassTop, AppleGlassBottom)
+                )
+            )
+            .border(1.dp, borderColor, RoundedCornerShape(20.dp))
+            .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         // Header + Apple-Style Lossless / Spatial Badge

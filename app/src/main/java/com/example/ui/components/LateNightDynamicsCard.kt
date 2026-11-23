@@ -42,17 +42,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.NightIntensity
+import com.example.ui.theme.AppleGlassBorder
+import com.example.ui.theme.AppleGlassBottom
+import com.example.ui.theme.AppleGlassTop
 import com.example.ui.theme.GridLineSubtle
 import com.example.ui.theme.SignalCoral
 import com.example.ui.theme.StudioBackground
 import com.example.ui.theme.StudioBorder
-import com.example.ui.theme.StudioSurface
 import com.example.ui.theme.StudioSurfaceElevated
 import com.example.ui.theme.StudioSurfaceHighlight
 import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import com.example.ui.theme.WarmAmber
+import com.example.ui.theme.WarmOrange
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -70,7 +73,7 @@ fun LateNightDynamicsCard(
     val active = lateNightEnabled && !isBypassed
 
     val borderColor by animateColorAsState(
-        targetValue = if (active) WarmAmber.copy(alpha = 0.75f) else StudioBorder,
+        targetValue = if (active) WarmAmber.copy(alpha = 0.75f) else AppleGlassBorder,
         animationSpec = tween(200),
         label = "lateNightBorder"
     )
@@ -91,10 +94,14 @@ fun LateNightDynamicsCard(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(StudioSurface)
-            .border(1.dp, borderColor, RoundedCornerShape(16.dp))
-            .padding(12.dp),
+            .clip(RoundedCornerShape(20.dp))
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(AppleGlassTop, AppleGlassBottom)
+                )
+            )
+            .border(1.dp, borderColor, RoundedCornerShape(20.dp))
+            .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         // Header: Moon Icon Toggle + Compressor Specs
@@ -239,7 +246,7 @@ fun LateNightDynamicsCard(
                     val frac = segIndexFromRight / segments.toFloat()
                     val litColor = when {
                         frac > 0.66f -> SignalCoral
-                        frac > 0.33f -> Color(0xFFFF8C2B)
+                        frac > 0.33f -> WarmOrange
                         else -> WarmAmber
                     }
 

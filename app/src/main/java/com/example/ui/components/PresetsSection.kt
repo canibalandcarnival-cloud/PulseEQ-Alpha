@@ -49,6 +49,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
@@ -62,6 +63,9 @@ import com.example.model.EqPreset
 import com.example.model.EqPresetsCatalog
 import com.example.model.PresetGroup
 import com.example.ui.theme.AnalyzerCyan
+import com.example.ui.theme.AppleGlassBorder
+import com.example.ui.theme.AppleGlassBottom
+import com.example.ui.theme.AppleGlassTop
 import com.example.ui.theme.GridLineZero
 import com.example.ui.theme.RouteEmerald
 import com.example.ui.theme.RouteEmeraldSoft
@@ -133,9 +137,13 @@ fun MasterActionBar(
             modifier = Modifier
                 .weight(1f)
                 .minimumInteractiveComponentSize()
-                .clip(RoundedCornerShape(12.dp))
-                .background(StudioSurface)
-                .border(1.dp, StudioBorder, RoundedCornerShape(12.dp))
+                .clip(RoundedCornerShape(14.dp))
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(AppleGlassTop, AppleGlassBottom)
+                    )
+                )
+                .border(1.dp, AppleGlassBorder, RoundedCornerShape(14.dp))
                 .clickable(onClick = onOpenPresetsSheet)
                 .padding(horizontal = 12.dp, vertical = 10.dp)
                 .testTag("presets_sheet_button"),
@@ -234,12 +242,18 @@ private fun PresetQuickChip(
         modifier = Modifier
             .width(106.dp)
             .minimumInteractiveComponentSize()
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (isSelected) StudioSurfaceHighlight else StudioSurface)
+            .clip(RoundedCornerShape(14.dp))
+            .background(
+                if (isSelected) {
+                    Brush.verticalGradient(listOf(StudioSurfaceHighlight, AppleGlassBottom))
+                } else {
+                    Brush.verticalGradient(listOf(AppleGlassTop, AppleGlassBottom))
+                }
+            )
             .border(
                 width = 1.dp,
-                color = if (isSelected) SignalCoral else StudioBorder,
-                shape = RoundedCornerShape(12.dp)
+                color = if (isSelected) SignalCoral else AppleGlassBorder,
+                shape = RoundedCornerShape(14.dp)
             )
             .clickable(onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 8.dp)

@@ -36,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -46,13 +47,16 @@ import com.example.model.LoudnessMaximizerSpecs
 import com.example.model.OutputTarget
 import com.example.ui.theme.AnalyzerCyan
 import com.example.ui.theme.AnalyzerCyanSoft
+import com.example.ui.theme.AppleGlassBorder
+import com.example.ui.theme.AppleGlassBottom
+import com.example.ui.theme.AppleGlassTile
+import com.example.ui.theme.AppleGlassTop
 import com.example.ui.theme.RouteEmerald
 import com.example.ui.theme.RouteEmeraldSoft
 import com.example.ui.theme.SignalCoral
 import com.example.ui.theme.SignalCoralSoft
 import com.example.ui.theme.StudioBackground
 import com.example.ui.theme.StudioBorder
-import com.example.ui.theme.StudioSurface
 import com.example.ui.theme.StudioSurfaceElevated
 import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
@@ -83,7 +87,7 @@ fun LoudnessMaximizerCard(
         targetValue = when {
             active && telemetry.loudnessAntiClipActive -> WarmAmber.copy(alpha = 0.85f)
             active -> SignalCoral.copy(alpha = 0.7f)
-            else -> StudioBorder
+            else -> AppleGlassBorder
         },
         animationSpec = tween(200),
         label = "loudnessCardBorder"
@@ -113,10 +117,14 @@ fun LoudnessMaximizerCard(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(StudioSurface)
-            .border(1.dp, borderColor, RoundedCornerShape(16.dp))
-            .padding(12.dp),
+            .clip(RoundedCornerShape(20.dp))
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(AppleGlassTop, AppleGlassBottom)
+                )
+            )
+            .border(1.dp, borderColor, RoundedCornerShape(20.dp))
+            .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         // Header: iPhone Loudness Maximizer + Master Toggle
@@ -369,7 +377,7 @@ private fun MaximizerBadgeChip(
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(7.dp))
-            .background(if (highlighted) accentBg else StudioSurfaceElevated)
+            .background(if (highlighted) accentBg else AppleGlassTile)
             .border(
                 width = 1.dp,
                 color = if (highlighted) accent.copy(alpha = 0.45f) else StudioBorder,

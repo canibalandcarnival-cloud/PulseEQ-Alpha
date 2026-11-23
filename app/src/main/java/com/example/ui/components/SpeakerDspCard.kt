@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.SpeakerPhone
+import androidx.compose.material.icons.rounded.SurroundSound
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
@@ -29,19 +30,26 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.theme.AnalyzerCyan
 import com.example.ui.theme.AnalyzerCyanSoft
+import com.example.ui.theme.AppleBlue
+import com.example.ui.theme.AppleBlueSoft
+import com.example.ui.theme.AppleGlassBorder
+import com.example.ui.theme.AppleGlassBottom
+import com.example.ui.theme.AppleGlassTile
+import com.example.ui.theme.AppleGlassTop
 import com.example.ui.theme.RouteEmerald
 import com.example.ui.theme.RouteEmeraldSoft
 import com.example.ui.theme.SignalCoral
 import com.example.ui.theme.SignalCoralSoft
 import com.example.ui.theme.StudioBackground
 import com.example.ui.theme.StudioBorder
-import com.example.ui.theme.StudioSurface
 import com.example.ui.theme.StudioSurfaceElevated
 import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
@@ -52,14 +60,16 @@ import com.example.ui.theme.TextSecondary
 fun SpeakerDspCard(
     speakerDspEnabled: Boolean,
     virtualBassEnabled: Boolean,
+    landscapeStereoStage: Boolean = false,
     isBypassed: Boolean,
     onToggleSpeakerDsp: () -> Unit,
     onToggleVirtualBass: () -> Unit,
+    onToggleLandscapeStereo: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val active = speakerDspEnabled && !isBypassed
     val borderColor by animateColorAsState(
-        targetValue = if (active) RouteEmerald.copy(alpha = 0.65f) else StudioBorder,
+        targetValue = if (active) RouteEmerald.copy(alpha = 0.68f) else AppleGlassBorder,
         animationSpec = tween(200),
         label = "speakerDspBorder"
     )
@@ -67,13 +77,17 @@ fun SpeakerDspCard(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(StudioSurface)
-            .border(1.dp, borderColor, RoundedCornerShape(16.dp))
-            .padding(12.dp),
+            .clip(RoundedCornerShape(20.dp))
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(AppleGlassTop, AppleGlassBottom)
+                )
+            )
+            .border(1.dp, borderColor, RoundedCornerShape(20.dp))
+            .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // Header: iPhone Speaker DSP Master Toggle
+        // Header: iPhone 18 Pro Max Speaker DSP Master Toggle
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -88,17 +102,17 @@ fun SpeakerDspCard(
                     modifier = Modifier
                         .size(34.dp)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(if (active) RouteEmeraldSoft else StudioSurfaceElevated)
+                        .background(if (active) RouteEmeraldSoft else AppleGlassTile)
                         .border(
                             1.dp,
-                            if (active) RouteEmerald.copy(alpha = 0.6f) else StudioBorder,
+                            if (active) RouteEmerald.copy(alpha = 0.6f) else AppleGlassBorder,
                             RoundedCornerShape(10.dp)
                         ),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.SpeakerPhone,
-                        contentDescription = "iPhone Speaker DSP",
+                        contentDescription = "iPhone 18 Pro Max Speaker DSP",
                         tint = if (active) RouteEmerald else TextSecondary,
                         modifier = Modifier.size(18.dp)
                     )
@@ -106,15 +120,15 @@ fun SpeakerDspCard(
 
                 Column {
                     Text(
-                        text = "iPhone Speaker DSP",
+                        text = "iPhone 18 Pro Max Speaker DSP",
                         style = MaterialTheme.typography.titleMedium.copy(fontSize = 14.sp),
                         color = TextPrimary
                     )
                     Text(
                         text = if (active) {
-                            "110Hz 24dB/oct HPF • -6dB 12:1 Limiter (+3dB)"
+                            "95Hz 24dB/oct HPF • RMS -18dB 3.5:1 (+5.5dB) → -0.3dB"
                         } else {
-                            "Micro-driver protection & clarity chain off"
+                            "Flagship acoustic enclosure tuning & clarity chain off"
                         },
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.5.sp),
                         color = if (active) RouteEmerald else TextMuted
@@ -129,7 +143,7 @@ fun SpeakerDspCard(
                     .background(if (speakerDspEnabled) RouteEmeraldSoft else StudioSurfaceElevated)
                     .border(
                         width = 1.dp,
-                        color = if (speakerDspEnabled) RouteEmerald else StudioBorder,
+                        color = if (speakerDspEnabled) RouteEmerald else AppleGlassBorder,
                         shape = RoundedCornerShape(999.dp)
                     )
                     .clickable(onClick = onToggleSpeakerDsp)
@@ -145,16 +159,16 @@ fun SpeakerDspCard(
             }
         }
 
-        // Virtual Bass Harmonic Exciter Toggle Row
+        // Virtual Bass Harmonic Exciter Toggle Row (110Hz - 240Hz warm 2nd/3rd harmonics)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(10.dp))
-                .background(StudioBackground)
+                .clip(RoundedCornerShape(12.dp))
+                .background(StudioBackground.copy(alpha = 0.62f))
                 .border(
                     width = 1.dp,
-                    color = if (active && virtualBassEnabled) AnalyzerCyan.copy(alpha = 0.55f) else StudioBorder,
-                    shape = RoundedCornerShape(10.dp)
+                    color = if (active && virtualBassEnabled) AnalyzerCyan.copy(alpha = 0.55f) else AppleGlassBorder.copy(alpha = 0.65f),
+                    shape = RoundedCornerShape(12.dp)
                 )
                 .clickable(onClick = onToggleVirtualBass)
                 .padding(horizontal = 10.dp, vertical = 6.dp),
@@ -179,7 +193,7 @@ fun SpeakerDspCard(
                         color = TextPrimary
                     )
                     Text(
-                        text = "120Hz–250Hz harmonic exciter for deep perceived punch",
+                        text = "110Hz–240Hz warm 2nd/3rd harmonic exciter without cone rattle",
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
                         color = TextMuted
                     )
@@ -199,37 +213,97 @@ fun SpeakerDspCard(
             )
         }
 
-        // 4-Stage Telemetry Badges
+        // Landscape Stereo Stage (0.18ms -20% Phase-Inverted Acoustic Crosstalk Cancellation)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(StudioBackground.copy(alpha = 0.62f))
+                .border(
+                    width = 1.dp,
+                    color = if (active && landscapeStereoStage) AppleBlue.copy(alpha = 0.65f) else AppleGlassBorder.copy(alpha = 0.65f),
+                    shape = RoundedCornerShape(12.dp)
+                )
+                .clickable(onClick = onToggleLandscapeStereo)
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.SurroundSound,
+                    contentDescription = "Landscape Stereo Stage",
+                    tint = if (active && landscapeStereoStage) AppleBlue else TextMuted,
+                    modifier = Modifier.size(16.dp)
+                )
+                Column {
+                    Text(
+                        text = "Landscape Stereo Stage",
+                        style = MaterialTheme.typography.labelLarge.copy(fontSize = 12.sp),
+                        color = TextPrimary
+                    )
+                    Text(
+                        text = "-20% phase-inverted crossfeed delayed by 0.18ms (>150Hz)",
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                        color = TextMuted
+                    )
+                }
+            }
+
+            Switch(
+                checked = speakerDspEnabled && landscapeStereoStage,
+                onCheckedChange = { onToggleLandscapeStereo() },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = StudioBackground,
+                    checkedTrackColor = AppleBlue,
+                    uncheckedThumbColor = TextSecondary,
+                    uncheckedTrackColor = StudioSurfaceElevated
+                ),
+                modifier = Modifier.testTag("landscape_stereo_toggle")
+            )
+        }
+
+        // Flagship Telemetry Badges
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             DspStageChip(
-                text = "110Hz HPF 24dB/oct",
+                text = "95Hz HPF 24dB/oct",
                 isActive = active,
                 highlightColor = RouteEmerald,
                 bgColor = RouteEmeraldSoft
             )
             DspStageChip(
-                text = "Virtual Bass 120–250Hz",
+                text = "Virtual Bass 110–240Hz",
                 isActive = active && virtualBassEnabled,
                 highlightColor = AnalyzerCyan,
                 bgColor = AnalyzerCyanSoft
             )
             DspStageChip(
-                text = "400Hz -3dB • 3.5kHz -1.5dB",
+                text = "380Hz -3dB Boxiness",
                 isActive = active,
                 highlightColor = SignalCoral,
                 bgColor = SignalCoralSoft
             )
             DspStageChip(
-                text = "2kHz +2dB • 10kHz +2.5dB",
+                text = "1.8k +2 • 3.2k +2.5 • 9.5k +3dB",
                 isActive = active,
                 highlightColor = SignalCoral,
                 bgColor = SignalCoralSoft
             )
             DspStageChip(
-                text = "Limiter -6dB 12:1 (1ms/80ms) +3dB",
+                text = "Landscape -20% 0.18ms XTC",
+                isActive = active && landscapeStereoStage,
+                highlightColor = AppleBlue,
+                bgColor = AppleBlueSoft
+            )
+            DspStageChip(
+                text = "RMS -18dB +5.5dB → -0.3dB",
                 isActive = active,
                 highlightColor = RouteEmerald,
                 bgColor = RouteEmeraldSoft
@@ -242,13 +316,13 @@ fun SpeakerDspCard(
 private fun DspStageChip(
     text: String,
     isActive: Boolean,
-    highlightColor: androidx.compose.ui.graphics.Color,
-    bgColor: androidx.compose.ui.graphics.Color
+    highlightColor: Color,
+    bgColor: Color
 ) {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(7.dp))
-            .background(if (isActive) bgColor else StudioSurfaceElevated)
+            .background(if (isActive) bgColor else AppleGlassTile)
             .border(
                 width = 1.dp,
                 color = if (isActive) highlightColor.copy(alpha = 0.45f) else StudioBorder,

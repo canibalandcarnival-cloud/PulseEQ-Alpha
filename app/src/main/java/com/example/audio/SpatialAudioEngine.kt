@@ -131,13 +131,13 @@ class HrtfSpeakerPanner(
 }
 
 /**
- * Procedural 28ms Zero-Echo Apple Studio Micro-Ambience Impulse Response Convolver.
- * Generates a 28ms exponentially decaying stereo impulse response damped via a 3.5kHz LPF
+ * Procedural 25ms Zero-Echo Apple Studio Micro-Ambience Impulse Response Convolver.
+ * Generates a 25ms exponentially decaying stereo impulse response damped via a 3.5kHz LPF
  * and renders at 10% wet mix for non-echoic studio spaciousness.
  */
 class AppleStudioMicroAmbienceConvolver(private val sampleRate: Int = 44100) {
 
-    val irLengthSamples: Int = (sampleRate * 0.028).roundToInt().coerceAtLeast(32)
+    val irLengthSamples: Int = (sampleRate * 0.025).roundToInt().coerceAtLeast(32)
     val irSamplesL: FloatArray
     val irSamplesR: FloatArray
 
@@ -206,11 +206,11 @@ class AppleStudioMicroAmbienceConvolver(private val sampleRate: Int = 44100) {
 
     companion object {
         /**
-         * Builds a strictly 28ms stereo impulse response with rapid exponential decay (tau = 5.5ms)
+         * Builds a strictly 25ms stereo impulse response with rapid exponential decay (tau = 4.9ms)
          * and 3.5kHz low-pass damping for clean zero-echo Apple Studio Micro-Ambience.
          */
         fun generateStudioMicroAmbienceIr(sampleRate: Int = 44100): Pair<FloatArray, FloatArray> {
-            val len = (sampleRate * 0.028).roundToInt().coerceAtLeast(32)
+            val len = (sampleRate * 0.025).roundToInt().coerceAtLeast(32)
             val bundle = buildMicroAmbienceIr(sampleRate, len)
             return bundle.irL to bundle.irR
         }
@@ -225,7 +225,7 @@ class AppleStudioMicroAmbienceConvolver(private val sampleRate: Int = 44100) {
             val gainsL = DoubleArray(tapCount)
             val gainsR = DoubleArray(tapCount)
 
-            val tauSec = 0.0055 // Rapid decay: -44dB at 28ms -> zero audible echo
+            val tauSec = 0.0049 // Rapid decay: -44dB at 25ms -> zero audible echo
             var seed = 0x5A17C0DE
 
             fun nextRandSigned(): Double {
@@ -234,7 +234,7 @@ class AppleStudioMicroAmbienceConvolver(private val sampleRate: Int = 44100) {
                 return u * 2.0 - 1.0
             }
 
-            // Velvet-noise distributed early micro-reflections spanning 0.5ms .. 28ms
+            // Velvet-noise distributed early micro-reflections spanning 0.5ms .. 25ms
             val minStart = (sampleRate * 0.0005).toInt().coerceAtLeast(1)
             val span = (lengthSamples - 1 - minStart).coerceAtLeast(tapCount)
             var energySum = 0.0
@@ -361,7 +361,7 @@ class AcousticCrosstalkCanceller(private val sampleRate: Int = 44100) {
  * Apple-Style Spatial Audio / Dolby Atmos Binaural & Speaker XTC Engine:
  * 1. 7.1.2 Virtual Speaker Array (Center 0°/0° with <120Hz mono bass, Ls/Rs ±105°/0°, Ltf/Rtf ±65°/+45° @ 2.5kHz HPF)
  * 2. Pinna Height Psychoacoustic Curve (7.2kHz narrow notch -3.5dB + 12kHz high-shelf +3.0dB)
- * 3. Apple Studio Micro-Ambience (28ms Zero-Echo IR, 3.5kHz damping, 10% wet mix)
+ * 3. Apple Studio Micro-Ambience (25ms Zero-Echo IR, 3.5kHz damping, 10% wet mix)
  * 4. Interactive Modes: Off | Atmos Music | Atmos Cinema, Depth, Height Presence, Vocal Anchor
  * 5. Automatic Phone Speaker Adaptation -> 0.18ms Acoustic Crosstalk Cancellation
  */
@@ -386,7 +386,7 @@ class SpatialAudioEngine(sampleRate: Int = 44100) {
     private val pinnaNotch7200 = StereoBiquad().apply { setPeaking(sampleRate, 7200.0, 5.5, -3.5) }
     private val pinnaShelf12000 = StereoBiquad().apply { setHighShelf(sampleRate, 12000.0, 0.7071, 3.0) }
 
-    // Apple Studio Micro-Ambience (28ms Zero-Echo IR, 3.5kHz LPF, 10% wet mix)
+    // Apple Studio Micro-Ambience (25ms Zero-Echo IR, 3.5kHz LPF, 10% wet mix)
     val studioConvolver = AppleStudioMicroAmbienceConvolver(sampleRate)
 
     // Phone Speaker Adaptation: 0.18ms Acoustic Crosstalk Cancellation
@@ -491,7 +491,7 @@ class SpatialAudioEngine(sampleRate: Int = 44100) {
         val sumL = cL * 0.82 + pinnaL * 0.68
         val sumR = cR * 0.82 + pinnaR * 0.68
 
-        // Apple Studio Micro-Ambience (strictly 28ms IR, 3.5kHz damping, 10% wet mix)
+        // Apple Studio Micro-Ambience (strictly 25ms IR, 3.5kHz damping, 10% wet mix)
         val studioWet = (0.07 + 0.03 * depth) * if (currentMode == SpatialMode.ATMOS_CINEMA) 1.05 else 1.0
         return studioConvolver.processStereo(sumL, sumR, wetMix = studioWet.coerceIn(0.0, 0.12))
     }

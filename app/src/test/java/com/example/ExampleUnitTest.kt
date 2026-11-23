@@ -9,6 +9,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 class ExampleUnitTest {
 
@@ -90,39 +91,94 @@ class ExampleUnitTest {
     fun phone_speaker_dsp_attenuates_sub_bass_and_generates_virtual_bass_harmonics() {
         val sampleRate = 44100
         val noVirtualBass = com.example.audio.PhoneSpeakerDspChain(sampleRate).apply {
-            configure(isSpeakerDspEnabled = true, isVirtualBassEnabled = false)
+            configure(
+                isSpeakerDspEnabled = true,
+                isVirtualBassEnabled = false,
+                isLandscapeStereoEnabled = false
+            )
         }
         val withVirtualBass = com.example.audio.PhoneSpeakerDspChain(sampleRate).apply {
-            configure(isSpeakerDspEnabled = true, isVirtualBassEnabled = true)
+            configure(
+                isSpeakerDspEnabled = true,
+                isVirtualBassEnabled = true,
+                isLandscapeStereoEnabled = false
+            )
         }
 
-        // Feed pure 50Hz sub-bass sine wave (well below 110Hz HPF cutoff)
+        // 1. Feed 45Hz sub-bass sine wave (well below 95Hz 24dB/oct HPF cutoff)
         var rmsNoVirtual = 0.0
-        var rmsWithVirtual = 0.0
         val numSamples = 4410 // 100ms
         for (i in 0 until numSamples) {
-            val s = 0.5 * kotlin.math.sin(2.0 * Math.PI * 50.0 * i / sampleRate)
+            val s = 0.5 * kotlin.math.sin(2.0 * Math.PI * 45.0 * i / sampleRate)
             val (outNo, _) = noVirtualBass.processStereoSample(s, s)
-            val (outYes, _) = withVirtualBass.processStereoSample(s, s)
             if (i > 2205) { // steady-state second half
                 rmsNoVirtual += outNo * outNo
-                rmsWithVirtual += outYes * outYes
             }
         }
         rmsNoVirtual = kotlin.math.sqrt(rmsNoVirtual / 2205)
-        rmsWithVirtual = kotlin.math.sqrt(rmsWithVirtual / 2205)
+        assertTrue("95Hz 24dB/oct HPF should strongly attenuate 45Hz sub-bass (rms=$rmsNoVirtual)", rmsNoVirtual < 0.06)
 
-        // 24dB/oct HPF at 110Hz cuts 50Hz (>1 octave below) by >24dB (<0.06x input RMS 0.353)
-        assertTrue("110Hz 24dB/oct HPF should strongly attenuate 50Hz sub-bass", rmsNoVirtual < 0.06)
-        // Virtual Bass should synthesize audible 120-250Hz harmonics above the HPF-only baseline
-        assertTrue("Virtual Bass should add harmonic energy above HPF-only baseline", rmsWithVirtual > rmsNoVirtual * 1.4)
+        // 2. Feed 50Hz sub-bass excitation (below 95Hz): Virtual Bass synthesizes audible 110-240Hz 2nd/3rd harmonics
+        val baseline50 = com.example.audio.PhoneSpeakerDspChain(sampleRate).apply {
+            configure(isSpeakerDspEnabled = true, isVirtualBassEnabled = false)
+        }
+        var rmsBase50 = 0.0
+        var rmsVirtual50 = 0.0
+        for (i in 0 until numSamples) {
+            val s = 0.5 * kotlin.math.sin(2.0 * Math.PI * 50.0 * i / sampleRate)
+            val (outNo, _) = baseline50.processStereoSample(s, s)
+            val (outYes, _) = withVirtualBass.processStereoSample(s, s)
+            if (i > 2205) {
+                rmsBase50 += outNo * outNo
+                rmsVirtual50 += outYes * outYes
+            }
+        }
+        rmsBase50 = kotlin.math.sqrt(rmsBase50 / 2205)
+        rmsVirtual50 = kotlin.math.sqrt(rmsVirtual50 / 2205)
+        assertTrue(
+            "Virtual Bass should synthesize 110-240Hz harmonics above HPF-only baseline ($rmsVirtual50 vs $rmsBase50)",
+            rmsVirtual50 > rmsBase50 * 1.4
+        )
+
+        // 3. Landscape Stereo Stage (-20% phase-inverted 0.18ms XTC crossfeed) widens L/R separation at 600Hz
+        val xtcOff = com.example.audio.PhoneSpeakerDspChain(sampleRate).apply {
+            configure(isSpeakerDspEnabled = true, isVirtualBassEnabled = false, isLandscapeStereoEnabled = false)
+        }
+        val xtcOn = com.example.audio.PhoneSpeakerDspChain(sampleRate).apply {
+            configure(isSpeakerDspEnabled = true, isVirtualBassEnabled = false, isLandscapeStereoEnabled = true)
+        }
+        var sideEnergyOff = 0.0
+        var sideEnergyOn = 0.0
+        for (i in 0 until 2000) {
+            val sigL = 0.08 * kotlin.math.sin(2.0 * Math.PI * 600.0 * i / sampleRate)
+            val sigR = 0.01 * kotlin.math.sin(2.0 * Math.PI * 600.0 * i / sampleRate)
+            val (offL, offR) = xtcOff.processStereoSample(sigL, sigR)
+            val (onL, onR) = xtcOn.processStereoSample(sigL, sigR)
+            if (i > 1000) {
+                sideEnergyOff += abs(offL - offR)
+                sideEnergyOn += abs(onL - onR)
+            }
+        }
+        assertTrue(
+            "Landscape Stereo Stage (-20% 0.18ms XTC) should widen L/R separation ($sideEnergyOn vs $sideEnergyOff)",
+            sideEnergyOn > sideEnergyOff * 1.12
+        )
+
+        // 4. Two-stage high-output flagship limiter (RMS -18dB +5.5dB -> -0.3dB brickwall) caps hot peaks <= 0.985
+        var maxHotPeak = 0.0
+        for (i in 0 until 1000) {
+            val hot = 0.95 * kotlin.math.sin(2.0 * Math.PI * 2000.0 * i / sampleRate)
+            val (oL, oR) = xtcOn.processStereoSample(hot, hot)
+            maxHotPeak = maxOf(maxHotPeak, abs(oL), abs(oR))
+        }
+        assertTrue("Flagship two-stage limiter must cap hot peaks <= 0.985 (max=$maxHotPeak)", maxHotPeak <= 0.985)
     }
 
     @Test
-    fun spatial_studio_micro_ambience_ir_is_strictly_28ms_and_rapidly_decays() {
+    fun spatial_studio_micro_ambience_ir_is_strictly_25ms_and_rapidly_decays() {
         val sampleRate = 44100
         val (irL, irR) = com.example.audio.AppleStudioMicroAmbienceConvolver.generateStudioMicroAmbienceIr(sampleRate)
-        val expectedSamples = kotlin.math.round(sampleRate * 0.028).toInt()
+        val expectedSamples = (sampleRate * 0.025).roundToInt()
         assertEquals(expectedSamples, irL.size)
         assertEquals(expectedSamples, irR.size)
 
@@ -135,7 +191,7 @@ class ExampleUnitTest {
             tailPeak = maxOf(tailPeak, abs(irL[i]), abs(irR[i]))
         }
         assertTrue("Early studio IR must have non-zero micro-reflections", earlyPeak > 0.01f)
-        assertTrue("28ms IR tail should decay rapidly for zero echo", tailPeak < earlyPeak * 0.15f)
+        assertTrue("25ms IR tail should decay rapidly for zero echo", tailPeak < earlyPeak * 0.15f)
     }
 
     @Test
@@ -684,5 +740,56 @@ class ExampleUnitTest {
             rmsBothTrue,
             1e-4
         )
+    }
+
+    @Test
+    fun audio_mix_stem_shaper_separates_mid_vocals_and_side_ambience_across_modes() {
+        val sampleRate = 44100
+
+        // 1. Standard mode is bit-transparent
+        val std = com.example.audio.AudioMixStemShaper(sampleRate).apply {
+            mode = com.example.model.AudioMixMode.STANDARD
+        }
+        val (sL, sR) = std.processStereoSample(0.35, -0.15)
+        assertEquals(0.35, sL, 1e-6)
+        assertEquals(-0.15, sR, 1e-6)
+
+        // Feed combined Mid vocal (2kHz centered) + Side ambient wash (1.2kHz out-of-phase L/R)
+        fun measureMidAndSide(mode: com.example.model.AudioMixMode): Pair<Double, Double> {
+            val shaper = com.example.audio.AudioMixStemShaper(sampleRate).apply { this.mode = mode }
+            var midEnergy = 0.0
+            var sideEnergy = 0.0
+            for (i in 0 until 4410) {
+                val midVocal = 0.30 * kotlin.math.sin(2.0 * Math.PI * 2000.0 * i / sampleRate)
+                val sideAmbience = 0.25 * kotlin.math.sin(2.0 * Math.PI * 1200.0 * i / sampleRate)
+                val inL = midVocal + sideAmbience
+                val inR = midVocal - sideAmbience
+                val (oL, oR) = shaper.processStereoSample(inL, inR)
+                if (i > 2205) {
+                    val outMid = 0.5 * (oL + oR)
+                    val outSide = 0.5 * (oL - oR)
+                    midEnergy += outMid * outMid
+                    sideEnergy += outSide * outSide
+                }
+            }
+            return kotlin.math.sqrt(midEnergy / 2205) to kotlin.math.sqrt(sideEnergy / 2205)
+        }
+
+        val (stdMid, stdSide) = measureMidAndSide(com.example.model.AudioMixMode.STANDARD)
+        val (inFrameMid, inFrameSide) = measureMidAndSide(com.example.model.AudioMixMode.IN_FRAME)
+        val (studioMid, studioSide) = measureMidAndSide(com.example.model.AudioMixMode.STUDIO)
+        val (cinemaMid, cinemaSide) = measureMidAndSide(com.example.model.AudioMixMode.CINEMATIC)
+
+        // In-Frame focuses center vocals while attenuating off-axis Side wash
+        assertTrue("In-Frame must preserve/focus Mid vocals ($inFrameMid vs $stdMid)", inFrameMid > stdMid * 1.1)
+        assertTrue("In-Frame must attenuate Side wash ($inFrameSide vs $stdSide)", inFrameSide < stdSide * 0.5)
+
+        // Studio aggressively gates/strips Side room reflections while anchoring dry Mid vocals
+        assertTrue("Studio must preserve/focus dry Mid vocals ($studioMid vs $stdMid)", studioMid > stdMid * 1.1)
+        assertTrue("Studio must strip Side room echo ($studioSide vs $inFrameSide)", studioSide < inFrameSide * 0.75)
+
+        // Cinematic keeps anchored dialogue while expanding Side score above Standard
+        assertTrue("Cinematic must anchor Mid dialogue ($cinemaMid vs $stdMid)", cinemaMid > stdMid * 1.05)
+        assertTrue("Cinematic must expand Side score ($cinemaSide vs $stdSide)", cinemaSide > stdSide * 1.2)
     }
 }

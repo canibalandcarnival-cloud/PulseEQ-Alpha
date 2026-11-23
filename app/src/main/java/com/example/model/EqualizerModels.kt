@@ -105,6 +105,38 @@ enum class SpatialMode(
     )
 }
 
+enum class AudioMixMode(
+    val id: String,
+    val label: String,
+    val badge: String,
+    val subtitle: String
+) {
+    STANDARD(
+        id = "standard",
+        label = "Standard",
+        badge = "L+R Native",
+        subtitle = "Full-range transparent stereo mix"
+    ),
+    IN_FRAME(
+        id = "in_frame",
+        label = "In-Frame",
+        badge = "Vocals Focused",
+        subtitle = "Locks center vocals & trims off-axis wash"
+    ),
+    STUDIO(
+        id = "studio",
+        label = "Studio",
+        badge = "Dry Booth",
+        subtitle = "Strips room echo & tightens close-mic clarity"
+    ),
+    CINEMATIC(
+        id = "cinematic",
+        label = "Cinematic",
+        badge = "Dialogue + Wide",
+        subtitle = "Crisp anchored vocals over expansive stereo score"
+    )
+}
+
 enum class BackgroundSoundPreset(
     val id: String,
     val label: String,
@@ -237,6 +269,8 @@ data class OutputEqProfile(
     val nightIntensity: NightIntensity = NightIntensity.STANDARD,
     val speakerDspEnabled: Boolean = (target == OutputTarget.SPEAKER),
     val virtualBassEnabled: Boolean = (target == OutputTarget.SPEAKER),
+    val landscapeStereoStage: Boolean = false,
+    val audioMixMode: AudioMixMode = AudioMixMode.STANDARD,
     val spatialMode: SpatialMode = SpatialMode.OFF,
     val spatialDepth: Float = SpatialMode.ATMOS_MUSIC.defaultDepth,
     val heightPresence: Float = SpatialMode.ATMOS_MUSIC.defaultHeight,
@@ -330,6 +364,30 @@ object LoudnessMaximizerSpecs {
     const val BRICKWALL_THRESHOLD_DB = -0.3f
     const val BRICKWALL_RATIO = 20.0f
     const val BRICKWALL_KNEE_DB = 0.0f
+    const val BRICKWALL_ATTACK_MS = 0.5f
+    const val BRICKWALL_RELEASE_MS = 40.0f
+}
+
+object FlagshipSpeakerSpecs {
+    const val SUB_BASS_HPF_HZ = 95.0
+    const val BOXINESS_CUT_HZ = 380.0
+    const val BOXINESS_CUT_DB = -3.0
+    const val PRESENCE_1_HZ = 1800.0
+    const val PRESENCE_1_DB = 2.0
+    const val PRESENCE_2_HZ = 3200.0
+    const val PRESENCE_2_DB = 2.5
+    const val AIR_HZ = 9500.0
+    const val AIR_DB = 3.0
+    const val XTC_CROSSFEED_GAIN = 0.20
+    const val XTC_DELAY_SEC = 0.00018
+    const val RMS_THRESHOLD_DB = -18.0f
+    const val RMS_RATIO = 3.5f
+    const val RMS_KNEE_DB = 12.0f
+    const val RMS_ATTACK_MS = 4.0f
+    const val RMS_RELEASE_MS = 120.0f
+    const val RMS_MAKEUP_DB = 5.5f
+    const val BRICKWALL_THRESHOLD_DB = -0.3f
+    const val BRICKWALL_RATIO = 20.0f
     const val BRICKWALL_ATTACK_MS = 0.5f
     const val BRICKWALL_RELEASE_MS = 40.0f
 }

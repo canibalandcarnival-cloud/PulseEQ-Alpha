@@ -58,6 +58,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.EqPresetsCatalog
 import com.example.ui.theme.AnalyzerCyan
+import com.example.ui.theme.AppleGlassBorder
+import com.example.ui.theme.AppleGlassBottom
+import com.example.ui.theme.AppleGlassTop
+import com.example.ui.theme.FaderCapBypassed
 import com.example.ui.theme.FaderCapWhite
 import com.example.ui.theme.FaderTrackIdle
 import com.example.ui.theme.GridLineSubtle
@@ -98,12 +102,16 @@ fun EqualizerConsole(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
-            .background(StudioSurface)
+            .clip(RoundedCornerShape(20.dp))
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(AppleGlassTop, AppleGlassBottom)
+                )
+            )
             .border(
                 1.dp,
-                if (tenBandEnabled && !isBypassed) SignalCoral.copy(alpha = 0.42f) else StudioBorder,
-                RoundedCornerShape(18.dp)
+                if (tenBandEnabled && !isBypassed) SignalCoral.copy(alpha = 0.45f) else AppleGlassBorder,
+                RoundedCornerShape(20.dp)
             )
             .padding(horizontal = 8.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -554,7 +562,7 @@ private fun VerticalFaderColumn(
 
                 // Machined circular white fader cap
                 drawCircle(
-                    color = if (isBypassed) Color(0xFF7B8396) else FaderCapWhite,
+                    color = if (isBypassed) FaderCapBypassed else FaderCapWhite,
                     radius = capRadius,
                     center = Offset(cx, knobY)
                 )

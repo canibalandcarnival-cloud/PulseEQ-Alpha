@@ -60,6 +60,10 @@ import androidx.compose.ui.unit.sp
 import com.example.model.ThreeBandEqRanges
 import com.example.ui.theme.AnalyzerCyan
 import com.example.ui.theme.AnalyzerCyanSoft
+import com.example.ui.theme.AppleGlassBorder
+import com.example.ui.theme.AppleGlassBottom
+import com.example.ui.theme.AppleGlassTop
+import com.example.ui.theme.FaderCapBypassed
 import com.example.ui.theme.FaderCapWhite
 import com.example.ui.theme.FaderTrackIdle
 import com.example.ui.theme.GridLineSubtle
@@ -103,12 +107,16 @@ fun ThreeBandEqualizerCard(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
-            .background(StudioSurface)
+            .clip(RoundedCornerShape(20.dp))
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(AppleGlassTop, AppleGlassBottom)
+                )
+            )
             .border(
                 1.dp,
-                if (threeBandEnabled && !isMasterBypassed) AnalyzerCyan.copy(alpha = 0.42f) else StudioBorder,
-                RoundedCornerShape(18.dp)
+                if (threeBandEnabled && !isMasterBypassed) AnalyzerCyan.copy(alpha = 0.45f) else AppleGlassBorder,
+                RoundedCornerShape(20.dp)
             )
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -610,7 +618,7 @@ private fun ThreeBandFaderColumn(
                         center = Offset(cx, knobY)
                     )
                     drawCircle(
-                        color = if (isBypassed) Color(0xFF7B8396) else FaderCapWhite,
+                        color = if (isBypassed) FaderCapBypassed else FaderCapWhite,
                         radius = capRadius,
                         center = Offset(cx, knobY)
                     )

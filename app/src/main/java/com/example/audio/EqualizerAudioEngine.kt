@@ -14,10 +14,12 @@ import androidx.core.content.ContextCompat
 import com.example.AudioSessionRegistry
 import com.example.model.AccommodationToneProfile
 import com.example.model.AudioLabTelemetry
+import com.example.model.AudioMixMode
 import com.example.model.BackgroundSoundPreset
 import com.example.model.ConnectedDeviceState
 import com.example.model.CustomAudioSetupUiState
 import com.example.model.EqPresetsCatalog
+import com.example.model.FlagshipSpeakerSpecs
 import com.example.model.HearingCheckUiState
 import com.example.model.LoudnessMaximizerSpecs
 import com.example.model.NightIntensity
@@ -112,12 +114,12 @@ class EqualizerAudioEngine(private val context: Context) {
         45f, 90f, 180f, 355f, 710f, 1400f, 2800f, 5600f, 11200f, 20000f
     )
 
-    // Upper cutoff frequencies for the 6 PostEq iPhone Speaker DSP shaping bands:
-    // [0]: <70Hz steep cut, [1]: 70-110Hz HPF shoulder, [2]: 110-250Hz virtual bass shelf,
-    // [3]: 250-550Hz boxiness dip (400Hz -3dB), [4]: 550-2800Hz vocal clarity (2kHz +2dB),
-    // [5]: 2800-4800Hz screech tame (3.5kHz -1.5dB), [6]: 4800-20kHz crisp air (10kHz +2.5dB)
+    // Upper cutoff frequencies for the 7 PostEq iPhone 18 Pro Max Speaker DSP shaping bands:
+    // [0]: <55Hz steep cut, [1]: 55-95Hz 24dB/oct HPF shoulder, [2]: 95-240Hz virtual bass shelf,
+    // [3]: 240-520Hz boxiness dip (380Hz -3dB), [4]: 520-2400Hz vocal clarity (1.8kHz +2dB),
+    // [5]: 2400-4600Hz upper presence (3.2kHz +2.5dB), [6]: 4600-20kHz flagship air (9.5kHz +3.0dB)
     private val speakerPostEqCutoffsHz = floatArrayOf(
-        70f, 110f, 250f, 550f, 2800f, 4800f, 20000f
+        55f, 95f, 240f, 520f, 2400f, 4600f, 20000f
     )
 
     @Volatile
@@ -150,6 +152,14 @@ class EqualizerAudioEngine(private val context: Context) {
 
     @Volatile
     var currentVirtualBassEnabled: Boolean = true
+        private set
+
+    @Volatile
+    var currentLandscapeStereoStage: Boolean = false
+        private set
+
+    @Volatile
+    var currentAudioMixMode: AudioMixMode = AudioMixMode.STANDARD
         private set
 
     @Volatile
@@ -353,6 +363,8 @@ class EqualizerAudioEngine(private val context: Context) {
             nightIntensity = currentNightIntensity,
             speakerDspEnabled = currentSpeakerDspEnabled,
             virtualBassEnabled = currentVirtualBassEnabled,
+            landscapeStereoStage = currentLandscapeStereoStage,
+            audioMixMode = currentAudioMixMode,
             spatialMode = currentSpatialMode,
             spatialDepth = currentSpatialDepth,
             heightPresence = currentHeightPresence,
@@ -540,6 +552,8 @@ class EqualizerAudioEngine(private val context: Context) {
         nightIntensity: NightIntensity = currentNightIntensity,
         speakerDspEnabled: Boolean = currentSpeakerDspEnabled,
         virtualBassEnabled: Boolean = currentVirtualBassEnabled,
+        landscapeStereoStage: Boolean = currentLandscapeStereoStage,
+        audioMixMode: AudioMixMode = currentAudioMixMode,
         spatialMode: SpatialMode = currentSpatialMode,
         spatialDepth: Float = currentSpatialDepth,
         heightPresence: Float = currentHeightPresence,
@@ -574,6 +588,8 @@ class EqualizerAudioEngine(private val context: Context) {
         currentNightIntensity = nightIntensity
         currentSpeakerDspEnabled = speakerDspEnabled
         currentVirtualBassEnabled = virtualBassEnabled
+        currentLandscapeStereoStage = landscapeStereoStage
+        currentAudioMixMode = audioMixMode
         currentSpatialMode = spatialMode
         currentSpatialDepth = spatialDepth
         currentHeightPresence = heightPresence
@@ -625,6 +641,8 @@ class EqualizerAudioEngine(private val context: Context) {
             nightIntensity = nightIntensity,
             speakerDspEnabled = isSpeakerDspActive,
             virtualBassEnabled = isSpeakerDspActive && virtualBassEnabled,
+            landscapeStereoStage = isSpeakerDspActive && landscapeStereoStage,
+            audioMixMode = audioMixMode,
             outputTarget = target,
             spatialMode = spatialMode,
             spatialDepth = spatialDepth,
@@ -701,7 +719,8 @@ class EqualizerAudioEngine(private val context: Context) {
                             nightIntensity = currentNightIntensity,
                             target = currentTarget,
                             speakerDspEnabled = currentSpeakerDspEnabled,
-                            spatialMode = currentSpatialMode
+                            spatialMode = currentSpatialMode,
+                            audioMixMode = currentAudioMixMode
                         )
                         dp.setInputGainAllChannelsTo(matchGainDb + duckDb)
                         for (i in 0 until 10) {
@@ -752,7 +771,11 @@ class EqualizerAudioEngine(private val context: Context) {
                             } else {
                                 0f
                             }
-                            val combinedGain = (tenBandGain + toneOffset + accommodationsOffset + loudnessPresenceOffset)
+                            val audioMixOffset = AudioMixStemShaper.computeFrequencyTiltDbAt(
+                                freqHz = EqPresetsCatalog.BANDS[i].frequencyHz.toDouble(),
+                                mode = currentAudioMixMode
+                            )
+                            val combinedGain = (tenBandGain + toneOffset + accommodationsOffset + loudnessPresenceOffset + audioMixOffset)
                                 .coerceIn(-15f, 15f)
                             dp.setPreEqBandAllChannelsTo(
                                 i,
@@ -760,32 +783,32 @@ class EqualizerAudioEngine(private val context: Context) {
                             )
                         }
 
-                        // PostEq stage: Voice Isolation / iPhone Speaker DSP / Pinna Height Atmos contour
+                        // PostEq stage: Voice Isolation / iPhone 18 Pro Max Speaker DSP / Pinna Height Atmos contour
                         val heightScale = currentHeightPresence.coerceIn(0f, 1f)
                         val cinemaBoost = if (currentSpatialMode == SpatialMode.ATMOS_CINEMA) 1.25f else 1.0f
                         val postEqEnabled = isSpeakerDspActive || isSpatialActive || currentVoiceIsolationEnabled
                         val postEqGains = when {
                             currentVoiceIsolationEnabled -> floatArrayOf(
-                                -12.0f, // <70Hz rumble cut
-                                -10.0f, // 70-110Hz sub cut
-                                0.0f,   // 120-250Hz speech body
-                                0.5f,   // 250-550Hz chest clarity
-                                2.0f,   // 550-2800Hz speech presence
-                                -2.5f,  // 2.8-4.8kHz sibilance tame
+                                -12.0f, // <55Hz rumble cut
+                                -10.0f, // 55-95Hz sub cut
+                                0.0f,   // 95-240Hz speech body
+                                0.5f,   // 240-520Hz chest clarity
+                                2.0f,   // 520-2400Hz speech presence
+                                -2.5f,  // 2.4-4.6kHz sibilance tame
                                 -10.0f  // >6.5kHz hiss cut
                             )
                             isSpeakerDspActive -> floatArrayOf(
-                                -12.0f, // <70Hz steep sub-bass protection
-                                -10.0f, // 70-110Hz steep HPF shoulder
-                                if (currentVirtualBassEnabled) 2.2f else 0.0f, // 120-250Hz harmonic punch
-                                -3.0f,  // 400Hz surgical boxiness removal
-                                if (isSpatialActive && currentVocalAnchor) 2.6f else 2.0f, // 2kHz vocal clarity
-                                -1.5f,  // 3.5kHz harshness tame
-                                if (isSpatialActive) 2.5f + 1.5f * heightScale else 2.5f // 10kHz air + height shelf
+                                -12.0f, // <55Hz steep 95Hz sub-bass protection
+                                -10.0f, // 55-95Hz steep 24dB/oct HPF shoulder
+                                if (currentVirtualBassEnabled) 2.6f else 0.0f, // 110-240Hz warm 2nd/3rd harmonic punch
+                                -3.0f,  // 380Hz chassis boxiness removal
+                                if (isSpatialActive && currentVocalAnchor) 2.5f else 2.0f, // 1.8kHz flagship vocal clarity
+                                2.5f,   // 3.2kHz upper presence lift
+                                if (isSpatialActive) 3.0f + 1.2f * heightScale else 3.0f // 9.5kHz flagship air
                             )
                             isSpatialActive -> floatArrayOf(
-                                0.4f, // Tight <70Hz center mono punch
-                                0.2f, // 70-110Hz anchor
+                                0.4f, // Tight <55Hz center mono punch
+                                0.2f, // 55-95Hz anchor
                                 0.0f,
                                 0.0f,
                                 if (currentVocalAnchor) 1.4f else 0.0f, // Vocal Anchor lock
@@ -803,31 +826,36 @@ class EqualizerAudioEngine(private val context: Context) {
                         }
                         dp.setPostEqAllChannelsTo(postEq)
 
-                        // Mbc stage: Late Night 4:1 OR Boost Soft Sounds OR Smooth RMS Compressor (-20dB, 4:1, 15dB knee, 5ms/150ms)
-                        val compEnabled = currentLateNightEnabled || accommodationsMediaActive || loudnessMaxActive
+                        // Mbc stage: Late Night 4:1 OR Boost Soft Sounds OR RMS Maximizer (-18dB 3.5:1 +5.5dB on Speaker / -20dB 4:1 on Loudness Max)
+                        val compEnabled = currentLateNightEnabled || accommodationsMediaActive || loudnessMaxActive || isSpeakerDspActive
                         val mbc = DynamicsProcessing.Mbc(true, compEnabled, 1)
                         val mbcAttack = when {
                             loudnessMaxActive -> LoudnessMaximizerSpecs.RMS_ATTACK_MS
+                            isSpeakerDspActive -> FlagshipSpeakerSpecs.RMS_ATTACK_MS
                             currentLateNightEnabled -> currentNightIntensity.attackMs
                             else -> 8f
                         }
                         val mbcRelease = when {
                             loudnessMaxActive -> LoudnessMaximizerSpecs.RMS_RELEASE_MS
+                            isSpeakerDspActive -> FlagshipSpeakerSpecs.RMS_RELEASE_MS
                             currentLateNightEnabled -> currentNightIntensity.releaseMs
                             else -> 160f
                         }
                         val mbcRatio = maxOf(
                             if (currentLateNightEnabled) currentNightIntensity.ratio else 1f,
                             if (accommodationsMediaActive) currentAccommodationsSoftIntensity.ratio else 1f,
-                            if (loudnessMaxActive) LoudnessMaximizerSpecs.RMS_RATIO else 1f
+                            if (loudnessMaxActive) LoudnessMaximizerSpecs.RMS_RATIO else 1f,
+                            if (isSpeakerDspActive) FlagshipSpeakerSpecs.RMS_RATIO else 1f
                         )
                         val mbcThreshold = when {
                             currentLateNightEnabled -> currentNightIntensity.thresholdDb
                             loudnessMaxActive -> LoudnessMaximizerSpecs.RMS_THRESHOLD_DB
+                            isSpeakerDspActive -> FlagshipSpeakerSpecs.RMS_THRESHOLD_DB
                             else -> currentAccommodationsSoftIntensity.thresholdDb
                         }
                         val mbcKnee = when {
                             loudnessMaxActive -> LoudnessMaximizerSpecs.RMS_KNEE_DB
+                            isSpeakerDspActive -> FlagshipSpeakerSpecs.RMS_KNEE_DB
                             currentLateNightEnabled -> currentNightIntensity.kneeDb
                             else -> currentAccommodationsSoftIntensity.kneeDb
                         }
@@ -836,13 +864,15 @@ class EqualizerAudioEngine(private val context: Context) {
                         } else {
                             0f
                         }
+                        val speakerMakeupDb = if (isSpeakerDspActive) FlagshipSpeakerSpecs.RMS_MAKEUP_DB else 0f
                         val mbcMakeup = (if (currentLateNightEnabled) currentNightIntensity.makeupGainDb else 0f) +
                             (if (accommodationsMediaActive) {
                                 currentAccommodationsSoftIntensity.makeupGainDb + currentAccommodationsOutputGainDb
                             } else {
                                 0f
                             }) +
-                            loudnessMakeupDb
+                            loudnessMakeupDb +
+                            speakerMakeupDb
 
                         mbc.setBand(
                             0,
@@ -862,8 +892,7 @@ class EqualizerAudioEngine(private val context: Context) {
                         )
                         dp.setMbcAllChannelsTo(mbc)
 
-                        // Limiter stage: Zero-Clipping Brickwall (-0.3dB, 20:1, 0.5ms/40ms) when Loudness Maximizer active,
-                        // otherwise iPhone Smart Speaker Limiter (-6dB, 12:1, 1ms/80ms, +3dB makeup) or safety limiter
+                        // Limiter stage: Zero-Clipping Brickwall (-0.3dB, 20:1, 0.5ms/40ms) for Flagship Speaker DSP & Loudness Maximizer
                         val limiter = when {
                             loudnessMaxActive -> DynamicsProcessing.Limiter(
                                 true,
@@ -879,11 +908,11 @@ class EqualizerAudioEngine(private val context: Context) {
                                 true,
                                 true,
                                 0,
-                                1.0f,
-                                80.0f,
-                                12.0f,
-                                -6.0f,
-                                3.0f
+                                FlagshipSpeakerSpecs.BRICKWALL_ATTACK_MS,
+                                FlagshipSpeakerSpecs.BRICKWALL_RELEASE_MS,
+                                FlagshipSpeakerSpecs.BRICKWALL_RATIO,
+                                FlagshipSpeakerSpecs.BRICKWALL_THRESHOLD_DB,
+                                0.0f
                             )
                             else -> DynamicsProcessing.Limiter(
                                 true,
@@ -937,17 +966,19 @@ class EqualizerAudioEngine(private val context: Context) {
         val sessionCount = AudioSessionRegistry.activeSessions.value.size
         val accMediaActive = effectiveActive && currentAccommodationsEnabled && currentAccommodationsApplyToMedia
         val loudnessMaxActive = effectiveActive && currentLoudnessMaximizerEnabled
+        val audioMixActive = effectiveActive && currentAudioMixMode != AudioMixMode.STANDARD
         val activeEqPrefix = if (useThreeBand) "3-Band" else "10-Band"
         _dspStatusLabel.value = when {
             isAbHeld -> "A/B Compare: Original"
             currentBypassed -> "DSP Bypassed"
             currentVoiceIsolationEnabled -> "Voice Isolation"
             loudnessMaxActive -> "Loudness Maximizer +${(currentLoudnessBoostPercent * LoudnessMaximizerSpecs.MAX_MAKEUP_BOOST_DB).toInt()}dB"
+            audioMixActive -> "Audio Mix • ${currentAudioMixMode.label}"
             isSpatialActive && currentTarget == OutputTarget.SPEAKER -> "Speaker XTC Spatial"
             isSpatialActive -> "Spatial ${currentSpatialMode.label}"
             accMediaActive -> "Accommodations • ${currentAccommodationsToneProfile.label}"
-            isSpeakerDspActive && currentLateNightEnabled -> "Speaker DSP + Late Night"
-            isSpeakerDspActive -> "iPhone Speaker DSP"
+            isSpeakerDspActive && currentLateNightEnabled -> "iPhone 18 DSP + Late Night"
+            isSpeakerDspActive -> if (currentLandscapeStereoStage) "iPhone 18 Speaker • Wide XTC" else "iPhone 18 Pro Max DSP"
             anyDpActive && sessionCount > 0 -> {
                 if (currentLateNightEnabled) "App DSP + Late Night ($sessionCount)" else "$activeEqPrefix App DSP ($sessionCount)"
             }
@@ -1025,9 +1056,9 @@ class EqualizerAudioEngine(private val context: Context) {
                         val speakerLimiterGr = if (live && isSpeakerDspActive && !currentBypassed) {
                             DynamicRangeCompressor.computeGainReductionDb(
                                 inputDb = peakDb,
-                                thresholdDb = -6f,
-                                kneeDb = 4f,
-                                ratio = 12f
+                                thresholdDb = FlagshipSpeakerSpecs.RMS_THRESHOLD_DB,
+                                kneeDb = FlagshipSpeakerSpecs.RMS_KNEE_DB,
+                                ratio = FlagshipSpeakerSpecs.RMS_RATIO
                             )
                         } else {
                             0f
@@ -1151,6 +1182,8 @@ class EqualizerAudioEngine(private val context: Context) {
             nightIntensity = currentNightIntensity,
             speakerDspEnabled = isSpeakerDspActive,
             virtualBassEnabled = isSpeakerDspActive && currentVirtualBassEnabled,
+            landscapeStereoStage = isSpeakerDspActive && currentLandscapeStereoStage,
+            audioMixMode = currentAudioMixMode,
             outputTarget = currentTarget,
             spatialMode = currentSpatialMode,
             spatialDepth = currentSpatialDepth,

@@ -47,10 +47,12 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.audio.AudioMixStemShaper
 import com.example.audio.HeadphoneAccommodationsProcessor
 import com.example.audio.IphoneLoudnessMaximizerChain
 import com.example.audio.ThreeBandToneFilter
 import com.example.model.AccommodationToneProfile
+import com.example.model.AudioMixMode
 import com.example.model.EqPresetsCatalog
 import com.example.model.OutputTarget
 import com.example.model.SoftSoundIntensity
@@ -58,7 +60,11 @@ import com.example.model.TestAudioSource
 import com.example.model.VisualizerFrame
 import com.example.model.VisualizerMode
 import com.example.ui.theme.AnalyzerCyan
+import com.example.ui.theme.AnalyzerCyanDeep
 import com.example.ui.theme.AnalyzerCyanSoft
+import com.example.ui.theme.AppleGlassBorder
+import com.example.ui.theme.AppleGlassBottom
+import com.example.ui.theme.AppleGlassTop
 import com.example.ui.theme.GridLineSubtle
 import com.example.ui.theme.GridLineZero
 import com.example.ui.theme.RouteEmerald
@@ -98,6 +104,7 @@ fun AudioVisualizerPanel(
     accommodationsApplyToMedia: Boolean = true,
     loudnessMaximizerEnabled: Boolean = false,
     outputTarget: OutputTarget = OutputTarget.HEADPHONES,
+    audioMixMode: AudioMixMode = AudioMixMode.STANDARD,
     modifier: Modifier = Modifier
 ) {
     val activeThreeBand = threeBandEnabled && !tenBandEnabled
@@ -134,7 +141,15 @@ fun AudioVisualizerPanel(
         } else {
             0f
         }
-        val target = if (isBypassed) 0f else (tenBandGain + toneOffset + accommodationsOffset + loudnessOffset + preampDb * 0.5f)
+        val audioMixOffset = if (!isBypassed && audioMixMode != AudioMixMode.STANDARD) {
+            AudioMixStemShaper.computeFrequencyTiltDbAt(
+                freqHz = freqHz,
+                mode = audioMixMode
+            )
+        } else {
+            0f
+        }
+        val target = if (isBypassed) 0f else (tenBandGain + toneOffset + accommodationsOffset + loudnessOffset + audioMixOffset + preampDb * 0.5f)
             .coerceIn(EqPresetsCatalog.MIN_GAIN_DB, EqPresetsCatalog.MAX_GAIN_DB)
         val anim by animateFloatAsState(
             targetValue = target,
@@ -147,10 +162,14 @@ fun AudioVisualizerPanel(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(StudioSurface)
-            .border(1.dp, StudioBorder, RoundedCornerShape(16.dp))
-            .padding(10.dp),
+            .clip(RoundedCornerShape(20.dp))
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(AppleGlassTop, AppleGlassBottom)
+                )
+            )
+            .border(1.dp, AppleGlassBorder, RoundedCornerShape(20.dp))
+            .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         // Header Controls: Mode Switcher + Test Audio + System Mix Permission
@@ -326,7 +345,7 @@ fun AudioVisualizerPanel(
                                 brush = Brush.verticalGradient(
                                     colors = listOf(
                                         AnalyzerCyan.copy(alpha = barAlpha),
-                                        Color(0xFF006688).copy(alpha = barAlpha * 0.45f)
+                                        AnalyzerCyanDeep.copy(alpha = barAlpha * 0.45f)
                                     ),
                                     startY = y,
                                     endY = h

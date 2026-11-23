@@ -9,6 +9,7 @@ import com.example.audio.EqualizerEngineHolder
 import com.example.data.EqPreferencesRepository
 import com.example.model.AccommodationToneProfile
 import com.example.model.AudioLabTelemetry
+import com.example.model.AudioMixMode
 import com.example.model.BackgroundSoundPreset
 import com.example.model.ConnectedDeviceState
 import com.example.model.CustomAudioSetupUiState
@@ -368,6 +369,25 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
         commitProfile(updated)
     }
 
+    fun toggleLandscapeStereoStage() {
+        val current = currentProfile()
+        val next = !current.landscapeStereoStage
+        val updated = current.copy(
+            landscapeStereoStage = next,
+            speakerDspEnabled = if (next) true else current.speakerDspEnabled
+        )
+        commitProfile(updated)
+    }
+
+    fun setAudioMixMode(mode: AudioMixMode) {
+        val current = currentProfile()
+        val updated = current.copy(
+            audioMixMode = mode,
+            isBypassed = if (mode != AudioMixMode.STANDARD) false else current.isBypassed
+        )
+        commitProfile(updated)
+    }
+
     fun setSpatialMode(mode: SpatialMode) {
         val current = currentProfile()
         val updated = when (mode) {
@@ -712,6 +732,8 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             nightIntensity = profile.nightIntensity,
             speakerDspEnabled = profile.speakerDspEnabled,
             virtualBassEnabled = profile.virtualBassEnabled,
+            landscapeStereoStage = profile.landscapeStereoStage,
+            audioMixMode = profile.audioMixMode,
             spatialMode = profile.spatialMode,
             spatialDepth = profile.spatialDepth,
             heightPresence = profile.heightPresence,
