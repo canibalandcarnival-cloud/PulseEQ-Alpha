@@ -1011,4 +1011,187 @@ class ExampleUnitTest {
         val inRms = 0.25 / kotlin.math.sqrt(2.0)
         assertTrue("Active 100% Treble Smoothness must audibly tame 6kHz sibilance/harshness ($rms6k < $inRms)", rms6k < inRms * 0.65)
     }
+
+    @Test
+    fun orientation_aware_speaker_stage_switches_portrait_vocal_focus_and_landscape_xtc() {
+        val sampleRate = 48000
+
+        val portraitBank = BiquadEqFilterBank(sampleRate).apply {
+            updateParameters(
+                gainsDb = List(10) { 0f },
+                preampDb = 0f,
+                isBypassed = false,
+                speakerDspEnabled = true,
+                virtualBassEnabled = false,
+                landscapeStereoStage = true,
+                outputTarget = com.example.model.OutputTarget.SPEAKER,
+                phoneOrientationMode = com.example.model.PhoneOrientationMode.AUTO_DETECT,
+                deviceIsLandscape = false
+            )
+        }
+        val landscapeBank = BiquadEqFilterBank(sampleRate).apply {
+            updateParameters(
+                gainsDb = List(10) { 0f },
+                preampDb = 0f,
+                isBypassed = false,
+                speakerDspEnabled = true,
+                virtualBassEnabled = false,
+                landscapeStereoStage = true,
+                outputTarget = com.example.model.OutputTarget.SPEAKER,
+                phoneOrientationMode = com.example.model.PhoneOrientationMode.AUTO_DETECT,
+                deviceIsLandscape = true
+            )
+        }
+        val manualLandscapeBank = BiquadEqFilterBank(sampleRate).apply {
+            updateParameters(
+                gainsDb = List(10) { 0f },
+                preampDb = 0f,
+                isBypassed = false,
+                speakerDspEnabled = true,
+                landscapeStereoStage = true,
+                outputTarget = com.example.model.OutputTarget.SPEAKER,
+                phoneOrientationMode = com.example.model.PhoneOrientationMode.LANDSCAPE,
+                deviceIsLandscape = false
+            )
+        }
+
+        assertEquals(false, portraitBank.latestResolvedOrientationLandscape)
+        assertEquals(true, landscapeBank.latestResolvedOrientationLandscape)
+        assertEquals(true, manualLandscapeBank.latestResolvedOrientationLandscape)
+
+        // Portrait focuses center vocals cleanly while equalizing L/R bass weight (<180Hz) vs Landscape XTC separation
+        var portraitSideEnergy = 0.0
+        var landscapeSideEnergy = 0.0
+        var portraitVocalMid = 0.0
+        var landscapeVocalMid = 0.0
+        for (i in 0 until 4800) {
+            val sigL = 0.20 * kotlin.math.sin(2.0 * Math.PI * 1900.0 * i / sampleRate)
+            val sigR = 0.04 * kotlin.math.sin(2.0 * Math.PI * 1900.0 * i / sampleRate)
+            val (pL, pR) = portraitBank.processStereoSample(sigL, sigR)
+            val (lL, lR) = landscapeBank.processStereoSample(sigL, sigR)
+
+            if (i > 2400) {
+                portraitVocalMid += abs(0.5 * (pL + pR))
+                landscapeVocalMid += abs(0.5 * (lL + lR))
+                portraitSideEnergy += abs(0.5 * (pL - pR))
+                landscapeSideEnergy += abs(0.5 * (lL - lR))
+            }
+        }
+
+        val portraitBassBank = BiquadEqFilterBank(sampleRate).apply {
+            updateParameters(
+                gainsDb = List(10) { 0f },
+                preampDb = 0f,
+                isBypassed = false,
+                speakerDspEnabled = true,
+                virtualBassEnabled = false,
+                landscapeStereoStage = true,
+                outputTarget = com.example.model.OutputTarget.SPEAKER,
+                phoneOrientationMode = com.example.model.PhoneOrientationMode.AUTO_DETECT,
+                deviceIsLandscape = false
+            )
+        }
+        var rawBassDiff = 0.0
+        var portraitBassDiff = 0.0
+        for (i in 0 until 4800) {
+            val bassL = 0.16 * kotlin.math.sin(2.0 * Math.PI * 95.0 * i / sampleRate)
+            val bassR = -0.16 * kotlin.math.sin(2.0 * Math.PI * 95.0 * i / sampleRate)
+            val (pbL, pbR) = portraitBassBank.processStereoSample(bassL, bassR)
+            if (i > 2400) {
+                rawBassDiff += abs(bassL - bassR)
+                portraitBassDiff += abs(pbL - pbR)
+            }
+        }
+        assertTrue(
+            "Portrait must equalize L/R <180Hz bass weight cleanly (outputDiff=$portraitBassDiff vs rawDiff=$rawBassDiff)",
+            portraitBassDiff < rawBassDiff * 0.20
+        )
+        assertTrue(
+            "Portrait must focus center vocals stronger than Landscape ($portraitVocalMid vs $landscapeVocalMid)",
+            portraitVocalMid > landscapeVocalMid * 1.05
+        )
+        assertTrue(
+            "Landscape XTC must deliver wider >180Hz stereo separation than Portrait ($landscapeSideEnergy vs $portraitSideEnergy)",
+            landscapeSideEnergy > portraitSideEnergy * 1.35
+        )
+    }
+
+    @Test
+    fun ios_volume_step_contour_and_high_volume_deharsh_guard_behave_accurately() {
+        val sampleRate = 48000
+
+        // 1. Below 40% volume (e.g. 15%): lifts 115Hz bass (<= +3dB) & 2.8kHz presence (<= +2dB)
+        val low115 = com.example.audio.IosVolumeContourAndDeHarshProcessor.computeContourResponseDbAt(115.0, 0.15f, sampleRate)
+        val low2800 = com.example.audio.IosVolumeContourAndDeHarshProcessor.computeContourResponseDbAt(2800.0, 0.15f, sampleRate)
+        assertTrue("Low volume (<40%) must lift 115Hz bass > +1.2 dB (got $low115)", low115 > 1.2f)
+        assertTrue("Low volume (<40%) must lift 2.8kHz presence > +0.8 dB (got $low2800)", low2800 > 0.8f)
+
+        // 2. 40%-80% sweet spot (e.g. 60%): strictly flat 0 dB
+        assertEquals(0f, com.example.audio.IosVolumeContourAndDeHarshProcessor.computeContourResponseDbAt(115.0, 0.60f, sampleRate), 0.001f)
+        assertEquals(0f, com.example.audio.IosVolumeContourAndDeHarshProcessor.computeContourResponseDbAt(6500.0, 0.60f, sampleRate), 0.001f)
+
+        // 3. Above 80% volume (e.g. 100%): flattens <100Hz sub-bass, boosts 1-2kHz midrange (+2dB), and cuts 5-9kHz sibilance (-3.5dB @ 6.5kHz)
+        val highSub50 = com.example.audio.IosVolumeContourAndDeHarshProcessor.computeContourResponseDbAt(50.0, 1.0f, sampleRate)
+        val highMid1500 = com.example.audio.IosVolumeContourAndDeHarshProcessor.computeContourResponseDbAt(1500.0, 1.0f, sampleRate)
+        val highDeHarsh6500 = com.example.audio.IosVolumeContourAndDeHarshProcessor.computeContourResponseDbAt(6500.0, 1.0f, sampleRate)
+        assertTrue("High volume (>80%) must flatten sub-bass at 50Hz (< -2.0 dB, got $highSub50)", highSub50 < -2.0f)
+        assertTrue("High volume (>80%) must boost 1.5kHz projection (> +1.4 dB, got $highMid1500)", highMid1500 > 1.4f)
+        assertTrue("High-Volume De-Harshing Guard (>80%) must attenuate 6.5kHz (< -2.5 dB, got $highDeHarsh6500)", highDeHarsh6500 < -2.5f)
+
+        val bank95 = BiquadEqFilterBank(sampleRate).apply {
+            updateParameters(
+                gainsDb = List(10) { 0f },
+                preampDb = 0f,
+                isBypassed = false,
+                masterVolumePercent = 0.95f
+            )
+        }
+        assertTrue("BiquadEqFilterBank must report High-Volume De-Harsh Guard active at 95%", bank95.isHighVolumeDeHarshActive)
+    }
+
+    @Test
+    fun pro_max_body_warmth_boosts_125hz_and_adds_second_order_harmonics() {
+        val sampleRate = 48000
+        val body125 = com.example.audio.PhoneSpeakerDspChain.computeBodyWarmthResponseDbAt(125.0, sampleRate)
+        assertEquals(2.5f, body125, 0.2f)
+
+        val noWarmth = com.example.audio.PhoneSpeakerDspChain(sampleRate).apply {
+            configure(
+                isSpeakerDspEnabled = true,
+                isVirtualBassEnabled = false,
+                isLandscapeStereoEnabled = false,
+                isBodyWarmthEnabled = false
+            )
+        }
+        val withWarmth = com.example.audio.PhoneSpeakerDspChain(sampleRate).apply {
+            configure(
+                isSpeakerDspEnabled = true,
+                isVirtualBassEnabled = false,
+                isLandscapeStereoEnabled = false,
+                isBodyWarmthEnabled = true
+            )
+        }
+
+        // Feed pure 125Hz sine wave and verify boosted fundamental + 250Hz 2nd-order harmonic energy
+        var rmsNo = 0.0
+        var rmsYes = 0.0
+        var correlation250Yes = 0.0
+        var correlation250No = 0.0
+        for (i in 0 until 4800) {
+            val s = 0.20 * kotlin.math.sin(2.0 * Math.PI * 125.0 * i / sampleRate)
+            val (oNo, _) = noWarmth.processStereoSample(s, s)
+            val (oYes, _) = withWarmth.processStereoSample(s, s)
+            if (i > 2400) {
+                rmsNo += oNo * oNo
+                rmsYes += oYes * oYes
+                val ref250 = kotlin.math.cos(2.0 * Math.PI * 250.0 * i / sampleRate)
+                correlation250No += oNo * ref250
+                correlation250Yes += oYes * ref250
+            }
+        }
+        rmsNo = kotlin.math.sqrt(rmsNo / 2400)
+        rmsYes = kotlin.math.sqrt(rmsYes / 2400)
+        assertTrue("125Hz Body Warmth must noticeably boost 125Hz chamber warmth ($rmsYes vs $rmsNo)", rmsYes > rmsNo * 1.18)
+        assertTrue("2nd-order saturation must enrich 250Hz even harmonic ($correlation250Yes vs $correlation250No)", abs(correlation250Yes) > abs(correlation250No) * 1.5)
+    }
 }

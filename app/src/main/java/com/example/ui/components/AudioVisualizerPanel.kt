@@ -49,7 +49,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.audio.AudioMixStemShaper
 import com.example.audio.HeadphoneAccommodationsProcessor
+import com.example.audio.IosVolumeContourAndDeHarshProcessor
 import com.example.audio.IphoneLoudnessMaximizerChain
+import com.example.audio.PhoneSpeakerDspChain
 import com.example.audio.ThreeBandToneFilter
 import com.example.audio.TrebleSmoothnessProcessor
 import com.example.model.AccommodationToneProfile
@@ -112,6 +114,9 @@ fun AudioVisualizerPanel(
     spatialMode: SpatialMode = SpatialMode.OFF,
     spatialHeightPresence: Float = 0.58f,
     siliconDspEnabled: Boolean = true,
+    masterVolumePercent: Float = 0.75f,
+    speakerDspEnabled: Boolean = false,
+    proMaxBodyWarmthEnabled: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val activeThreeBand = threeBandEnabled && !tenBandEnabled
@@ -174,7 +179,20 @@ fun AudioVisualizerPanel(
         } else {
             0f
         }
-        val target = if (isBypassed) 0f else (tenBandGain + toneOffset + accommodationsOffset + smoothnessOffset + loudnessOffset + audioMixOffset + preampDb * 0.5f)
+        val volumeContourOffset = if (!isBypassed) {
+            IosVolumeContourAndDeHarshProcessor.computeContourResponseDbAt(
+                freqHz = freqHz,
+                volumePercent = masterVolumePercent
+            )
+        } else {
+            0f
+        }
+        val bodyWarmthOffset = if (!isBypassed && outputTarget == OutputTarget.SPEAKER && speakerDspEnabled && proMaxBodyWarmthEnabled) {
+            PhoneSpeakerDspChain.computeBodyWarmthResponseDbAt(freqHz = freqHz)
+        } else {
+            0f
+        }
+        val target = if (isBypassed) 0f else (tenBandGain + toneOffset + accommodationsOffset + smoothnessOffset + loudnessOffset + audioMixOffset + volumeContourOffset + bodyWarmthOffset + preampDb * 0.5f)
             .coerceIn(EqPresetsCatalog.MIN_GAIN_DB, EqPresetsCatalog.MAX_GAIN_DB)
         val anim by animateFloatAsState(
             targetValue = target,

@@ -70,6 +70,9 @@ class EqPreferencesRepository(private val context: Context) {
         fun loudnessBoostPctKey(target: OutputTarget) = floatPreferencesKey("loudness_boost_pct_${target.id}")
         fun siliconDspKey(target: OutputTarget) = booleanPreferencesKey("silicon_dsp_${target.id}")
         fun trebleSmoothnessKey(target: OutputTarget) = floatPreferencesKey("treble_smoothness_${target.id}")
+        fun phoneOrientationKey(target: OutputTarget) = stringPreferencesKey("phone_orientation_${target.id}")
+        fun masterVolumeKey(target: OutputTarget) = floatPreferencesKey("master_volume_${target.id}")
+        fun proMaxBodyWarmthKey(target: OutputTarget) = booleanPreferencesKey("pro_max_body_warmth_${target.id}")
     }
 
     val preferencesFlow: Flow<StoredEqPreferences> = context.eqDataStore.data.map { prefs ->
@@ -185,7 +188,12 @@ class EqPreferencesRepository(private val context: Context) {
                 loudnessBoostPercent = (prefs[Keys.loudnessBoostPctKey(target)] ?: 0.50f).coerceIn(0f, 1f),
                 siliconDspEnabled = prefs[Keys.siliconDspKey(target)] ?: true,
                 trebleSmoothnessPercent = (prefs[Keys.trebleSmoothnessKey(target)]
-                    ?: OutputEqProfile.defaultTrebleSmoothnessForTarget(target)).coerceIn(0f, 1f)
+                    ?: OutputEqProfile.defaultTrebleSmoothnessForTarget(target)).coerceIn(0f, 1f),
+                phoneOrientationMode = com.example.model.PhoneOrientationMode.entries.firstOrNull {
+                    it.name == prefs[Keys.phoneOrientationKey(target)]
+                } ?: com.example.model.PhoneOrientationMode.AUTO_DETECT,
+                masterVolumePercent = (prefs[Keys.masterVolumeKey(target)] ?: 0.75f).coerceIn(0f, 1f),
+                proMaxBodyWarmthEnabled = prefs[Keys.proMaxBodyWarmthKey(target)] ?: (target == OutputTarget.SPEAKER)
             )
         }
 
@@ -271,6 +279,9 @@ class EqPreferencesRepository(private val context: Context) {
             prefs[Keys.loudnessBoostPctKey(profile.target)] = profile.loudnessBoostPercent.coerceIn(0f, 1f)
             prefs[Keys.siliconDspKey(profile.target)] = profile.siliconDspEnabled
             prefs[Keys.trebleSmoothnessKey(profile.target)] = profile.trebleSmoothnessPercent.coerceIn(0f, 1f)
+            prefs[Keys.phoneOrientationKey(profile.target)] = profile.phoneOrientationMode.name
+            prefs[Keys.masterVolumeKey(profile.target)] = profile.masterVolumePercent.coerceIn(0f, 1f)
+            prefs[Keys.proMaxBodyWarmthKey(profile.target)] = profile.proMaxBodyWarmthEnabled
         }
     }
 }

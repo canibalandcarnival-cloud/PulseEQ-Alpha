@@ -195,6 +195,15 @@ enum class SpeakerTuningProfile(
     )
 }
 
+enum class PhoneOrientationMode(
+    val id: String,
+    val label: String
+) {
+    AUTO_DETECT("auto", "Auto-Detect"),
+    PORTRAIT("portrait", "Portrait"),
+    LANDSCAPE("landscape", "Landscape")
+}
+
 enum class SoftSoundIntensity(
     val id: String,
     val label: String,
@@ -270,7 +279,10 @@ data class AudioLabTelemetry(
     val siliconClassHRailV: Float = 3.7f,
     val siliconTruePeakGrDb: Float = 0f,
     val trebleGainStagedCapActive: Boolean = false,
-    val trebleCappedBoostDb: Float = 0f
+    val trebleCappedBoostDb: Float = 0f,
+    val resolvedOrientationLandscape: Boolean = true,
+    val volumeContourStatus: String = "Linear (40–80%)",
+    val highVolumeDeHarshActive: Boolean = false
 )
 
 @Immutable
@@ -323,7 +335,10 @@ data class OutputEqProfile(
     val loudnessMaximizerEnabled: Boolean = false,
     val loudnessBoostPercent: Float = 0.50f,
     val siliconDspEnabled: Boolean = true,
-    val trebleSmoothnessPercent: Float = defaultTrebleSmoothnessForTarget(target)
+    val trebleSmoothnessPercent: Float = defaultTrebleSmoothnessForTarget(target),
+    val phoneOrientationMode: PhoneOrientationMode = PhoneOrientationMode.AUTO_DETECT,
+    val masterVolumePercent: Float = 0.75f,
+    val proMaxBodyWarmthEnabled: Boolean = (target == OutputTarget.SPEAKER)
 ) {
     companion object {
         fun defaultTrebleSmoothnessForTarget(target: OutputTarget): Float = when (target) {
@@ -486,6 +501,29 @@ object TrebleGainStagingSpecs {
     const val WARM_BODY_160_MAX_DB = 2.0
     const val DEHARSH_5500_MAX_CUT_DB = -4.5
     const val DEHARSH_SHELF_8500_MAX_CUT_DB = -2.5
+}
+
+object ProMaxHardwareRefinementSpecs {
+    const val BODY_WARMTH_HZ = 125.0
+    const val BODY_WARMTH_Q = 1.6
+    const val BODY_WARMTH_DB = 2.5
+
+    const val LOW_VOL_THRESHOLD = 0.40f
+    const val HIGH_VOL_THRESHOLD = 0.80f
+
+    const val LOW_VOL_BASS_HZ = 115.0
+    const val LOW_VOL_BASS_MAX_DB = 3.0
+    const val LOW_VOL_PRESENCE_HZ = 2800.0
+    const val LOW_VOL_PRESENCE_MAX_DB = 2.0
+
+    const val HIGH_VOL_SUB_FLATTEN_HZ = 85.0
+    const val HIGH_VOL_SUB_FLATTEN_MAX_DB = -3.5
+    const val HIGH_VOL_MID_PROJ_HZ = 1500.0
+    const val HIGH_VOL_MID_PROJ_MAX_DB = 2.0
+
+    const val HIGH_VOL_DEHARSH_HZ = 6500.0
+    const val HIGH_VOL_DEHARSH_Q = 1.15
+    const val HIGH_VOL_DEHARSH_MAX_DB = -3.5
 }
 
 @Immutable

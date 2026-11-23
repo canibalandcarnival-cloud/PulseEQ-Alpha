@@ -24,6 +24,8 @@ import com.example.model.HearingCheckUiState
 import com.example.model.LoudnessMaximizerSpecs
 import com.example.model.NightIntensity
 import com.example.model.OutputTarget
+import com.example.model.PhoneOrientationMode
+import com.example.model.ProMaxHardwareRefinementSpecs
 import com.example.model.SiliconDspSpecs
 import com.example.model.SoftSoundIntensity
 import com.example.model.SpatialMode
@@ -266,6 +268,22 @@ class EqualizerAudioEngine(private val context: Context) {
         private set
 
     @Volatile
+    var currentPhoneOrientationMode: PhoneOrientationMode = PhoneOrientationMode.AUTO_DETECT
+        private set
+
+    @Volatile
+    var currentDeviceIsLandscape: Boolean = false
+        private set
+
+    @Volatile
+    var currentMasterVolumePercent: Float = 0.75f
+        private set
+
+    @Volatile
+    var currentProMaxBodyWarmthEnabled: Boolean = true
+        private set
+
+    @Volatile
     private var systemSoundCheckTrimDb: Float = 0f
 
     @Volatile
@@ -342,7 +360,10 @@ class EqualizerAudioEngine(private val context: Context) {
                         siliconClassHRailV = testSynthesizer.latestSiliconClassHRailV,
                         siliconTruePeakGrDb = testSynthesizer.latestSiliconTruePeakGrDb,
                         trebleGainStagedCapActive = testSynthesizer.isTrebleCapActive,
-                        trebleCappedBoostDb = testSynthesizer.latestTrebleCappedBoostDb
+                        trebleCappedBoostDb = testSynthesizer.latestTrebleCappedBoostDb,
+                        resolvedOrientationLandscape = testSynthesizer.latestResolvedOrientationLandscape,
+                        volumeContourStatus = testSynthesizer.latestVolumeContourStatus,
+                        highVolumeDeHarshActive = testSynthesizer.isHighVolumeDeHarshActive
                     )
                     synthFrame
                 } else {
@@ -411,7 +432,11 @@ class EqualizerAudioEngine(private val context: Context) {
             loudnessMaximizerEnabled = currentLoudnessMaximizerEnabled,
             loudnessBoostPercent = currentLoudnessBoostPercent,
             siliconDspEnabled = currentSiliconDspEnabled,
-            trebleSmoothnessPercent = currentTrebleSmoothnessPercent
+            trebleSmoothnessPercent = currentTrebleSmoothnessPercent,
+            phoneOrientationMode = currentPhoneOrientationMode,
+            deviceIsLandscape = currentDeviceIsLandscape,
+            masterVolumePercent = currentMasterVolumePercent,
+            proMaxBodyWarmthEnabled = currentProMaxBodyWarmthEnabled
         )
     }
 
@@ -603,7 +628,11 @@ class EqualizerAudioEngine(private val context: Context) {
         loudnessMaximizerEnabled: Boolean = currentLoudnessMaximizerEnabled,
         loudnessBoostPercent: Float = currentLoudnessBoostPercent,
         siliconDspEnabled: Boolean = currentSiliconDspEnabled,
-        trebleSmoothnessPercent: Float = currentTrebleSmoothnessPercent
+        trebleSmoothnessPercent: Float = currentTrebleSmoothnessPercent,
+        phoneOrientationMode: PhoneOrientationMode = currentPhoneOrientationMode,
+        deviceIsLandscape: Boolean = currentDeviceIsLandscape,
+        masterVolumePercent: Float = currentMasterVolumePercent,
+        proMaxBodyWarmthEnabled: Boolean = currentProMaxBodyWarmthEnabled
     ) {
         val normalizedThreeBand = threeBandEnabled && !tenBandEnabled
         val normalizedTenBand = !normalizedThreeBand
@@ -646,6 +675,10 @@ class EqualizerAudioEngine(private val context: Context) {
         currentLoudnessBoostPercent = loudnessBoostPercent.coerceIn(0f, 1f)
         currentSiliconDspEnabled = siliconDspEnabled
         currentTrebleSmoothnessPercent = trebleSmoothnessPercent.coerceIn(0f, 1f)
+        currentPhoneOrientationMode = phoneOrientationMode
+        currentDeviceIsLandscape = deviceIsLandscape
+        currentMasterVolumePercent = masterVolumePercent.coerceIn(0f, 1f)
+        currentProMaxBodyWarmthEnabled = proMaxBodyWarmthEnabled
 
         val isSpeakerDspActive = (target == OutputTarget.SPEAKER) && speakerDspEnabled
         val isAbHeld = _abCompareHeld.value
@@ -698,7 +731,11 @@ class EqualizerAudioEngine(private val context: Context) {
             loudnessMaximizerEnabled = loudnessMaximizerEnabled,
             loudnessBoostPercent = currentLoudnessBoostPercent,
             siliconDspEnabled = siliconDspEnabled,
-            trebleSmoothnessPercent = currentTrebleSmoothnessPercent
+            trebleSmoothnessPercent = currentTrebleSmoothnessPercent,
+            phoneOrientationMode = currentPhoneOrientationMode,
+            deviceIsLandscape = currentDeviceIsLandscape,
+            masterVolumePercent = currentMasterVolumePercent,
+            proMaxBodyWarmthEnabled = isSpeakerDspActive && currentProMaxBodyWarmthEnabled
         )
         applyToAllSessions()
     }
@@ -730,9 +767,26 @@ class EqualizerAudioEngine(private val context: Context) {
             spatialHeightPresence = currentHeightPresence,
             siliconDspActive = siliconActive
         )
+        val resolvedLandscape = when (currentPhoneOrientationMode) {
+            PhoneOrientationMode.AUTO_DETECT -> currentDeviceIsLandscape
+            PhoneOrientationMode.PORTRAIT -> false
+            PhoneOrientationMode.LANDSCAPE -> true
+        }
+        val volumeContourStatus = when {
+            !effectiveActive -> "Bypassed"
+            currentMasterVolumePercent < ProMaxHardwareRefinementSpecs.LOW_VOL_THRESHOLD -> "Low-Vol Contour (+115Hz / +2.8kHz)"
+            currentMasterVolumePercent > ProMaxHardwareRefinementSpecs.HIGH_VOL_THRESHOLD -> "Projection + 5–9kHz De-Harsh Guard"
+            else -> "Linear (40–80%)"
+        }
+        val highVolDeHarshActive = effectiveActive &&
+            currentMasterVolumePercent > ProMaxHardwareRefinementSpecs.HIGH_VOL_THRESHOLD
+
         _audioLabTelemetry.value = _audioLabTelemetry.value.copy(
             trebleGainStagedCapActive = effectiveActive && trebleBudget.isCapEngaged,
-            trebleCappedBoostDb = if (effectiveActive) trebleBudget.cappedCombinedHfDb else 0f
+            trebleCappedBoostDb = if (effectiveActive) trebleBudget.cappedCombinedHfDb else 0f,
+            resolvedOrientationLandscape = resolvedLandscape,
+            volumeContourStatus = volumeContourStatus,
+            highVolumeDeHarshActive = highVolDeHarshActive
         )
 
         for (bundle in sessionEffects.values) {
@@ -831,7 +885,11 @@ class EqualizerAudioEngine(private val context: Context) {
                                 freqHz = EqPresetsCatalog.BANDS[i].frequencyHz.toDouble(),
                                 mode = currentAudioMixMode
                             )
-                            val combinedGain = (tenBandGain + toneOffset + accommodationsOffset + trebleSmoothnessOffset + loudnessPresenceOffset + audioMixOffset)
+                            val volumeContourOffset = IosVolumeContourAndDeHarshProcessor.computeContourResponseDbAt(
+                                freqHz = EqPresetsCatalog.BANDS[i].frequencyHz.toDouble(),
+                                volumePercent = currentMasterVolumePercent
+                            )
+                            val combinedGain = (tenBandGain + toneOffset + accommodationsOffset + trebleSmoothnessOffset + loudnessPresenceOffset + audioMixOffset + volumeContourOffset)
                                 .coerceIn(-15f, 15f)
                             dp.setPreEqBandAllChannelsTo(
                                 i,
@@ -843,6 +901,8 @@ class EqualizerAudioEngine(private val context: Context) {
                         val heightScale = currentHeightPresence.coerceIn(0f, 1f)
                         val cinemaBoost = if (currentSpatialMode == SpatialMode.ATMOS_CINEMA) 1.25f else 1.0f
                         val cappedSpatialShelfDb = trebleBudget.spatialPinnaShelfDb
+                        val bodyWarmthDb = if (isSpeakerDspActive && currentProMaxBodyWarmthEnabled) 2.5f else 0f
+                        val portraitVocalBoostDb = if (isSpeakerDspActive && currentLandscapeStereoStage && !resolvedLandscape) 1.2f else 0f
                         val postEqEnabled = isSpeakerDspActive || isSpatialActive || currentVoiceIsolationEnabled
                         val postEqGains = when {
                             currentVoiceIsolationEnabled -> floatArrayOf(
@@ -857,18 +917,18 @@ class EqualizerAudioEngine(private val context: Context) {
                             isSpeakerDspActive && currentSpeakerTuningProfile == SpeakerTuningProfile.PRO_MAX_MUSIC -> floatArrayOf(
                                 -12.0f, // <=55Hz steep sub-rumble protection
                                 -10.0f, // 55-88Hz steep 24dB/oct HPF shoulder
-                                if (currentVirtualBassEnabled) 3.5f else 1.5f, // 135Hz Pro Max chamber bass punch (+3.5dB)
+                                (if (currentVirtualBassEnabled) 3.5f else 1.5f) + bodyWarmthDb, // 135Hz punch + optional 125Hz Body Warmth (+2.5dB)
                                 -3.5f,  // 340Hz lower-mid scoop (-3.5dB)
-                                if (isSpatialActive && currentVocalAnchor) 2.4f else 2.0f, // 3.0kHz presence (+2.0dB)
+                                (if (isSpatialActive && currentVocalAnchor) 2.4f else 2.0f) + portraitVocalBoostDb, // 3.0kHz presence + Portrait vocal center focus
                                 -3.2f,  // 4.5kHz -3.0dB harshness + 7.0kHz -3.5dB de-esser cut
                                 if (isSpatialActive) (1.0f + cappedSpatialShelfDb * 0.5f * heightScale).coerceAtMost(3.0f) else 1.0f // 12kHz gain-staged air (+1.0dB)
                             )
                             isSpeakerDspActive -> floatArrayOf(
                                 -12.0f, // <=55Hz sub-rumble cut
                                 -11.0f, // 100Hz dialogue HPF protection
-                                1.5f,   // 150Hz warm body
+                                1.5f + bodyWarmthDb,   // 150Hz warm body + optional 125Hz Body Warmth
                                 -2.0f,  // 340Hz anti-boxiness
-                                3.2f,   // 1.8kHz–3kHz warm spoken dialogue focus
+                                3.2f + portraitVocalBoostDb,   // 1.8kHz–3kHz warm spoken dialogue focus
                                 -3.5f,  // 4.5k-7.0kHz sibilance tame
                                 0.5f    // gentle top air
                             )
@@ -1057,8 +1117,10 @@ class EqualizerAudioEngine(private val context: Context) {
             isSpeakerDspActive && currentLateNightEnabled -> "iPhone 18 DSP + Late Night$siliconTag"
             isSpeakerDspActive -> if (currentSpeakerTuningProfile == SpeakerTuningProfile.PRO_WARM_DIALOGUE) {
                 "18 Pro • Dialogue DSP$siliconTag"
+            } else if (currentLandscapeStereoStage && resolvedLandscape) {
+                "18 Pro Max • Landscape XTC$siliconTag"
             } else if (currentLandscapeStereoStage) {
-                "18 Pro Max • Hybrid XTC$siliconTag"
+                "18 Pro Max • Portrait Vocal$siliconTag"
             } else {
                 "18 Pro Max Speaker DSP$siliconTag"
             }
@@ -1325,7 +1387,11 @@ class EqualizerAudioEngine(private val context: Context) {
             loudnessMaximizerEnabled = currentLoudnessMaximizerEnabled,
             loudnessBoostPercent = currentLoudnessBoostPercent,
             siliconDspEnabled = currentSiliconDspEnabled,
-            trebleSmoothnessPercent = currentTrebleSmoothnessPercent
+            trebleSmoothnessPercent = currentTrebleSmoothnessPercent,
+            phoneOrientationMode = currentPhoneOrientationMode,
+            deviceIsLandscape = currentDeviceIsLandscape,
+            masterVolumePercent = currentMasterVolumePercent,
+            proMaxBodyWarmthEnabled = isSpeakerDspActive && currentProMaxBodyWarmthEnabled
         )
     }
 

@@ -2,6 +2,7 @@ package com.example.ui
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -42,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -60,6 +62,7 @@ import com.example.ui.components.LateNightDynamicsCard
 import com.example.ui.components.LoudnessMaximizerCard
 import com.example.ui.components.MasterActionBar
 import com.example.ui.components.OutputDeviceSelector
+import com.example.ui.components.OutputVolumeContourCard
 import com.example.ui.components.PresetQuickStrip
 import com.example.ui.components.PresetsBrowserSheet
 import com.example.ui.components.SiliconDspCard
@@ -113,8 +116,14 @@ fun EqualizerScreen(
     viewModel: EqualizerViewModel = viewModel()
 ) {
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val isDeviceLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var showPresetsSheet by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isDeviceLandscape) {
+        viewModel.updateDetectedDeviceOrientation(isDeviceLandscape)
+    }
 
     val audioPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -343,7 +352,10 @@ private fun CompactConsoleLayout(
             trebleSmoothnessPercent = profile.trebleSmoothnessPercent,
             spatialMode = profile.spatialMode,
             spatialHeightPresence = profile.heightPresence,
-            siliconDspEnabled = profile.siliconDspEnabled
+            siliconDspEnabled = profile.siliconDspEnabled,
+            masterVolumePercent = profile.masterVolumePercent,
+            speakerDspEnabled = profile.speakerDspEnabled,
+            proMaxBodyWarmthEnabled = profile.proMaxBodyWarmthEnabled
         )
 
         MasterActionBar(
@@ -352,6 +364,12 @@ private fun CompactConsoleLayout(
             onToggleBypass = viewModel::toggleBypass,
             onReset = viewModel::resetToFlat,
             onOpenPresetsSheet = onOpenPresetsSheet
+        )
+
+        OutputVolumeContourCard(
+            masterVolumePercent = profile.masterVolumePercent,
+            isBypassed = profile.isBypassed,
+            onVolumeChange = viewModel::updateMasterVolume
         )
 
         AudioMixCard(
@@ -408,11 +426,16 @@ private fun CompactConsoleLayout(
                 virtualBassEnabled = profile.virtualBassEnabled,
                 landscapeStereoStage = profile.landscapeStereoStage,
                 speakerTuningProfile = profile.speakerTuningProfile,
+                phoneOrientationMode = profile.phoneOrientationMode,
+                deviceIsLandscape = uiState.deviceIsLandscape,
+                proMaxBodyWarmthEnabled = profile.proMaxBodyWarmthEnabled,
                 isBypassed = profile.isBypassed,
                 onToggleSpeakerDsp = viewModel::toggleSpeakerDsp,
                 onToggleVirtualBass = viewModel::toggleVirtualBass,
                 onToggleLandscapeStereo = viewModel::toggleLandscapeStereoStage,
-                onSelectTuningProfile = viewModel::selectSpeakerTuningProfile
+                onSelectTuningProfile = viewModel::selectSpeakerTuningProfile,
+                onSelectOrientationMode = viewModel::setPhoneOrientationMode,
+                onToggleBodyWarmth = viewModel::toggleProMaxBodyWarmth
             )
         }
 
@@ -562,7 +585,10 @@ private fun WideConsoleLayout(
                     trebleSmoothnessPercent = profile.trebleSmoothnessPercent,
                     spatialMode = profile.spatialMode,
                     spatialHeightPresence = profile.heightPresence,
-                    siliconDspEnabled = profile.siliconDspEnabled
+                    siliconDspEnabled = profile.siliconDspEnabled,
+                    masterVolumePercent = profile.masterVolumePercent,
+                    speakerDspEnabled = profile.speakerDspEnabled,
+                    proMaxBodyWarmthEnabled = profile.proMaxBodyWarmthEnabled
                 )
 
                 PresetQuickStrip(
@@ -589,6 +615,12 @@ private fun WideConsoleLayout(
                     onToggleBypass = viewModel::toggleBypass,
                     onReset = viewModel::resetToFlat,
                     onOpenPresetsSheet = onOpenPresetsSheet
+                )
+
+                OutputVolumeContourCard(
+                    masterVolumePercent = profile.masterVolumePercent,
+                    isBypassed = profile.isBypassed,
+                    onVolumeChange = viewModel::updateMasterVolume
                 )
 
                 AudioMixCard(
@@ -645,11 +677,16 @@ private fun WideConsoleLayout(
                         virtualBassEnabled = profile.virtualBassEnabled,
                         landscapeStereoStage = profile.landscapeStereoStage,
                         speakerTuningProfile = profile.speakerTuningProfile,
+                        phoneOrientationMode = profile.phoneOrientationMode,
+                        deviceIsLandscape = uiState.deviceIsLandscape,
+                        proMaxBodyWarmthEnabled = profile.proMaxBodyWarmthEnabled,
                         isBypassed = profile.isBypassed,
                         onToggleSpeakerDsp = viewModel::toggleSpeakerDsp,
                         onToggleVirtualBass = viewModel::toggleVirtualBass,
                         onToggleLandscapeStereo = viewModel::toggleLandscapeStereoStage,
-                        onSelectTuningProfile = viewModel::selectSpeakerTuningProfile
+                        onSelectTuningProfile = viewModel::selectSpeakerTuningProfile,
+                        onSelectOrientationMode = viewModel::setPhoneOrientationMode,
+                        onToggleBodyWarmth = viewModel::toggleProMaxBodyWarmth
                     )
                 }
 

@@ -10,6 +10,8 @@ import com.example.model.EqPresetsCatalog
 import com.example.model.FlagshipSpeakerSpecs
 import com.example.model.NightIntensity
 import com.example.model.OutputTarget
+import com.example.model.PhoneOrientationMode
+import com.example.model.ProMaxHardwareRefinementSpecs
 import com.example.model.SoftSoundIntensity
 import com.example.model.SpatialMode
 import com.example.model.SpeakerTuningProfile
@@ -359,8 +361,16 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
 
     // Stage 3: 18 Pro Max Acoustic Chamber & V-Curve EQ (or 18 Pro Warm Spoken Dialogue)
     private val chamberBassEq = StereoBiquad()
+    private val bodyWarmth125HzEq = StereoBiquad()
+    private val bodyWarmthExtractor125 = StereoBiquad().apply {
+        setBandPass(sampleRate, ProMaxHardwareRefinementSpecs.BODY_WARMTH_HZ, ProMaxHardwareRefinementSpecs.BODY_WARMTH_Q)
+    }
+    private val bodyWarmthHarmonicOut250 = StereoBiquad().apply {
+        setBandPass(sampleRate, ProMaxHardwareRefinementSpecs.BODY_WARMTH_HZ * 2.0, 1.15)
+    }
     private val boxinessScoop340Hz = StereoBiquad()
     private val dialogueFocus1800Hz = StereoBiquad()
+    private val portraitVocalCenter2000Hz = StereoBiquad()
     private val presence3000Hz = StereoBiquad()
     private val harshnessCut4500Hz = StereoBiquad()
     private val deEsser7000Hz = StereoBiquad()
@@ -409,6 +419,12 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
     var landscapeStereoEnabled: Boolean = false
 
     @Volatile
+    var portraitVocalFocusEnabled: Boolean = false
+
+    @Volatile
+    var bodyWarmthEnabled: Boolean = false
+
+    @Volatile
     var tuningProfile: SpeakerTuningProfile = SpeakerTuningProfile.PRO_MAX_MUSIC
         private set
 
@@ -424,7 +440,9 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
             isSpeakerDspEnabled = false,
             isVirtualBassEnabled = false,
             isLandscapeStereoEnabled = false,
-            profile = SpeakerTuningProfile.PRO_MAX_MUSIC
+            profile = SpeakerTuningProfile.PRO_MAX_MUSIC,
+            isPortraitVocalFocus = false,
+            isBodyWarmthEnabled = false
         )
     }
 
@@ -432,12 +450,33 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
         isSpeakerDspEnabled: Boolean,
         isVirtualBassEnabled: Boolean,
         isLandscapeStereoEnabled: Boolean = false,
-        profile: SpeakerTuningProfile = SpeakerTuningProfile.PRO_MAX_MUSIC
+        profile: SpeakerTuningProfile = SpeakerTuningProfile.PRO_MAX_MUSIC,
+        isPortraitVocalFocus: Boolean = false,
+        isBodyWarmthEnabled: Boolean = false
     ) {
         speakerDspEnabled = isSpeakerDspEnabled
         virtualBassEnabled = isVirtualBassEnabled
         landscapeStereoEnabled = isLandscapeStereoEnabled
+        portraitVocalFocusEnabled = isPortraitVocalFocus && !isLandscapeStereoEnabled
+        bodyWarmthEnabled = isBodyWarmthEnabled
         tuningProfile = profile
+
+        if (isBodyWarmthEnabled) {
+            bodyWarmth125HzEq.setPeaking(
+                sampleRate,
+                ProMaxHardwareRefinementSpecs.BODY_WARMTH_HZ,
+                ProMaxHardwareRefinementSpecs.BODY_WARMTH_Q,
+                ProMaxHardwareRefinementSpecs.BODY_WARMTH_DB
+            )
+        } else {
+            bodyWarmth125HzEq.reset()
+        }
+
+        if (portraitVocalFocusEnabled) {
+            portraitVocalCenter2000Hz.setPeaking(sampleRate, 2000.0, 1.0, 2.2)
+        } else {
+            portraitVocalCenter2000Hz.reset()
+        }
 
         when (profile) {
             SpeakerTuningProfile.PRO_MAX_MUSIC -> {
@@ -545,10 +584,21 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
         var l = hp2L + harmL * harmBlend
         var r = hp2R + harmR * harmBlend
 
-        // Stage 3: Gain-Staged Acoustic Chamber & V-Curve EQ
-        // (135Hz +3.5dB -> 340Hz -3.5dB -> 1.8kHz Dialogue -> 3.0kHz +2.0dB -> 4.5kHz -3.0dB -> 7.0kHz -3.5dB De-Esser -> 12.0kHz +1.0dB Air)
+        // Stage 3: Gain-Staged Acoustic Chamber & V-Curve EQ + Optional 125Hz Pro Max Body Warmth
         val (cbL, cbR) = chamberBassEq.processStereo(l, r)
-        val (scL, scR) = boxinessScoop340Hz.processStereo(cbL, cbR)
+        val (bwL, bwR) = if (bodyWarmthEnabled) {
+            val (eqWarmL, eqWarmR) = bodyWarmth125HzEq.processStereo(cbL, cbR)
+            val (bandL, bandR) = bodyWarmthExtractor125.processStereo(cbL, cbR)
+            val dL = (bandL * 1.8).coerceIn(-1.1, 1.1)
+            val dR = (bandR * 1.8).coerceIn(-1.1, 1.1)
+            val satL = (dL * dL * 0.55) + 0.18 * tanh(dL)
+            val satR = (dR * dR * 0.55) + 0.18 * tanh(dR)
+            val (hWarmL, hWarmR) = bodyWarmthHarmonicOut250.processStereo(satL, satR)
+            (eqWarmL + hWarmL * 0.18) to (eqWarmR + hWarmR * 0.18)
+        } else {
+            cbL to cbR
+        }
+        val (scL, scR) = boxinessScoop340Hz.processStereo(bwL, bwR)
         val (dfL, dfR) = dialogueFocus1800Hz.processStereo(scL, scR)
         val (prL, prR) = presence3000Hz.processStereo(dfL, dfR)
         val (hcL, hcR) = harshnessCut4500Hz.processStereo(prL, prR)
@@ -557,14 +607,22 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
         l = arL
         r = arR
 
-        // Stage 4: Hybrid Earpiece + Bottom Speaker Crossover Simulation
-        // Keep bass (<180Hz) tight & centered while applying -22% phase-inverted crossfeed delayed by 0.19ms above 180Hz
+        // Stage 4: Orientation-Aware Hybrid Earpiece + Bottom Speaker Crossover Simulation
+        // Always keeps <180Hz bass centered mono L=R for balanced vertical weight.
+        // - Portrait: focuses center vocals (2kHz +1.4dB) & trims >180Hz side width (0.72x).
+        // - Landscape: widens horizontal stereo via -22% phase-inverted crossfeed delayed by 0.19ms.
         val mid = 0.5 * (l + r)
         val side = 0.5 * (l - r)
         val (_, s1) = hybridSideHpf1.processStereo(0.0, side)
         val (_, sideAbove180) = hybridSideHpf2.processStereo(0.0, s1)
-        val centeredL = mid + sideAbove180
-        val centeredR = mid - sideAbove180
+        val effectiveSide = if (portraitVocalFocusEnabled) sideAbove180 * 0.62 else sideAbove180
+        val focusedMid = if (portraitVocalFocusEnabled) {
+            portraitVocalCenter2000Hz.processStereo(mid, mid).first
+        } else {
+            mid
+        }
+        val centeredL = focusedMid + effectiveSide
+        val centeredR = focusedMid - effectiveSide
 
         val (hpXtcL, hpXtcR) = xtcHighPass180.processStereo(centeredL, centeredR)
         xtcRingL[xtcWriteIdx] = hpXtcL
@@ -576,6 +634,9 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
             val crossGain = FlagshipSpeakerSpecs.XTC_CROSSFEED_GAIN
             l = centeredL - crossGain * delayedXtcR
             r = centeredR - crossGain * delayedXtcL
+        } else {
+            l = centeredL
+            r = centeredR
         }
 
         // Stage 5a: Apple Dynamic Excursion Protection (fast dynamic low-end limiter: -14dB, 6:1, 3ms/120ms)
@@ -608,10 +669,26 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
     }
 
     companion object {
+        fun computeBodyWarmthResponseDbAt(
+            freqHz: Double,
+            sampleRate: Int = 44100
+        ): Float {
+            val bw = StereoBiquad().apply {
+                setPeaking(
+                    sampleRate,
+                    ProMaxHardwareRefinementSpecs.BODY_WARMTH_HZ,
+                    ProMaxHardwareRefinementSpecs.BODY_WARMTH_Q,
+                    ProMaxHardwareRefinementSpecs.BODY_WARMTH_DB
+                )
+            }
+            return bw.magnitudeDbAt(sampleRate, freqHz).toFloat()
+        }
+
         fun computeVcurveResponseDbAt(
             freqHz: Double,
             profile: SpeakerTuningProfile = SpeakerTuningProfile.PRO_MAX_MUSIC,
-            sampleRate: Int = 44100
+            sampleRate: Int = 44100,
+            isBodyWarmthEnabled: Boolean = false
         ): Float {
             val h1 = StereoBiquad()
             val h2 = StereoBiquad()
@@ -679,6 +756,8 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
                 }
             }
 
+            val bodyExtra = if (isBodyWarmthEnabled) computeBodyWarmthResponseDbAt(freqHz, sampleRate) else 0f
+
             return (h1.magnitudeDbAt(sampleRate, freqHz) +
                 h2.magnitudeDbAt(sampleRate, freqHz) +
                 bass.magnitudeDbAt(sampleRate, freqHz) +
@@ -687,7 +766,7 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
                 pres.magnitudeDbAt(sampleRate, freqHz) +
                 harsh.magnitudeDbAt(sampleRate, freqHz) +
                 deEss.magnitudeDbAt(sampleRate, freqHz) +
-                air.magnitudeDbAt(sampleRate, freqHz)).toFloat()
+                air.magnitudeDbAt(sampleRate, freqHz)).toFloat() + bodyExtra
         }
     }
 }
@@ -845,8 +924,168 @@ class TrebleSmoothnessProcessor(private val sampleRate: Int = 44100) {
 }
 
 /**
+ * iOS Volume-Step Acoustic Contouring & High-Volume De-Harshing Guard (5kHz–9kHz):
+ * - Below 40% volume: gently lifts 115Hz bass (+3 dB) & 2.8kHz presence (+2 dB) for rich low-level listening.
+ * - Between 40% and 80% volume: transparent 0 dB reference response.
+ * - Above 80% volume: smoothly flattens <100Hz sub-bass (-3.5 dB shelf @ 85Hz), boosts 1kHz–2kHz midrange (+2 dB @ 1.5kHz)
+ *   for room-filling projection, AND automatically attenuates piercing 6.5kHz sibilance/treble harshness (5kHz–9kHz, -3.5 dB).
+ */
+class IosVolumeContourAndDeHarshProcessor(private val sampleRate: Int = 44100) {
+    private val lowVolBass115 = StereoBiquad()
+    private val lowVolPresence2800 = StereoBiquad()
+    private val highVolSubFlatten85 = StereoBiquad()
+    private val highVolMidProj1500 = StereoBiquad()
+    private val highVolDeHarsh6500 = StereoBiquad()
+
+    @Volatile
+    private var contourActive: Boolean = false
+
+    @Volatile
+    var isDeHarshGuardActive: Boolean = false
+        private set
+
+    @Volatile
+    var volumeStatusLabel: String = "Linear (40–80%)"
+        private set
+
+    @Volatile
+    var outputGainLinear: Double = 1.0
+        private set
+
+    @Volatile
+    private var applyOutputGain: Boolean = false
+
+    init {
+        configure(isEnabled = false, volumePercent = 0.75f, applyVolumeScale = false)
+    }
+
+    fun configure(
+        isEnabled: Boolean,
+        volumePercent: Float,
+        applyVolumeScale: Boolean = false
+    ) {
+        val vol = volumePercent.coerceIn(0f, 1f)
+        applyOutputGain = applyVolumeScale
+        outputGainLinear = if (!applyVolumeScale) {
+            1.0
+        } else if (vol <= 0.005f) {
+            0.0
+        } else {
+            vol.toDouble().pow(1.4)
+        }
+
+        if (!isEnabled) {
+            contourActive = false
+            isDeHarshGuardActive = false
+            volumeStatusLabel = "Bypassed"
+            lowVolBass115.reset()
+            lowVolPresence2800.reset()
+            highVolSubFlatten85.reset()
+            highVolMidProj1500.reset()
+            highVolDeHarsh6500.reset()
+            return
+        }
+
+        val lowFactor = if (vol < ProMaxHardwareRefinementSpecs.LOW_VOL_THRESHOLD) {
+            ((ProMaxHardwareRefinementSpecs.LOW_VOL_THRESHOLD - vol) / ProMaxHardwareRefinementSpecs.LOW_VOL_THRESHOLD).coerceIn(0f, 1f).toDouble()
+        } else {
+            0.0
+        }
+
+        val highFactor = if (vol > ProMaxHardwareRefinementSpecs.HIGH_VOL_THRESHOLD) {
+            ((vol - ProMaxHardwareRefinementSpecs.HIGH_VOL_THRESHOLD) / (1.0f - ProMaxHardwareRefinementSpecs.HIGH_VOL_THRESHOLD)).coerceIn(0f, 1f).toDouble()
+        } else {
+            0.0
+        }
+
+        contourActive = lowFactor > 0.005 || highFactor > 0.005
+        isDeHarshGuardActive = highFactor > 0.005
+        volumeStatusLabel = when {
+            lowFactor > 0.005 -> "Low-Vol Contour (+115Hz / +2.8kHz)"
+            highFactor > 0.005 -> "Projection + 5–9kHz De-Harsh Guard"
+            else -> "Linear (40–80%)"
+        }
+
+        if (lowFactor > 0.005) {
+            lowVolBass115.setPeaking(sampleRate, ProMaxHardwareRefinementSpecs.LOW_VOL_BASS_HZ, 1.0, ProMaxHardwareRefinementSpecs.LOW_VOL_BASS_MAX_DB * lowFactor)
+            lowVolPresence2800.setPeaking(sampleRate, ProMaxHardwareRefinementSpecs.LOW_VOL_PRESENCE_HZ, 1.2, ProMaxHardwareRefinementSpecs.LOW_VOL_PRESENCE_MAX_DB * lowFactor)
+        } else {
+            lowVolBass115.reset()
+            lowVolPresence2800.reset()
+        }
+
+        if (highFactor > 0.005) {
+            highVolSubFlatten85.setLowShelf(sampleRate, ProMaxHardwareRefinementSpecs.HIGH_VOL_SUB_FLATTEN_HZ, 0.7071, ProMaxHardwareRefinementSpecs.HIGH_VOL_SUB_FLATTEN_MAX_DB * highFactor)
+            highVolMidProj1500.setPeaking(sampleRate, ProMaxHardwareRefinementSpecs.HIGH_VOL_MID_PROJ_HZ, 0.85, ProMaxHardwareRefinementSpecs.HIGH_VOL_MID_PROJ_MAX_DB * highFactor)
+            highVolDeHarsh6500.setPeaking(sampleRate, ProMaxHardwareRefinementSpecs.HIGH_VOL_DEHARSH_HZ, ProMaxHardwareRefinementSpecs.HIGH_VOL_DEHARSH_Q, ProMaxHardwareRefinementSpecs.HIGH_VOL_DEHARSH_MAX_DB * highFactor)
+        } else {
+            highVolSubFlatten85.reset()
+            highVolMidProj1500.reset()
+            highVolDeHarsh6500.reset()
+        }
+    }
+
+    fun processStereoSample(inL: Double, inR: Double): Pair<Double, Double> {
+        var l = inL
+        var r = inR
+        if (contourActive) {
+            val (bL, bR) = lowVolBass115.processStereo(l, r)
+            val (pL, pR) = lowVolPresence2800.processStereo(bL, bR)
+            val (sL, sR) = highVolSubFlatten85.processStereo(pL, pR)
+            val (mL, mR) = highVolMidProj1500.processStereo(sL, sR)
+            val (dL, dR) = highVolDeHarsh6500.processStereo(mL, mR)
+            l = dL
+            r = dR
+        }
+        return if (applyOutputGain) {
+            (l * outputGainLinear) to (r * outputGainLinear)
+        } else {
+            l to r
+        }
+    }
+
+    companion object {
+        fun computeContourResponseDbAt(
+            freqHz: Double,
+            volumePercent: Float,
+            sampleRate: Int = 44100
+        ): Float {
+            val vol = volumePercent.coerceIn(0f, 1f)
+            if (vol < ProMaxHardwareRefinementSpecs.LOW_VOL_THRESHOLD) {
+                val lowFactor = ((ProMaxHardwareRefinementSpecs.LOW_VOL_THRESHOLD - vol) / ProMaxHardwareRefinementSpecs.LOW_VOL_THRESHOLD).coerceIn(0f, 1f).toDouble()
+                if (lowFactor <= 0.005) return 0f
+                val bass = StereoBiquad().apply {
+                    setPeaking(sampleRate, ProMaxHardwareRefinementSpecs.LOW_VOL_BASS_HZ, 1.0, ProMaxHardwareRefinementSpecs.LOW_VOL_BASS_MAX_DB * lowFactor)
+                }
+                val pres = StereoBiquad().apply {
+                    setPeaking(sampleRate, ProMaxHardwareRefinementSpecs.LOW_VOL_PRESENCE_HZ, 1.2, ProMaxHardwareRefinementSpecs.LOW_VOL_PRESENCE_MAX_DB * lowFactor)
+                }
+                return (bass.magnitudeDbAt(sampleRate, freqHz) + pres.magnitudeDbAt(sampleRate, freqHz)).toFloat()
+            } else if (vol > ProMaxHardwareRefinementSpecs.HIGH_VOL_THRESHOLD) {
+                val highFactor = ((vol - ProMaxHardwareRefinementSpecs.HIGH_VOL_THRESHOLD) / (1.0f - ProMaxHardwareRefinementSpecs.HIGH_VOL_THRESHOLD)).coerceIn(0f, 1f).toDouble()
+                if (highFactor <= 0.005) return 0f
+                val sub = StereoBiquad().apply {
+                    setLowShelf(sampleRate, ProMaxHardwareRefinementSpecs.HIGH_VOL_SUB_FLATTEN_HZ, 0.7071, ProMaxHardwareRefinementSpecs.HIGH_VOL_SUB_FLATTEN_MAX_DB * highFactor)
+                }
+                val mid = StereoBiquad().apply {
+                    setPeaking(sampleRate, ProMaxHardwareRefinementSpecs.HIGH_VOL_MID_PROJ_HZ, 0.85, ProMaxHardwareRefinementSpecs.HIGH_VOL_MID_PROJ_MAX_DB * highFactor)
+                }
+                val deHarsh = StereoBiquad().apply {
+                    setPeaking(sampleRate, ProMaxHardwareRefinementSpecs.HIGH_VOL_DEHARSH_HZ, ProMaxHardwareRefinementSpecs.HIGH_VOL_DEHARSH_Q, ProMaxHardwareRefinementSpecs.HIGH_VOL_DEHARSH_MAX_DB * highFactor)
+                }
+                return (sub.magnitudeDbAt(sampleRate, freqHz) +
+                    mid.magnitudeDbAt(sampleRate, freqHz) +
+                    deHarsh.magnitudeDbAt(sampleRate, freqHz)).toFloat()
+            }
+            return 0f
+        }
+    }
+}
+
+/**
  * Cascaded 10-band stereo biquad peaking EQ filter + 3-band Bass/Mids/Treble tone stage +
- * preamp + Sound Check + Voice Isolation + Late Night compressor + Spatial Audio + Phone Speaker DSP.
+ * preamp + Sound Check + Voice Isolation + Late Night compressor + Spatial Audio + Phone Speaker DSP +
+ * iOS Volume-Step Acoustic Contour & High-Volume De-Harshing Guard.
  */
 class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
 
@@ -854,6 +1093,7 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
     private val bandFilters = Array(10) { StereoBiquad() }
     private val threeBandToneFilter = ThreeBandToneFilter(sampleRate)
     private val trebleSmoothnessProcessor = TrebleSmoothnessProcessor(sampleRate)
+    private val volumeContourProcessor = IosVolumeContourAndDeHarshProcessor(sampleRate)
     private val audioMixStemShaper = AudioMixStemShaper(sampleRate)
     private val lateNightCompressor = DynamicRangeCompressor(sampleRate)
     private val speakerDspChain = PhoneSpeakerDspChain(sampleRate)
@@ -937,6 +1177,16 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
     val latestTrebleCappedBoostDb: Float
         get() = if (bypassed || abCompareHeld) 0f else (latestTrebleBudget?.cappedCombinedHfDb ?: 0f)
 
+    @Volatile
+    var latestResolvedOrientationLandscape: Boolean = true
+        private set
+
+    val isHighVolumeDeHarshActive: Boolean
+        get() = !bypassed && !abCompareHeld && volumeContourProcessor.isDeHarshGuardActive
+
+    val latestVolumeContourStatus: String
+        get() = if (bypassed || abCompareHeld) "Bypassed" else volumeContourProcessor.volumeStatusLabel
+
     init {
         updateParameters(
             gainsDb = List(10) { 0f },
@@ -995,7 +1245,12 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         loudnessMaximizerEnabled: Boolean = false,
         loudnessBoostPercent: Float = 0.50f,
         siliconDspEnabled: Boolean = false,
-        trebleSmoothnessPercent: Float = 0f
+        trebleSmoothnessPercent: Float = 0f,
+        phoneOrientationMode: PhoneOrientationMode = PhoneOrientationMode.AUTO_DETECT,
+        deviceIsLandscape: Boolean = false,
+        masterVolumePercent: Float = 0.75f,
+        applyMasterVolumeGain: Boolean = false,
+        proMaxBodyWarmthEnabled: Boolean = false
     ) {
         bypassed = isBypassed
         this.abCompareHeld = abCompareHeld
@@ -1005,6 +1260,13 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         // Strict mutual exclusion: never allow 10-Band and 3-Band EQ to double-process audio
         val activeThreeBand = threeBandEnabled && !tenBandEnabled
         val activeTenBand = !activeThreeBand
+
+        val resolvedLandscape = when (phoneOrientationMode) {
+            PhoneOrientationMode.AUTO_DETECT -> deviceIsLandscape
+            PhoneOrientationMode.PORTRAIT -> false
+            PhoneOrientationMode.LANDSCAPE -> true
+        }
+        latestResolvedOrientationLandscape = resolvedLandscape
 
         val trebleBudget = TrebleGainStagingBudget.allocate(
             accommodationsActive = accommodationsEnabled && accommodationsApplyToMedia && effectiveProcessing,
@@ -1037,12 +1299,19 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             isEnabled = effectiveProcessing && trebleSmoothnessPercent > 0.005f,
             smoothnessPercent = trebleSmoothnessPercent
         )
+        volumeContourProcessor.configure(
+            isEnabled = effectiveProcessing,
+            volumePercent = masterVolumePercent,
+            applyVolumeScale = applyMasterVolumeGain
+        )
         lateNightCompressor.configure(isEnabled = lateNightEnabled && effectiveProcessing, intensity = nightIntensity)
         speakerDspChain.configure(
             isSpeakerDspEnabled = speakerDspEnabled && effectiveProcessing,
             isVirtualBassEnabled = virtualBassEnabled && effectiveProcessing,
-            isLandscapeStereoEnabled = landscapeStereoStage && effectiveProcessing,
-            profile = speakerTuningProfile
+            isLandscapeStereoEnabled = landscapeStereoStage && resolvedLandscape && effectiveProcessing,
+            profile = speakerTuningProfile,
+            isPortraitVocalFocus = landscapeStereoStage && !resolvedLandscape && effectiveProcessing,
+            isBodyWarmthEnabled = proMaxBodyWarmthEnabled && effectiveProcessing
         )
         spatialAudioEngine.configure(
             mode = if (effectiveProcessing) spatialMode else SpatialMode.OFF,
@@ -1136,12 +1405,13 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         val (spkL, spkR) = speakerDspChain.processStereoSample(spatL, spatR)
         val (maxL, maxR) = loudnessMaximizerChain.processStereoSample(spkL, spkR)
         val (silL, silR) = siliconDspCore.processStereoSample(maxL, maxR)
+        val (volL, volR) = volumeContourProcessor.processStereoSample(silL, silR)
 
         // Final safety ceiling + Conversation Awareness auto-ducking
         return if (loudnessMaximizerChain.enabled || speakerDspChain.speakerDspEnabled || siliconDspCore.enabled) {
-            (silL * duck).coerceIn(-0.99, 0.99) to (silR * duck).coerceIn(-0.99, 0.99)
+            (volL * duck).coerceIn(-0.99, 0.99) to (volR * duck).coerceIn(-0.99, 0.99)
         } else {
-            tanh(silL * duck * 0.92) to tanh(silR * duck * 0.92)
+            tanh(volL * duck * 0.92) to tanh(volR * duck * 0.92)
         }
     }
 }
@@ -1218,6 +1488,15 @@ class TestAudioSynthesizer {
     val latestTrebleCappedBoostDb: Float
         get() = filterBank.latestTrebleCappedBoostDb
 
+    val latestResolvedOrientationLandscape: Boolean
+        get() = filterBank.latestResolvedOrientationLandscape
+
+    val isHighVolumeDeHarshActive: Boolean
+        get() = filterBank.isHighVolumeDeHarshActive
+
+    val latestVolumeContourStatus: String
+        get() = filterBank.latestVolumeContourStatus
+
     fun setConversationDuckGain(duckGainLinear: Float) {
         filterBank.conversationDuckLinear = duckGainLinear.toDouble()
     }
@@ -1256,7 +1535,11 @@ class TestAudioSynthesizer {
         loudnessMaximizerEnabled: Boolean = false,
         loudnessBoostPercent: Float = 0.50f,
         siliconDspEnabled: Boolean = false,
-        trebleSmoothnessPercent: Float = 0f
+        trebleSmoothnessPercent: Float = 0f,
+        phoneOrientationMode: PhoneOrientationMode = PhoneOrientationMode.AUTO_DETECT,
+        deviceIsLandscape: Boolean = false,
+        masterVolumePercent: Float = 0.75f,
+        proMaxBodyWarmthEnabled: Boolean = false
     ) {
         backgroundPreset = bgSoundPreset
         backgroundVolume = bgSoundVolume
@@ -1292,7 +1575,12 @@ class TestAudioSynthesizer {
             loudnessMaximizerEnabled = loudnessMaximizerEnabled,
             loudnessBoostPercent = loudnessBoostPercent,
             siliconDspEnabled = siliconDspEnabled,
-            trebleSmoothnessPercent = trebleSmoothnessPercent
+            trebleSmoothnessPercent = trebleSmoothnessPercent,
+            phoneOrientationMode = phoneOrientationMode,
+            deviceIsLandscape = deviceIsLandscape,
+            masterVolumePercent = masterVolumePercent,
+            applyMasterVolumeGain = true,
+            proMaxBodyWarmthEnabled = proMaxBodyWarmthEnabled
         )
     }
 

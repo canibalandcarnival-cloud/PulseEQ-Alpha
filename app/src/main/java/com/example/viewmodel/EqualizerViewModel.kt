@@ -19,6 +19,7 @@ import com.example.model.HearingCheckUiState
 import com.example.model.NightIntensity
 import com.example.model.OutputEqProfile
 import com.example.model.OutputTarget
+import com.example.model.PhoneOrientationMode
 import com.example.model.SetupAuditionSlot
 import com.example.model.SoftSoundIntensity
 import com.example.model.SpatialMode
@@ -54,7 +55,8 @@ data class EqualizerUiState(
     val audioLabTelemetry: AudioLabTelemetry = AudioLabTelemetry(),
     val hearingCheckState: HearingCheckUiState = HearingCheckUiState(),
     val customAudioSetupState: CustomAudioSetupUiState = CustomAudioSetupUiState(),
-    val abCompareHeld: Boolean = false
+    val abCompareHeld: Boolean = false,
+    val deviceIsLandscape: Boolean = false
 ) {
     val activeProfile: OutputEqProfile
         get() = profiles[selectedTarget] ?: OutputEqProfile(target = selectedTarget)
@@ -79,6 +81,7 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
     private val selectedTargetFlow = MutableStateFlow(OutputTarget.SPEAKER)
     private val autoSwitchFlow = MutableStateFlow(true)
     private val visualizerModeFlow = MutableStateFlow(VisualizerMode.HYBRID)
+    private val deviceIsLandscapeFlow = MutableStateFlow(false)
     private val profilesFlow = MutableStateFlow(
         OutputTarget.entries.associateWith { OutputEqProfile(target = it) }
     )
@@ -91,9 +94,10 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             selectedTargetFlow,
             autoSwitchFlow,
             visualizerModeFlow,
-            profilesFlow
-        ) { target, autoSwitch, visMode, profiles ->
-            CorePrefState(target, autoSwitch, visMode, profiles)
+            profilesFlow,
+            deviceIsLandscapeFlow
+        ) { target, autoSwitch, visMode, profiles, isLandscape ->
+            CorePrefState(target, autoSwitch, visMode, profiles, isLandscape)
         },
         combine(
             audioEngine.connectedDevices,
@@ -141,7 +145,8 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             audioLabTelemetry = routing.labTelemetry,
             hearingCheckState = routing.hearingCheck,
             customAudioSetupState = routing.customAudioSetup,
-            abCompareHeld = routing.abHeld
+            abCompareHeld = routing.abHeld,
+            deviceIsLandscape = core.isLandscape
         )
     }.stateIn(
         scope = viewModelScope,
@@ -163,7 +168,8 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
         val target: OutputTarget,
         val autoSwitch: Boolean,
         val visMode: VisualizerMode,
-        val profiles: Map<OutputTarget, OutputEqProfile>
+        val profiles: Map<OutputTarget, OutputEqProfile>,
+        val isLandscape: Boolean
     )
 
     private data class EngineStreamState(
@@ -387,6 +393,44 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             speakerDspEnabled = true,
             isBypassed = false
         )
+        commitProfile(updated)
+    }
+
+    fun updateDetectedDeviceOrientation(isLandscape: Boolean) {
+        if (deviceIsLandscapeFlow.value == isLandscape) return
+        deviceIsLandscapeFlow.value = isLandscape
+        val active = currentProfile()
+        if (active.phoneOrientationMode == PhoneOrientationMode.AUTO_DETECT) {
+            applyToAudioEngine(active)
+        }
+    }
+
+    fun setPhoneOrientationMode(mode: PhoneOrientationMode) {
+        val current = currentProfile()
+        val updated = current.copy(
+            phoneOrientationMode = mode,
+            speakerDspEnabled = true,
+            landscapeStereoStage = true,
+            isBypassed = false
+        )
+        commitProfile(updated)
+    }
+
+    fun toggleProMaxBodyWarmth() {
+        val current = currentProfile()
+        val next = !current.proMaxBodyWarmthEnabled
+        val updated = current.copy(
+            proMaxBodyWarmthEnabled = next,
+            speakerDspEnabled = if (next) true else current.speakerDspEnabled,
+            isBypassed = if (next && current.isBypassed) false else current.isBypassed
+        )
+        commitProfile(updated)
+    }
+
+    fun updateMasterVolume(rawPercent: Float) {
+        val current = currentProfile()
+        val snapped = ((rawPercent.coerceIn(0f, 1f) * 100f).roundToInt() / 100f).coerceIn(0f, 1f)
+        val updated = current.copy(masterVolumePercent = snapped)
         commitProfile(updated)
     }
 
@@ -789,7 +833,11 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             loudnessMaximizerEnabled = profile.loudnessMaximizerEnabled,
             loudnessBoostPercent = profile.loudnessBoostPercent,
             siliconDspEnabled = profile.siliconDspEnabled,
-            trebleSmoothnessPercent = profile.trebleSmoothnessPercent
+            trebleSmoothnessPercent = profile.trebleSmoothnessPercent,
+            phoneOrientationMode = profile.phoneOrientationMode,
+            deviceIsLandscape = deviceIsLandscapeFlow.value,
+            masterVolumePercent = profile.masterVolumePercent,
+            proMaxBodyWarmthEnabled = profile.proMaxBodyWarmthEnabled
         )
     }
 

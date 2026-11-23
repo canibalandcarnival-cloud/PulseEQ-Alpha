@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.model.PhoneOrientationMode
 import com.example.model.SpeakerTuningProfile
 import com.example.ui.theme.AnalyzerCyan
 import com.example.ui.theme.AnalyzerCyanSoft
@@ -67,15 +68,25 @@ fun SpeakerDspCard(
     virtualBassEnabled: Boolean,
     landscapeStereoStage: Boolean = true,
     speakerTuningProfile: SpeakerTuningProfile = SpeakerTuningProfile.PRO_MAX_MUSIC,
+    phoneOrientationMode: PhoneOrientationMode = PhoneOrientationMode.AUTO_DETECT,
+    deviceIsLandscape: Boolean = false,
+    proMaxBodyWarmthEnabled: Boolean = true,
     isBypassed: Boolean,
     onToggleSpeakerDsp: () -> Unit,
     onToggleVirtualBass: () -> Unit,
     onToggleLandscapeStereo: () -> Unit = {},
     onSelectTuningProfile: (SpeakerTuningProfile) -> Unit = {},
+    onSelectOrientationMode: (PhoneOrientationMode) -> Unit = {},
+    onToggleBodyWarmth: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val active = speakerDspEnabled && !isBypassed
     val isMusicProfile = speakerTuningProfile == SpeakerTuningProfile.PRO_MAX_MUSIC
+    val resolvedLandscape = when (phoneOrientationMode) {
+        PhoneOrientationMode.AUTO_DETECT -> deviceIsLandscape
+        PhoneOrientationMode.PORTRAIT -> false
+        PhoneOrientationMode.LANDSCAPE -> true
+    }
     val borderColor by animateColorAsState(
         targetValue = if (active) RouteEmerald.copy(alpha = 0.68f) else AppleGlassBorder,
         animationSpec = tween(200),
@@ -249,6 +260,84 @@ fun SpeakerDspCard(
             }
         }
 
+        // Orientation-Aware Speaker Stage Selector (Auto-Detect / Portrait / Landscape)
+        Column(
+            verticalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "ORIENTATION-AWARE STAGE",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = 9.sp,
+                        letterSpacing = 0.8.sp
+                    ),
+                    color = TextMuted
+                )
+                Text(
+                    text = if (!active || !landscapeStereoStage) {
+                        "Stage Off"
+                    } else if (resolvedLandscape) {
+                        "Landscape: -22% 0.19ms XTC"
+                    } else {
+                        "Portrait: Center Vocal + Balanced Bass"
+                    },
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.SemiBold
+                    ),
+                    color = if (active && landscapeStereoStage) AppleBlue else TextMuted,
+                    modifier = Modifier.testTag("resolved_orientation_stage_label")
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                PhoneOrientationMode.entries.forEach { mode ->
+                    val selected = phoneOrientationMode == mode
+                    val tag = when (mode) {
+                        PhoneOrientationMode.AUTO_DETECT -> "orientation_mode_auto"
+                        PhoneOrientationMode.PORTRAIT -> "orientation_mode_portrait"
+                        PhoneOrientationMode.LANDSCAPE -> "orientation_mode_landscape"
+                    }
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .defaultMinSize(minHeight = 48.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(
+                                if (active && selected) AppleBlueSoft else StudioBackground.copy(alpha = 0.62f)
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = if (active && selected) AppleBlue.copy(alpha = 0.72f) else AppleGlassBorder.copy(alpha = 0.65f),
+                                shape = RoundedCornerShape(10.dp)
+                            )
+                            .clickable { onSelectOrientationMode(mode) }
+                            .padding(horizontal = 8.dp, vertical = 6.dp)
+                            .testTag(tag),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = mode.label,
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontSize = 11.sp,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+                            ),
+                            color = if (active && selected) AppleBlue else TextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+        }
+
         // Hybrid Dual-Speaker Mode Toggle (enabled by default in Phone Speaker mode)
         Row(
             modifier = Modifier
@@ -284,7 +373,11 @@ fun SpeakerDspCard(
                         color = TextPrimary
                     )
                     Text(
-                        text = "Earpiece + Bottom • <180Hz centered bass • -22% 0.19ms Landscape XTC",
+                        text = if (resolvedLandscape) {
+                            "Landscape XTC Active • <180Hz centered • -22% 0.19ms wide"
+                        } else {
+                            "Portrait Focus Active • Center vocal focus + L/R balanced bass"
+                        },
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
                         color = TextMuted
                     )
@@ -301,6 +394,61 @@ fun SpeakerDspCard(
                     uncheckedTrackColor = StudioSurfaceElevated
                 ),
                 modifier = Modifier.testTag("landscape_stereo_toggle")
+            )
+        }
+
+        // Pro Max Chassis Body Warmth Toggle (125Hz Chamber Resonance Q=1.6, +2.5dB + 2nd-Order Warmth)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .defaultMinSize(minHeight = 48.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(StudioBackground.copy(alpha = 0.62f))
+                .border(
+                    width = 1.dp,
+                    color = if (active && proMaxBodyWarmthEnabled) WarmAmber.copy(alpha = 0.65f) else AppleGlassBorder.copy(alpha = 0.65f),
+                    shape = RoundedCornerShape(12.dp)
+                )
+                .clickable(onClick = onToggleBodyWarmth)
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.SpeakerPhone,
+                    contentDescription = "Pro Max Body Warmth",
+                    tint = if (active && proMaxBodyWarmthEnabled) WarmAmber else TextMuted,
+                    modifier = Modifier.size(16.dp)
+                )
+                Column {
+                    Text(
+                        text = "Pro Max Body Warmth (125Hz)",
+                        style = MaterialTheme.typography.labelLarge.copy(fontSize = 12.sp),
+                        color = TextPrimary
+                    )
+                    Text(
+                        text = "125Hz chassis chamber (Q=1.6, +2.5dB) + 2nd-order harmonic warmth",
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                        color = TextMuted
+                    )
+                }
+            }
+
+            Switch(
+                checked = speakerDspEnabled && proMaxBodyWarmthEnabled,
+                onCheckedChange = { onToggleBodyWarmth() },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = StudioBackground,
+                    checkedTrackColor = WarmAmber,
+                    uncheckedThumbColor = TextSecondary,
+                    uncheckedTrackColor = StudioSurfaceElevated
+                ),
+                modifier = Modifier.testTag("pro_max_body_warmth_toggle")
             )
         }
 
@@ -371,6 +519,12 @@ fun SpeakerDspCard(
                 bgColor = RouteEmeraldSoft
             )
             DspStageChip(
+                text = "125Hz +2.5dB (Q1.6) Chamber",
+                isActive = active && proMaxBodyWarmthEnabled,
+                highlightColor = WarmAmber,
+                bgColor = WarmAmber.copy(alpha = 0.18f)
+            )
+            DspStageChip(
                 text = if (isMusicProfile) "135Hz +3.5dB • 110–220Hz 2nd" else "1.8kHz +3.2dB Dialogue",
                 isActive = active && (virtualBassEnabled || !isMusicProfile),
                 highlightColor = if (isMusicProfile) AnalyzerCyan else WarmAmber,
@@ -389,7 +543,11 @@ fun SpeakerDspCard(
                 bgColor = SignalCoralSoft
             )
             DspStageChip(
-                text = "Hybrid <180Hz + -22% 0.19ms XTC",
+                text = if (resolvedLandscape) {
+                    "Landscape: -22% 0.19ms XTC"
+                } else {
+                    "Portrait: Vocal Center + Mono Bass"
+                },
                 isActive = active && landscapeStereoStage,
                 highlightColor = AppleBlue,
                 bgColor = AppleBlueSoft
