@@ -119,7 +119,8 @@ fun AudioVisualizerPanel(
                 freqHz = freqHz,
                 bassDb = threeBandBassDb,
                 midsDb = threeBandMidsDb,
-                trebleDb = threeBandTrebleDb
+                trebleDb = threeBandTrebleDb,
+                isSpeakerTarget = (outputTarget == OutputTarget.SPEAKER)
             )
         } else {
             0f

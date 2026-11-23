@@ -24,7 +24,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -58,7 +60,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.ThreeBandEqRanges
+import com.example.model.ThreeBandQuickPreset
 import com.example.ui.theme.AnalyzerCyan
+import com.example.ui.theme.AnalyzerCyanDeep
 import com.example.ui.theme.AnalyzerCyanSoft
 import com.example.ui.theme.AppleGlassBorder
 import com.example.ui.theme.AppleGlassBottom
@@ -90,9 +94,11 @@ fun ThreeBandEqualizerCard(
     midsDb: Float,
     trebleDb: Float,
     isMasterBypassed: Boolean,
+    isSpeakerTarget: Boolean = false,
     onBassChange: (Float) -> Unit,
     onMidsChange: (Float) -> Unit,
     onTrebleChange: (Float) -> Unit,
+    onApplyQuickPreset: (Float, Float, Float) -> Unit = { _, _, _ -> },
     onToggleEnabled: () -> Unit,
     onReset: () -> Unit,
     modifier: Modifier = Modifier
@@ -103,6 +109,10 @@ fun ThreeBandEqualizerCard(
         animationSpec = spring(dampingRatio = 0.9f, stiffness = 700f),
         label = "three_band_alpha"
     )
+
+    // Dynamic Headroom Compensation (-0.4 dB per +1 dB boost above +3 dB)
+    val maxBoostAbove3 = maxOf(0f, bassDb - 3f, midsDb - 3f, trebleDb - 3f)
+    val headroomTrimDb = if (threeBandEnabled && maxBoostAbove3 > 0f) -0.4f * maxBoostAbove3 else 0f
 
     Column(
         modifier = modifier
@@ -121,7 +131,7 @@ fun ThreeBandEqualizerCard(
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // Header Row: Title, Disabled Badge, Reset, and ON/OFF Toggle
+        // Header Row: Title, Subtitle, Reset, and ON/OFF Toggle
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -170,7 +180,7 @@ fun ThreeBandEqualizerCard(
                         )
                     } else {
                         Text(
-                            text = "250Hz Shelf • 1.2kHz Mid • 3.3kHz Shelf",
+                            text = "85Hz Shelf • 1.8kHz Vocal • 10kHz Air",
                             style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
                             color = TextSecondary
                         )
@@ -273,7 +283,77 @@ fun ThreeBandEqualizerCard(
             }
         }
 
-        // 3 Clean Graphic Vertical Faders (Bass, Mids, Treble) — Dimmed (0.40) & pointer-blocked when 10-Band EQ is active
+        // 4 One-Tap iOS Quick-Tone Preset Pills
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .alpha(bodyAlpha),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            ThreeBandQuickPreset.entries.forEach { preset ->
+                val isActive = threeBandEnabled &&
+                    abs(bassDb - preset.bassDb) < 0.15f &&
+                    abs(midsDb - preset.midsDb) < 0.15f &&
+                    abs(trebleDb - preset.trebleDb) < 0.15f
+                val testTagId = "three_band_preset_${preset.id}"
+
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = if (isActive && !effectivelyBypassed) StudioSurfaceHighlight else StudioSurfaceElevated,
+                    modifier = Modifier
+                        .weight(1f)
+                        .defaultMinSize(minHeight = 48.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .border(
+                            width = 1.dp,
+                            color = if (isActive && !effectivelyBypassed) {
+                                AnalyzerCyan.copy(alpha = 0.65f)
+                            } else {
+                                StudioBorder
+                            },
+                            shape = RoundedCornerShape(10.dp)
+                        )
+                        .clickable(enabled = threeBandEnabled) {
+                            onApplyQuickPreset(preset.bassDb, preset.midsDb, preset.trebleDb)
+                        }
+                        .testTag(testTagId)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp, vertical = 6.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = preset.label,
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium,
+                                fontSize = 10.sp
+                            ),
+                            color = if (isActive && !effectivelyBypassed) AnalyzerCyan else TextPrimary,
+                            maxLines = 1,
+                            textAlign = TextAlign.Center
+                        )
+                        Text(
+                            text = when (preset) {
+                                ThreeBandQuickPreset.FLAT -> "0 / 0 / 0"
+                                ThreeBandQuickPreset.IPHONE_WARMTH -> "+4 / +1 / +2.5"
+                                ThreeBandQuickPreset.CRISP_DIALOGUE -> "-2 / +4.5 / +3"
+                                ThreeBandQuickPreset.AIRPODS_PUNCH -> "+5.5 / 0 / +4.5"
+                            },
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.5.sp),
+                            color = if (isActive && !effectivelyBypassed) AnalyzerCyan.copy(alpha = 0.85f) else TextMuted,
+                            maxLines = 1,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            }
+        }
+
+        // 3 Tactile Vertical Faders (Bass, Mid, Treble) spanning -12 dB .. +12 dB
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -281,12 +361,12 @@ fun ThreeBandEqualizerCard(
         ) {
             Column(
                 modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(216.dp)
+                        .height(220.dp)
                         .clip(RoundedCornerShape(14.dp))
                         .background(StudioBackground.copy(alpha = 0.72f))
                         .border(1.dp, StudioBorder.copy(alpha = 0.85f), RoundedCornerShape(14.dp))
@@ -296,12 +376,13 @@ fun ThreeBandEqualizerCard(
                 ) {
                     ThreeBandFaderColumn(
                         title = "Bass",
-                        subtitle = "< 250 Hz",
+                        subtitle = "85 Hz Shelf",
+                        badgeNote = if (isSpeakerTarget) "110Hz Guard" else "45Hz Guard",
                         gainDb = bassDb,
                         minDb = ThreeBandEqRanges.BASS_MIN_DB,
                         maxDb = ThreeBandEqRanges.BASS_MAX_DB,
-                        maxLabel = "+7",
-                        minLabel = "-7",
+                        maxLabel = "+12",
+                        minLabel = "-12",
                         isBypassed = effectivelyBypassed,
                         isInteractive = threeBandEnabled,
                         accentColor = SignalCoral,
@@ -311,17 +392,18 @@ fun ThreeBandEqualizerCard(
                             .weight(1f)
                             .fillMaxHeight()
                             .testTag("three_band_bass_slider"),
-                        semanticsLabel = "Bass Low-Shelf below 250 Hz"
+                        semanticsLabel = "Bass 85 Hz Analog Low-Shelf"
                     )
 
                     ThreeBandFaderColumn(
-                        title = "Mids",
-                        subtitle = "1.2 kHz",
+                        title = "Mid",
+                        subtitle = "1.8 kHz Bell",
+                        badgeNote = if (midsDb > 2.0f) "350Hz Dip -1.5" else "Natural Vocal",
                         gainDb = midsDb,
                         minDb = ThreeBandEqRanges.MIDS_MIN_DB,
                         maxDb = ThreeBandEqRanges.MIDS_MAX_DB,
-                        maxLabel = "+3",
-                        minLabel = "-6",
+                        maxLabel = "+12",
+                        minLabel = "-12",
                         isBypassed = effectivelyBypassed,
                         isInteractive = threeBandEnabled,
                         accentColor = WarmAmber,
@@ -331,17 +413,18 @@ fun ThreeBandEqualizerCard(
                             .weight(1f)
                             .fillMaxHeight()
                             .testTag("three_band_mids_slider"),
-                        semanticsLabel = "Mids Peaking at 1.2 kHz"
+                        semanticsLabel = "Mid 1.8 kHz Vocal Presence Bell"
                     )
 
                     ThreeBandFaderColumn(
                         title = "Treble",
-                        subtitle = "> 3.3 kHz",
+                        subtitle = "10 kHz Shelf",
+                        badgeNote = if (trebleDb > 2.0f) "5.5kHz Guard" else "Baxandall Air",
                         gainDb = trebleDb,
                         minDb = ThreeBandEqRanges.TREBLE_MIN_DB,
                         maxDb = ThreeBandEqRanges.TREBLE_MAX_DB,
-                        maxLabel = "+7",
-                        minLabel = "-6",
+                        maxLabel = "+12",
+                        minLabel = "-12",
                         isBypassed = effectivelyBypassed,
                         isInteractive = threeBandEnabled,
                         accentColor = AnalyzerCyan,
@@ -351,13 +434,86 @@ fun ThreeBandEqualizerCard(
                             .weight(1f)
                             .fillMaxHeight()
                             .testTag("three_band_treble_slider"),
-                        semanticsLabel = "Treble High-Shelf above 3.3 kHz"
+                        semanticsLabel = "Treble 10 kHz Baxandall High Shelf"
                     )
+                }
+
+                // Apple Acoustic Pipeline Telemetry & Automatic Headroom Status
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = StudioSurfaceElevated,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .border(1.dp, StudioBorder, RoundedCornerShape(10.dp))
+                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Shield,
+                                contentDescription = null,
+                                tint = if (headroomTrimDb < -0.05f) WarmAmber else RouteEmerald,
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Text(
+                                text = if (threeBandEnabled) {
+                                    if (headroomTrimDb < -0.05f) {
+                                        String.format(
+                                            Locale.US,
+                                            "Auto Headroom: %.1f dB • -0.3dB Limiter Active",
+                                            headroomTrimDb
+                                        )
+                                    } else {
+                                        "Headroom Guard Active • 0.0 dB Trim • -0.3dB Brickwall"
+                                    }
+                                } else {
+                                    "3-Band EQ Bypassed (10-Band EQ Active)"
+                                },
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 9.5.sp,
+                                    fontWeight = FontWeight.Medium
+                                ),
+                                color = if (threeBandEnabled) {
+                                    if (headroomTrimDb < -0.05f) WarmAmber else RouteEmerald
+                                } else {
+                                    TextMuted
+                                }
+                            )
+                        }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.AutoAwesome,
+                                contentDescription = null,
+                                tint = AnalyzerCyan,
+                                modifier = Modifier.size(11.dp)
+                            )
+                            Text(
+                                text = "iOS 27 Flagship",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                ),
+                                color = AnalyzerCyan
+                            )
+                        }
+                    }
                 }
 
                 Text(
                     text = if (threeBandEnabled) {
-                        "Bass (-7..+7 dB) • Mids 300Hz–4.7kHz (-6..+3 dB) • Treble (-6..+7 dB) • Double-tap to zero"
+                        "85Hz Low-Shelf (Q=0.65) • 1.8kHz Vocal Bell (Q=0.85) • 10kHz Baxandall Air • Double-tap fader to zero"
                     } else {
                         "3-Band Tone EQ bypassed at 0 dB while 10-Band EQ shapes the audio"
                     },
@@ -389,6 +545,7 @@ fun ThreeBandEqualizerCard(
 private fun ThreeBandFaderColumn(
     title: String,
     subtitle: String,
+    badgeNote: String,
     gainDb: Float,
     minDb: Float,
     maxDb: Float,
@@ -637,7 +794,7 @@ private fun ThreeBandFaderColumn(
             }
         }
 
-        // Bottom Label + Frequency Band Subtitle
+        // Bottom Label + Frequency Band Subtitle + Feature Badge
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
                 text = title,
@@ -649,6 +806,15 @@ private fun ThreeBandFaderColumn(
                 text = subtitle,
                 style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
                 color = if (isBypassed) TextMuted else accentGlowColor.copy(alpha = 0.9f),
+                maxLines = 1
+            )
+            Text(
+                text = badgeNote,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontSize = 8.sp,
+                    fontWeight = FontWeight.Medium
+                ),
+                color = if (isBypassed) TextMuted else AnalyzerCyanSoft,
                 maxLines = 1
             )
         }

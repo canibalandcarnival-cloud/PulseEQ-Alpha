@@ -24,6 +24,7 @@ import com.example.model.SoftSoundIntensity
 import com.example.model.SpatialMode
 import com.example.model.TestAudioSource
 import com.example.model.ThreeBandEqRanges
+import com.example.model.ThreeBandQuickPreset
 import com.example.model.VisualizerFrame
 import com.example.model.VisualizerMode
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -522,6 +523,25 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             threeBandTrebleDb = 0f
         )
         commitProfile(updated)
+    }
+
+    fun applyThreeBandPreset(bassDb: Float, midsDb: Float, trebleDb: Float) {
+        val clampedBass = snapHalfDbRange(bassDb, ThreeBandEqRanges.BASS_MIN_DB, ThreeBandEqRanges.BASS_MAX_DB)
+        val clampedMids = snapHalfDbRange(midsDb, ThreeBandEqRanges.MIDS_MIN_DB, ThreeBandEqRanges.MIDS_MAX_DB)
+        val clampedTreble = snapHalfDbRange(trebleDb, ThreeBandEqRanges.TREBLE_MIN_DB, ThreeBandEqRanges.TREBLE_MAX_DB)
+        val updated = currentProfile().copy(
+            threeBandBassDb = clampedBass,
+            threeBandMidsDb = clampedMids,
+            threeBandTrebleDb = clampedTreble,
+            threeBandEnabled = true,
+            tenBandEnabled = false,
+            isBypassed = false
+        )
+        commitProfile(updated)
+    }
+
+    fun applyThreeBandQuickPreset(preset: ThreeBandQuickPreset) {
+        applyThreeBandPreset(preset.bassDb, preset.midsDb, preset.trebleDb)
     }
 
     fun toggleHeadphoneAccommodations() {

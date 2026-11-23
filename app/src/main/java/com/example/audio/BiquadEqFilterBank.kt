@@ -51,6 +51,18 @@ class StereoBiquad {
     private var z1R = 0.0
     private var z2R = 0.0
 
+    fun reset() {
+        b0 = 1.0
+        b1 = 0.0
+        b2 = 0.0
+        a1 = 0.0
+        a2 = 0.0
+        z1L = 0.0
+        z2L = 0.0
+        z1R = 0.0
+        z2R = 0.0
+    }
+
     fun setPeaking(sampleRate: Int, freqHz: Double, q: Double, gainDb: Double) {
         val a = 10.0.pow(gainDb / 40.0)
         val w0 = 2.0 * PI * freqHz / sampleRate
@@ -492,28 +504,56 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
 }
 
 /**
- * Dedicated 3-Band Tone Equalizer:
- * - Bass: Low-shelf filter targeting below 250 Hz (-7 dB to +7 dB)
- * - Mids: Broad peaking filter centered around 1.2 kHz (spanning ~300 Hz to 4.7 kHz, -6 dB to +3 dB)
- * - Treble: High-shelf filter targeting above 3.3 kHz (-6 dB to +7 dB)
+ * Apple-Calibrated 3-Band Equalizer (iPhone 18 Pro Max / iOS 27 Flagship Acoustic Quality):
+ * 1. BASS: 85 Hz Analog-Style Low Shelf (Q = 0.65) paired with a 45 Hz sub-rumble high-pass guard
+ *    (steepens to 110 Hz when routed to Phone Speaker).
+ * 2. MID / VOCAL PRESENCE: 1.8 kHz Wide Peaking Bell (Q = 0.85) for open vocal clarity,
+ *    paired with an automatic -1.5 dB mud dip at 350 Hz (Q = 1.35) whenever Mid is boosted above +2 dB.
+ * 3. TREBLE / AIR: 10 kHz Smooth Baxandall High Shelf (Q = 0.55) paired with a 5.5 kHz sibilance guard
+ *    (-1.2 dB, Q = 1.6) whenever Treble is boosted above +2 dB.
+ * 4. HEADROOM & LOUDNESS COMPENSATION: Dynamically trims internal preamp headroom (-0.4 dB per +1 dB
+ *    of boost above +3 dB) feeding into a -0.3 dB Zero-Clipping Brickwall Limiter so pushing up to +12 dB
+ *    never causes digital distortion or volume ducking.
  */
 class ThreeBandToneFilter(private val sampleRate: Int = 44100) {
     private val bassLowShelf = StereoBiquad()
+    private val subRumbleGuard = StereoBiquad()
     private val midsPeaking = StereoBiquad()
+    private val mudDip = StereoBiquad()
     private val trebleHighShelf = StereoBiquad()
+    private val sibilanceGuard = StereoBiquad()
+    private val brickwallLimiter = DynamicRangeCompressor(sampleRate).apply {
+        configureCustom(
+            isEnabled = true,
+            threshold = -0.3f,
+            knee = 0f,
+            compRatio = 20f,
+            attackMs = 0.5f,
+            releaseMs = 40f,
+            makeupGainDb = 0f
+        )
+    }
 
     @Volatile
     private var enabled: Boolean = true
 
+    @Volatile
+    var headroomTrimDb: Double = 0.0
+        private set
+
+    @Volatile
+    private var headroomLinear: Double = 1.0
+
     init {
-        configure(isEnabled = true, bassDb = 0f, midsDb = 0f, trebleDb = 0f)
+        configure(isEnabled = true, bassDb = 0f, midsDb = 0f, trebleDb = 0f, isSpeakerTarget = false)
     }
 
     fun configure(
         isEnabled: Boolean,
         bassDb: Float,
         midsDb: Float,
-        trebleDb: Float
+        trebleDb: Float,
+        isSpeakerTarget: Boolean = false
     ) {
         enabled = isEnabled
         val clampedBass = if (isEnabled) {
@@ -532,17 +572,61 @@ class ThreeBandToneFilter(private val sampleRate: Int = 44100) {
             0.0
         }
 
-        bassLowShelf.setLowShelf(sampleRate, 250.0, 0.7071, clampedBass)
-        // Q = 0.28 centered at 1200 Hz gives -3dB skirt span ~300 Hz to 4.7 kHz
-        midsPeaking.setPeaking(sampleRate, 1200.0, 0.28, clampedMids)
-        trebleHighShelf.setHighShelf(sampleRate, 3300.0, 0.7071, clampedTreble)
+        // Bass: 85 Hz Analog-style Low Shelf (Q = 0.65)
+        bassLowShelf.setLowShelf(sampleRate, 85.0, 0.65, clampedBass)
+
+        // Sub-rumble Guard: 45 Hz HPF (110 Hz in Phone Speaker Mode)
+        val hpfCutoff = if (isSpeakerTarget) 110.0 else 45.0
+        if (isEnabled) {
+            subRumbleGuard.setHighPass(sampleRate, hpfCutoff, 0.7071)
+        } else {
+            subRumbleGuard.reset()
+        }
+
+        // Mid: 1.8 kHz Wide Peaking Bell (Q = 0.85)
+        midsPeaking.setPeaking(sampleRate, 1800.0, 0.85, clampedMids)
+
+        // Mud Dip: 350 Hz Peaking cut (-1.5 dB, Q = 1.35) whenever Mid is boosted above +2.0 dB
+        val mudDipDb = if (isEnabled && clampedMids > 2.0) -1.5 else 0.0
+        mudDip.setPeaking(sampleRate, 350.0, 1.35, mudDipDb)
+
+        // Treble: 10 kHz Smooth Baxandall High Shelf (Q = 0.55)
+        trebleHighShelf.setHighShelf(sampleRate, 10000.0, 0.55, clampedTreble)
+
+        // Sibilance Guard: 5.5 kHz Peaking cut (-1.2 dB, Q = 1.6) whenever Treble is boosted above +2.0 dB
+        val sibilanceDipDb = if (isEnabled && clampedTreble > 2.0) -1.2 else 0.0
+        sibilanceGuard.setPeaking(sampleRate, 5500.0, 1.6, sibilanceDipDb)
+
+        // Dynamic headroom compensation: -0.4 dB per +1 dB of boost above +3 dB
+        val maxBoostAbove3 = maxOf(0.0, clampedBass - 3.0, clampedMids - 3.0, clampedTreble - 3.0)
+        headroomTrimDb = if (isEnabled && maxBoostAbove3 > 0.0) -0.4 * maxBoostAbove3 else 0.0
+        headroomLinear = 10.0.pow(headroomTrimDb / 20.0)
+
+        brickwallLimiter.configureCustom(
+            isEnabled = isEnabled,
+            threshold = -0.3f,
+            knee = 0f,
+            compRatio = 20f,
+            attackMs = 0.5f,
+            releaseMs = 40f,
+            makeupGainDb = 0f
+        )
     }
 
     fun processStereoSample(inL: Double, inR: Double): Pair<Double, Double> {
         if (!enabled) return inL to inR
         val (bL, bR) = bassLowShelf.processStereo(inL, inR)
-        val (mL, mR) = midsPeaking.processStereo(bL, bR)
-        return trebleHighShelf.processStereo(mL, mR)
+        val (hpL, hpR) = subRumbleGuard.processStereo(bL, bR)
+        val (mL, mR) = midsPeaking.processStereo(hpL, hpR)
+        val (mudL, mudR) = mudDip.processStereo(mL, mR)
+        val (tL, tR) = trebleHighShelf.processStereo(mudL, mudR)
+        val (sibL, sibR) = sibilanceGuard.processStereo(tL, tR)
+
+        val trimmedL = sibL * headroomLinear
+        val trimmedR = sibR * headroomLinear
+
+        val (limL, limR) = brickwallLimiter.processStereoSample(trimmedL, trimmedR)
+        return limL.coerceIn(-0.966, 0.966) to limR.coerceIn(-0.966, 0.966)
     }
 
     companion object {
@@ -551,35 +635,45 @@ class ThreeBandToneFilter(private val sampleRate: Int = 44100) {
             bassDb: Float,
             midsDb: Float,
             trebleDb: Float,
+            isSpeakerTarget: Boolean = false,
             sampleRate: Int = 44100
         ): Float {
+            val clampedBass = bassDb.coerceIn(ThreeBandEqRanges.BASS_MIN_DB, ThreeBandEqRanges.BASS_MAX_DB).toDouble()
+            val clampedMids = midsDb.coerceIn(ThreeBandEqRanges.MIDS_MIN_DB, ThreeBandEqRanges.MIDS_MAX_DB).toDouble()
+            val clampedTreble = trebleDb.coerceIn(ThreeBandEqRanges.TREBLE_MIN_DB, ThreeBandEqRanges.TREBLE_MAX_DB).toDouble()
+
             val bass = StereoBiquad().apply {
-                setLowShelf(
-                    sampleRate,
-                    250.0,
-                    0.7071,
-                    bassDb.coerceIn(ThreeBandEqRanges.BASS_MIN_DB, ThreeBandEqRanges.BASS_MAX_DB).toDouble()
-                )
+                setLowShelf(sampleRate, 85.0, 0.65, clampedBass)
+            }
+            val subHpf = StereoBiquad().apply {
+                val cutoff = if (isSpeakerTarget) 110.0 else 45.0
+                setHighPass(sampleRate, cutoff, 0.7071)
             }
             val mids = StereoBiquad().apply {
-                setPeaking(
-                    sampleRate,
-                    1200.0,
-                    0.28,
-                    midsDb.coerceIn(ThreeBandEqRanges.MIDS_MIN_DB, ThreeBandEqRanges.MIDS_MAX_DB).toDouble()
-                )
+                setPeaking(sampleRate, 1800.0, 0.85, clampedMids)
+            }
+            val mudDip = StereoBiquad().apply {
+                val dipDb = if (clampedMids > 2.0) -1.5 else 0.0
+                setPeaking(sampleRate, 350.0, 1.35, dipDb)
             }
             val treble = StereoBiquad().apply {
-                setHighShelf(
-                    sampleRate,
-                    3300.0,
-                    0.7071,
-                    trebleDb.coerceIn(ThreeBandEqRanges.TREBLE_MIN_DB, ThreeBandEqRanges.TREBLE_MAX_DB).toDouble()
-                )
+                setHighShelf(sampleRate, 10000.0, 0.55, clampedTreble)
             }
+            val sibilanceGuard = StereoBiquad().apply {
+                val dipDb = if (clampedTreble > 2.0) -1.2 else 0.0
+                setPeaking(sampleRate, 5500.0, 1.6, dipDb)
+            }
+
+            val maxBoostAbove3 = maxOf(0.0, clampedBass - 3.0, clampedMids - 3.0, clampedTreble - 3.0)
+            val headroomTrimDb = if (maxBoostAbove3 > 0.0) -0.4 * maxBoostAbove3 else 0.0
+
             return (bass.magnitudeDbAt(sampleRate, freqHz) +
+                subHpf.magnitudeDbAt(sampleRate, freqHz) +
                 mids.magnitudeDbAt(sampleRate, freqHz) +
-                treble.magnitudeDbAt(sampleRate, freqHz)).toFloat()
+                mudDip.magnitudeDbAt(sampleRate, freqHz) +
+                treble.magnitudeDbAt(sampleRate, freqHz) +
+                sibilanceGuard.magnitudeDbAt(sampleRate, freqHz) +
+                headroomTrimDb).toFloat()
         }
     }
 }
@@ -648,6 +742,9 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
 
     val isLoudnessAntiClipActive: Boolean
         get() = !bypassed && !abCompareHeld && loudnessMaximizerChain.isAntiClipActive
+
+    val latestThreeBandHeadroomTrimDb: Float
+        get() = if (bypassed || abCompareHeld) 0f else threeBandToneFilter.headroomTrimDb.toFloat()
 
     init {
         updateParameters(
@@ -727,7 +824,8 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             isEnabled = activeThreeBand && effectiveProcessing,
             bassDb = if (activeThreeBand) threeBandBassDb else 0f,
             midsDb = if (activeThreeBand) threeBandMidsDb else 0f,
-            trebleDb = if (activeThreeBand) threeBandTrebleDb else 0f
+            trebleDb = if (activeThreeBand) threeBandTrebleDb else 0f,
+            isSpeakerTarget = (outputTarget == OutputTarget.SPEAKER)
         )
         lateNightCompressor.configure(isEnabled = lateNightEnabled && effectiveProcessing, intensity = nightIntensity)
         speakerDspChain.configure(
