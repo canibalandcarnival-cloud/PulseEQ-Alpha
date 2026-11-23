@@ -774,6 +774,7 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
     private val lateNightCompressor = DynamicRangeCompressor(sampleRate)
     private val speakerDspChain = PhoneSpeakerDspChain(sampleRate)
     private val loudnessMaximizerChain = IphoneLoudnessMaximizerChain(sampleRate)
+    private val siliconDspCore = SiliconDspCore(sampleRate)
     private val spatialAudioEngine = SpatialAudioEngine(sampleRate)
     private val soundCheckNormalizer = SoundCheckNormalizer(sampleRate)
     private val voiceIsolationProcessor = VoiceIsolationProcessor(sampleRate)
@@ -800,7 +801,8 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
                 lateNightCompressor.latestGainReductionDb,
                 speakerDspChain.latestLimiterReductionDb,
                 loudnessMaximizerChain.latestRmsGrDb,
-                loudnessMaximizerChain.latestBrickwallGrDb
+                loudnessMaximizerChain.latestBrickwallGrDb,
+                if (siliconDspCore.enabled) siliconDspCore.latestTruePeakGrDb else 0f
             )
             return if (minGr < -0.05f) minGr else 0f
         }
@@ -826,6 +828,21 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
     val isLoudnessAntiClipActive: Boolean
         get() = !bypassed && !abCompareHeld && loudnessMaximizerChain.isAntiClipActive
 
+    val latestSiliconExcursionPct: Float
+        get() = if (bypassed || abCompareHeld || !siliconDspCore.enabled) 0f else siliconDspCore.latestExcursionPercent
+
+    val latestSiliconSvfCutoffHz: Float
+        get() = siliconDspCore.latestSvfCutoffHz
+
+    val latestSiliconCoilTempC: Float
+        get() = siliconDspCore.latestCoilTempC
+
+    val latestSiliconClassHRailV: Float
+        get() = if (bypassed || abCompareHeld || !siliconDspCore.enabled) 3.7f else siliconDspCore.latestClassHRailV
+
+    val latestSiliconTruePeakGrDb: Float
+        get() = if (bypassed || abCompareHeld || !siliconDspCore.enabled) 0f else siliconDspCore.latestTruePeakGrDb
+
     init {
         updateParameters(
             gainsDb = List(10) { 0f },
@@ -847,7 +864,8 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             threeBandEnabled = false,
             threeBandBassDb = 0f,
             threeBandMidsDb = 0f,
-            threeBandTrebleDb = 0f
+            threeBandTrebleDb = 0f,
+            siliconDspEnabled = false
         )
     }
 
@@ -881,7 +899,8 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         accommodationsApplyToMedia: Boolean = true,
         accommodationsOutputGainDb: Float = 0f,
         loudnessMaximizerEnabled: Boolean = false,
-        loudnessBoostPercent: Float = 0.50f
+        loudnessBoostPercent: Float = 0.50f,
+        siliconDspEnabled: Boolean = false
     ) {
         bypassed = isBypassed
         this.abCompareHeld = abCompareHeld
@@ -926,6 +945,10 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             isEnabled = loudnessMaximizerEnabled && effectiveProcessing,
             outputTarget = outputTarget,
             boostPercent = loudnessBoostPercent
+        )
+        siliconDspCore.configure(
+            isEnabled = siliconDspEnabled && effectiveProcessing,
+            target = outputTarget
         )
 
         val activeBandGains = if (activeTenBand) gainsDb else List(10) { 0f }
@@ -999,23 +1022,24 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         val (spatL, spatR) = spatialAudioEngine.processStereoSample(compL, compR)
         val (spkL, spkR) = speakerDspChain.processStereoSample(spatL, spatR)
         val (maxL, maxR) = loudnessMaximizerChain.processStereoSample(spkL, spkR)
+        val (silL, silR) = siliconDspCore.processStereoSample(maxL, maxR)
 
         // Final safety ceiling + Conversation Awareness auto-ducking
-        return if (loudnessMaximizerChain.enabled || speakerDspChain.speakerDspEnabled) {
-            (maxL * duck).coerceIn(-0.99, 0.99) to (maxR * duck).coerceIn(-0.99, 0.99)
+        return if (loudnessMaximizerChain.enabled || speakerDspChain.speakerDspEnabled || siliconDspCore.enabled) {
+            (silL * duck).coerceIn(-0.99, 0.99) to (silR * duck).coerceIn(-0.99, 0.99)
         } else {
-            tanh(maxL * duck * 0.92) to tanh(maxR * duck * 0.92)
+            tanh(silL * duck * 0.92) to tanh(silR * duck * 0.92)
         }
     }
 }
 
 /**
- * Built-in real-time audio synthesizer so users can audition and visualize
- * Speaker DSP, Headphones, Bluetooth EQ tuning, Spatial Atmos, Late Night compression,
- * Sound Check, Voice Isolation & Background Sounds underneath immediately.
+ * Built-in real-time 48 kHz audio synthesizer so users can audition and visualize
+ * Speaker DSP, Silicon DSP Core, Headphones, Bluetooth EQ tuning, Spatial Atmos,
+ * Late Night compression, Sound Check, Voice Isolation & Background Sounds immediately.
  */
 class TestAudioSynthesizer {
-    private val sampleRate = 44100
+    private val sampleRate = com.example.model.SiliconDspSpecs.SAMPLE_RATE_HZ
     private val filterBank = BiquadEqFilterBank(sampleRate)
     private val backgroundSynth = BackgroundSoundsSynthesizer(sampleRate)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -1060,6 +1084,21 @@ class TestAudioSynthesizer {
     val isLoudnessAntiClipActive: Boolean
         get() = filterBank.isLoudnessAntiClipActive
 
+    val latestSiliconExcursionPct: Float
+        get() = filterBank.latestSiliconExcursionPct
+
+    val latestSiliconSvfCutoffHz: Float
+        get() = filterBank.latestSiliconSvfCutoffHz
+
+    val latestSiliconCoilTempC: Float
+        get() = filterBank.latestSiliconCoilTempC
+
+    val latestSiliconClassHRailV: Float
+        get() = filterBank.latestSiliconClassHRailV
+
+    val latestSiliconTruePeakGrDb: Float
+        get() = filterBank.latestSiliconTruePeakGrDb
+
     fun setConversationDuckGain(duckGainLinear: Float) {
         filterBank.conversationDuckLinear = duckGainLinear.toDouble()
     }
@@ -1096,7 +1135,8 @@ class TestAudioSynthesizer {
         accommodationsApplyToMedia: Boolean = true,
         accommodationsOutputGainDb: Float = 0f,
         loudnessMaximizerEnabled: Boolean = false,
-        loudnessBoostPercent: Float = 0.50f
+        loudnessBoostPercent: Float = 0.50f,
+        siliconDspEnabled: Boolean = false
     ) {
         backgroundPreset = bgSoundPreset
         backgroundVolume = bgSoundVolume
@@ -1130,7 +1170,8 @@ class TestAudioSynthesizer {
             accommodationsApplyToMedia = accommodationsApplyToMedia,
             accommodationsOutputGainDb = accommodationsOutputGainDb,
             loudnessMaximizerEnabled = loudnessMaximizerEnabled,
-            loudnessBoostPercent = loudnessBoostPercent
+            loudnessBoostPercent = loudnessBoostPercent,
+            siliconDspEnabled = siliconDspEnabled
         )
     }
 
@@ -1199,7 +1240,8 @@ class TestAudioSynthesizer {
         }
 
         playJob = scope.launch {
-            val frameCount = 1024
+            // 48,000 Hz / 768 samples = 62.5 fps telemetry & audio cadence (exact 16ms blocks)
+            val frameCount = 768
             val pcmBuffer = ShortArray(frameCount * 2)
             val monoAnalysis = DoubleArray(512)
             var sampleCursor = 0L

@@ -612,6 +612,16 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
         commitProfile(updated)
     }
 
+    fun toggleSiliconDsp() {
+        val current = currentProfile()
+        val enabling = !current.siliconDspEnabled
+        val updated = current.copy(
+            siliconDspEnabled = enabling,
+            isBypassed = if (enabling) false else current.isBypassed
+        )
+        commitProfile(updated)
+    }
+
     fun openCustomAudioSetup() {
         audioEngine.customAudioSetupEngine.open(currentProfile().accommodationsSoftIntensity)
     }
@@ -767,7 +777,8 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             accommodationsApplyToVoice = profile.accommodationsApplyToVoice,
             accommodationsOutputGainDb = profile.accommodationsOutputGainDb,
             loudnessMaximizerEnabled = profile.loudnessMaximizerEnabled,
-            loudnessBoostPercent = profile.loudnessBoostPercent
+            loudnessBoostPercent = profile.loudnessBoostPercent,
+            siliconDspEnabled = profile.siliconDspEnabled
         )
     }
 

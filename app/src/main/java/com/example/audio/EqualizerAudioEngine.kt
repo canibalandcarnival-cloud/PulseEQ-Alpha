@@ -24,6 +24,7 @@ import com.example.model.HearingCheckUiState
 import com.example.model.LoudnessMaximizerSpecs
 import com.example.model.NightIntensity
 import com.example.model.OutputTarget
+import com.example.model.SiliconDspSpecs
 import com.example.model.SoftSoundIntensity
 import com.example.model.SpatialMode
 import com.example.model.SpeakerTuningProfile
@@ -256,6 +257,10 @@ class EqualizerAudioEngine(private val context: Context) {
         private set
 
     @Volatile
+    var currentSiliconDspEnabled: Boolean = true
+        private set
+
+    @Volatile
     private var systemSoundCheckTrimDb: Float = 0f
 
     @Volatile
@@ -325,7 +330,12 @@ class EqualizerAudioEngine(private val context: Context) {
                         accommodationsGrDb = testSynthesizer.latestAccommodationsGrDb,
                         loudnessRmsGrDb = testSynthesizer.latestLoudnessRmsGrDb,
                         loudnessBrickwallGrDb = testSynthesizer.latestLoudnessBrickwallGrDb,
-                        loudnessAntiClipActive = testSynthesizer.isLoudnessAntiClipActive
+                        loudnessAntiClipActive = testSynthesizer.isLoudnessAntiClipActive,
+                        siliconExcursionPct = testSynthesizer.latestSiliconExcursionPct,
+                        siliconSvfCutoffHz = testSynthesizer.latestSiliconSvfCutoffHz,
+                        siliconCoilTempC = testSynthesizer.latestSiliconCoilTempC,
+                        siliconClassHRailV = testSynthesizer.latestSiliconClassHRailV,
+                        siliconTruePeakGrDb = testSynthesizer.latestSiliconTruePeakGrDb
                     )
                     synthFrame
                 } else {
@@ -392,7 +402,8 @@ class EqualizerAudioEngine(private val context: Context) {
             accommodationsApplyToVoice = currentAccommodationsApplyToVoice,
             accommodationsOutputGainDb = currentAccommodationsOutputGainDb,
             loudnessMaximizerEnabled = currentLoudnessMaximizerEnabled,
-            loudnessBoostPercent = currentLoudnessBoostPercent
+            loudnessBoostPercent = currentLoudnessBoostPercent,
+            siliconDspEnabled = currentSiliconDspEnabled
         )
     }
 
@@ -582,7 +593,8 @@ class EqualizerAudioEngine(private val context: Context) {
         accommodationsApplyToVoice: Boolean = currentAccommodationsApplyToVoice,
         accommodationsOutputGainDb: Float = currentAccommodationsOutputGainDb,
         loudnessMaximizerEnabled: Boolean = currentLoudnessMaximizerEnabled,
-        loudnessBoostPercent: Float = currentLoudnessBoostPercent
+        loudnessBoostPercent: Float = currentLoudnessBoostPercent,
+        siliconDspEnabled: Boolean = currentSiliconDspEnabled
     ) {
         val normalizedThreeBand = threeBandEnabled && !tenBandEnabled
         val normalizedTenBand = !normalizedThreeBand
@@ -623,6 +635,7 @@ class EqualizerAudioEngine(private val context: Context) {
         )
         currentLoudnessMaximizerEnabled = loudnessMaximizerEnabled
         currentLoudnessBoostPercent = loudnessBoostPercent.coerceIn(0f, 1f)
+        currentSiliconDspEnabled = siliconDspEnabled
 
         val isSpeakerDspActive = (target == OutputTarget.SPEAKER) && speakerDspEnabled
         val isAbHeld = _abCompareHeld.value
@@ -673,7 +686,8 @@ class EqualizerAudioEngine(private val context: Context) {
             accommodationsApplyToMedia = accommodationsApplyToMedia,
             accommodationsOutputGainDb = currentAccommodationsOutputGainDb,
             loudnessMaximizerEnabled = loudnessMaximizerEnabled,
-            loudnessBoostPercent = currentLoudnessBoostPercent
+            loudnessBoostPercent = currentLoudnessBoostPercent,
+            siliconDspEnabled = siliconDspEnabled
         )
         applyToAllSessions()
     }
@@ -683,6 +697,7 @@ class EqualizerAudioEngine(private val context: Context) {
         var anyLegacyActive = false
         val isAbHeld = _abCompareHeld.value
         val effectiveActive = !currentBypassed && !isAbHeld
+        val siliconActive = effectiveActive && currentSiliconDspEnabled
         val isSpeakerDspActive = effectiveActive && (currentTarget == OutputTarget.SPEAKER) && currentSpeakerDspEnabled
         val isSpatialActive = effectiveActive && currentSpatialMode != SpatialMode.OFF
         val useThreeBand = currentThreeBandEnabled && !currentTenBandEnabled
@@ -910,8 +925,18 @@ class EqualizerAudioEngine(private val context: Context) {
                         )
                         dp.setMbcAllChannelsTo(mbc)
 
-                        // Limiter stage: Zero-Clipping Brickwall (-0.3dB, 20:1, 0.5ms/40ms) for Flagship Speaker DSP & Loudness Maximizer
+                        // Limiter stage: Zero-Clipping Brickwall (-0.2 dBTP Silicon Core or -0.3 dB Speaker/Loudness)
                         val limiter = when {
+                            siliconActive -> DynamicsProcessing.Limiter(
+                                true,
+                                true,
+                                0,
+                                0.2f,
+                                35.0f,
+                                20.0f,
+                                SiliconDspSpecs.TRUE_PEAK_CEILING_DBTP.toFloat(),
+                                0.0f
+                            )
                             loudnessMaxActive -> DynamicsProcessing.Limiter(
                                 true,
                                 true,
@@ -986,31 +1011,33 @@ class EqualizerAudioEngine(private val context: Context) {
         val loudnessMaxActive = effectiveActive && currentLoudnessMaximizerEnabled
         val audioMixActive = effectiveActive && currentAudioMixMode != AudioMixMode.STANDARD
         val activeEqPrefix = if (useThreeBand) "3-Band" else "10-Band"
+        val siliconTag = if (siliconActive) " • Silicon Core" else ""
         _dspStatusLabel.value = when {
             isAbHeld -> "A/B Compare: Original"
             currentBypassed -> "DSP Bypassed"
-            currentVoiceIsolationEnabled -> "Voice Isolation"
-            loudnessMaxActive -> "Loudness Maximizer +${(currentLoudnessBoostPercent * LoudnessMaximizerSpecs.MAX_MAKEUP_BOOST_DB).toInt()}dB"
-            audioMixActive -> "Audio Mix • ${currentAudioMixMode.label}"
-            isSpatialActive && currentTarget == OutputTarget.SPEAKER -> "Speaker XTC Spatial"
-            isSpatialActive -> "Spatial ${currentSpatialMode.label}"
-            accMediaActive -> "Accommodations • ${currentAccommodationsToneProfile.label}"
-            isSpeakerDspActive && currentLateNightEnabled -> "iPhone 18 DSP + Late Night"
+            currentVoiceIsolationEnabled -> "Voice Isolation$siliconTag"
+            loudnessMaxActive -> "Loudness Maximizer +${(currentLoudnessBoostPercent * LoudnessMaximizerSpecs.MAX_MAKEUP_BOOST_DB).toInt()}dB$siliconTag"
+            audioMixActive -> "Audio Mix • ${currentAudioMixMode.label}$siliconTag"
+            isSpatialActive && currentTarget == OutputTarget.SPEAKER -> "Speaker XTC Spatial$siliconTag"
+            isSpatialActive -> "Spatial ${currentSpatialMode.label}$siliconTag"
+            accMediaActive -> "Accommodations • ${currentAccommodationsToneProfile.label}$siliconTag"
+            isSpeakerDspActive && currentLateNightEnabled -> "iPhone 18 DSP + Late Night$siliconTag"
             isSpeakerDspActive -> if (currentSpeakerTuningProfile == SpeakerTuningProfile.PRO_WARM_DIALOGUE) {
-                "18 Pro • Dialogue DSP"
+                "18 Pro • Dialogue DSP$siliconTag"
             } else if (currentLandscapeStereoStage) {
-                "18 Pro Max • Hybrid XTC"
+                "18 Pro Max • Hybrid XTC$siliconTag"
             } else {
-                "18 Pro Max Speaker DSP"
+                "18 Pro Max Speaker DSP$siliconTag"
             }
             anyDpActive && sessionCount > 0 -> {
-                if (currentLateNightEnabled) "App DSP + Late Night ($sessionCount)" else "$activeEqPrefix App DSP ($sessionCount)"
+                if (currentLateNightEnabled) "App DSP + Late Night ($sessionCount)$siliconTag" else "$activeEqPrefix App DSP ($sessionCount)$siliconTag"
             }
             anyDpActive -> {
-                if (currentLateNightEnabled) "Global DSP + Late Night" else "$activeEqPrefix Global DSP"
+                if (currentLateNightEnabled) "Global DSP + Late Night$siliconTag" else "$activeEqPrefix Global DSP$siliconTag"
             }
-            anyLegacyActive -> "System EQ Active"
+            anyLegacyActive -> "System EQ Active$siliconTag"
             !_globalMixFallbackEnabled.value && sessionCount == 0 -> "Waiting for Media App"
+            siliconActive -> "Silicon Core • $activeEqPrefix DSP"
             else -> if (currentLateNightEnabled) "Studio DSP + Late Night" else "$activeEqPrefix Studio DSP"
         }
     }
@@ -1120,13 +1147,46 @@ class EqualizerAudioEngine(private val context: Context) {
                         }
                         systemSoundCheckTrimDb = systemSoundCheckTrimDb * 0.85f + desiredSoundCheck * 0.15f
                         if (testSynthesizer.currentSource.value == TestAudioSource.OFF) {
+                            val silActive = live && currentSiliconDspEnabled && !currentBypassed && !_abCompareHeld.value
+                            val estExcursionPct = if (silActive) (peak * 92f).coerceIn(0f, 100f) else 0f
+                            val estSvfHz = if (currentTarget == OutputTarget.SPEAKER) {
+                                val ratio = ((estExcursionPct / 100f - 0.35f) / 0.65f).coerceIn(0f, 1f)
+                                (SiliconDspSpecs.SVF_MIN_HZ + ratio * (SiliconDspSpecs.SVF_MAX_HZ - SiliconDspSpecs.SVF_MIN_HZ)).toFloat()
+                            } else {
+                                SiliconDspSpecs.SVF_HEADPHONES_HZ.toFloat()
+                            }
+                            val prevTemp = _audioLabTelemetry.value.siliconCoilTempC
+                            val targetTemp = if (silActive) (25f + peak * peak * 42f).coerceIn(25f, 95f) else 25f
+                            val smoothedTemp = prevTemp * 0.94f + targetTemp * 0.06f
+                            val estRailV = if (silActive) {
+                                (SiliconDspSpecs.CLASS_H_MIN_VOLTS +
+                                    (SiliconDspSpecs.CLASS_H_MAX_VOLTS - SiliconDspSpecs.CLASS_H_MIN_VOLTS) *
+                                    peak.coerceIn(0f, 1f)).toFloat()
+                            } else {
+                                SiliconDspSpecs.CLASS_H_MIN_VOLTS.toFloat()
+                            }
+                            val estTpGr = if (silActive) {
+                                DynamicRangeCompressor.computeGainReductionDb(
+                                    inputDb = peakDb,
+                                    thresholdDb = SiliconDspSpecs.TRUE_PEAK_CEILING_DBTP.toFloat(),
+                                    kneeDb = 0f,
+                                    ratio = 20f
+                                )
+                            } else {
+                                0f
+                            }
                             _audioLabTelemetry.value = _audioLabTelemetry.value.copy(
                                 inputLufs = (peakDb - 3f).coerceIn(-60f, 0f),
                                 soundCheckTrimDb = systemSoundCheckTrimDb,
                                 voiceGateAttenuationDb = if (live || !currentVoiceIsolationEnabled) 0f else -24f,
                                 loudnessRmsGrDb = loudnessRmsGr,
                                 loudnessBrickwallGrDb = loudnessBrickwallGr,
-                                loudnessAntiClipActive = loudnessAntiClip
+                                loudnessAntiClipActive = loudnessAntiClip,
+                                siliconExcursionPct = estExcursionPct,
+                                siliconSvfCutoffHz = estSvfHz,
+                                siliconCoilTempC = smoothedTemp,
+                                siliconClassHRailV = estRailV,
+                                siliconTruePeakGrDb = estTpGr
                             )
                         }
 
@@ -1230,7 +1290,8 @@ class EqualizerAudioEngine(private val context: Context) {
             accommodationsApplyToMedia = currentAccommodationsApplyToMedia,
             accommodationsOutputGainDb = currentAccommodationsOutputGainDb,
             loudnessMaximizerEnabled = currentLoudnessMaximizerEnabled,
-            loudnessBoostPercent = currentLoudnessBoostPercent
+            loudnessBoostPercent = currentLoudnessBoostPercent,
+            siliconDspEnabled = currentSiliconDspEnabled
         )
     }
 

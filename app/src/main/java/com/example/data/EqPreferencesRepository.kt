@@ -68,6 +68,7 @@ class EqPreferencesRepository(private val context: Context) {
         fun accommodationsOutputGainKey(target: OutputTarget) = floatPreferencesKey("acc_output_gain_${target.id}")
         fun loudnessMaxEnabledKey(target: OutputTarget) = booleanPreferencesKey("loudness_max_enabled_${target.id}")
         fun loudnessBoostPctKey(target: OutputTarget) = floatPreferencesKey("loudness_boost_pct_${target.id}")
+        fun siliconDspKey(target: OutputTarget) = booleanPreferencesKey("silicon_dsp_${target.id}")
     }
 
     val preferencesFlow: Flow<StoredEqPreferences> = context.eqDataStore.data.map { prefs ->
@@ -180,7 +181,8 @@ class EqPreferencesRepository(private val context: Context) {
                         com.example.model.HeadphoneAccommodationsSpecs.OUTPUT_GAIN_MAX_DB
                     ),
                 loudnessMaximizerEnabled = prefs[Keys.loudnessMaxEnabledKey(target)] ?: false,
-                loudnessBoostPercent = (prefs[Keys.loudnessBoostPctKey(target)] ?: 0.50f).coerceIn(0f, 1f)
+                loudnessBoostPercent = (prefs[Keys.loudnessBoostPctKey(target)] ?: 0.50f).coerceIn(0f, 1f),
+                siliconDspEnabled = prefs[Keys.siliconDspKey(target)] ?: true
             )
         }
 
@@ -264,6 +266,7 @@ class EqPreferencesRepository(private val context: Context) {
                 )
             prefs[Keys.loudnessMaxEnabledKey(profile.target)] = profile.loudnessMaximizerEnabled
             prefs[Keys.loudnessBoostPctKey(profile.target)] = profile.loudnessBoostPercent.coerceIn(0f, 1f)
+            prefs[Keys.siliconDspKey(profile.target)] = profile.siliconDspEnabled
         }
     }
 }

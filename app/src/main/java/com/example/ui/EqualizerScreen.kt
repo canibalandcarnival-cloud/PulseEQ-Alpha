@@ -62,6 +62,7 @@ import com.example.ui.components.MasterActionBar
 import com.example.ui.components.OutputDeviceSelector
 import com.example.ui.components.PresetQuickStrip
 import com.example.ui.components.PresetsBrowserSheet
+import com.example.ui.components.SiliconDspCard
 import com.example.ui.components.SpatialAudioCard
 import com.example.ui.components.SpeakerDspCard
 import com.example.ui.components.ThreeBandEqualizerCard
@@ -411,6 +412,16 @@ private fun CompactConsoleLayout(
             )
         }
 
+        SiliconDspCard(
+            siliconDspEnabled = profile.siliconDspEnabled,
+            outputTarget = uiState.selectedTarget,
+            isMasterBypassed = profile.isBypassed,
+            abCompareHeld = uiState.abCompareHeld,
+            telemetry = uiState.audioLabTelemetry,
+            onToggleSiliconDsp = viewModel::toggleSiliconDsp,
+            onAbCompareHeld = viewModel::setAbCompareHeld
+        )
+
         LateNightDynamicsCard(
             lateNightEnabled = profile.lateNightEnabled,
             isBypassed = profile.isBypassed,
@@ -631,6 +642,16 @@ private fun WideConsoleLayout(
                         onSelectTuningProfile = viewModel::selectSpeakerTuningProfile
                     )
                 }
+
+                SiliconDspCard(
+                    siliconDspEnabled = profile.siliconDspEnabled,
+                    outputTarget = uiState.selectedTarget,
+                    isMasterBypassed = profile.isBypassed,
+                    abCompareHeld = uiState.abCompareHeld,
+                    telemetry = uiState.audioLabTelemetry,
+                    onToggleSiliconDsp = viewModel::toggleSiliconDsp,
+                    onAbCompareHeld = viewModel::setAbCompareHeld
+                )
 
                 LateNightDynamicsCard(
                     lateNightEnabled = profile.lateNightEnabled,

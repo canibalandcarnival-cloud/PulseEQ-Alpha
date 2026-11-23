@@ -263,7 +263,12 @@ data class AudioLabTelemetry(
     val voiceMicLevelDb: Float = -60f,
     val loudnessRmsGrDb: Float = 0f,
     val loudnessBrickwallGrDb: Float = 0f,
-    val loudnessAntiClipActive: Boolean = false
+    val loudnessAntiClipActive: Boolean = false,
+    val siliconExcursionPct: Float = 0f,
+    val siliconSvfCutoffHz: Float = 68f,
+    val siliconCoilTempC: Float = 25f,
+    val siliconClassHRailV: Float = 3.7f,
+    val siliconTruePeakGrDb: Float = 0f
 )
 
 @Immutable
@@ -314,7 +319,8 @@ data class OutputEqProfile(
     val accommodationsApplyToVoice: Boolean = false,
     val accommodationsOutputGainDb: Float = 0f,
     val loudnessMaximizerEnabled: Boolean = false,
-    val loudnessBoostPercent: Float = 0.50f
+    val loudnessBoostPercent: Float = 0.50f,
+    val siliconDspEnabled: Boolean = true
 ) {
     companion object {
         fun defaultGainsForTarget(target: OutputTarget): List<Float> = when (target) {
@@ -430,6 +436,37 @@ object HeadphoneAccommodationsSpecs {
     const val OUTPUT_GAIN_MIN_DB = 0f
     const val OUTPUT_GAIN_MAX_DB = 10f
     const val MAX_PROFILE_BOOST_DB = 3.0f
+}
+
+object SiliconDspSpecs {
+    const val SAMPLE_RATE_HZ = 48000
+    const val LOOKAHEAD_SEC = 0.005
+    const val SIDECHAIN_LPF_HZ = 140.0
+    const val RESONANT_F0_HZ = 92.0
+    const val QTS = 0.85
+    const val EXCURSION_DRIVE_SCALE = 1.35
+    const val SVF_ATTACK_SEC = 0.0005
+    const val SVF_RELEASE_SEC = 0.120
+    const val SVF_MIN_HZ = 68.0
+    const val SVF_MAX_HZ = 122.0
+    const val SVF_HEADPHONES_HZ = 24.0
+    const val THERMAL_TAU_COIL_SEC = 1.8
+    const val THERMAL_TAU_MAGNET_SEC = 18.0
+    const val THERMAL_COIL_GAIN = 120.0
+    const val AMBIENT_TEMP_C = 25.0
+    const val MAX_TEMP_C = 95.0
+    const val THERMAL_PROTECT_START_C = 72.0
+    const val THERMAL_MAX_REDUCTION_DB = 6.0
+    const val CLASS_H_ATTACK_SEC = 0.0002
+    const val CLASS_H_DECAY_SEC = 0.060
+    const val CLASS_H_MIN_VOLTS = 3.7
+    const val CLASS_H_MAX_VOLTS = 11.5
+    const val SOFT_KNEE_THRESHOLD_DBFS = -3.0
+    const val SOFT_KNEE_CEILING = 0.992
+    const val RECON_LPF_HZ = 19200.0
+    const val MICRO_AIR_HZ = 14500.0
+    const val MICRO_AIR_GAIN_DB = 1.1
+    const val TRUE_PEAK_CEILING_DBTP = -0.2
 }
 
 object EqPresetsCatalog {

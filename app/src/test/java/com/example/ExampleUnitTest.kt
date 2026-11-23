@@ -842,4 +842,90 @@ class ExampleUnitTest {
         assertTrue("Cinematic must anchor Mid dialogue ($cinemaMid vs $stdMid)", cinemaMid > stdMid * 1.05)
         assertTrue("Cinematic must expand Side score ($cinemaSide vs $stdSide)", cinemaSide > stdSide * 1.2)
     }
+
+    @Test
+    fun silicon_dsp_core_runs_5_hardware_stages_at_48khz() {
+        val sampleRate = 48000
+
+        // 1. Stage 1: Exact 5 ms lookahead ring buffer = 240 samples at 48 kHz
+        val lookaheadCore = com.example.audio.SiliconDspCore(sampleRate).apply {
+            configure(isEnabled = true, target = com.example.model.OutputTarget.HEADPHONES)
+        }
+        assertEquals(240, lookaheadCore.lookaheadSamples)
+        for (i in 0 until 240) {
+            val (oL, oR) = lookaheadCore.processStereoSample(0.25, 0.25)
+            // First 240 samples read from zero-initialized lookahead buffer
+            assertEquals("Sample $i before 5ms lookahead must be zero-buffered", 0.0, oL, 1e-6)
+            assertEquals("Sample $i before 5ms lookahead must be zero-buffered", 0.0, oR, 1e-6)
+        }
+        var postLookaheadEnergy = 0.0
+        for (i in 0 until 240) {
+            val (oL, _) = lookaheadCore.processStereoSample(0.25, 0.25)
+            postLookaheadEnergy += abs(oL)
+        }
+        assertTrue("Signal must emerge after exact 240-sample 5ms lookahead", postLookaheadEnergy > 10.0)
+
+        // 2. Stage 2 & Stage 3: Phone Speaker heavy <92Hz bass drives spring-mass-damper excursion,
+        //    modulates SVF cutoff upward from 68Hz toward 122Hz, warms dual-tau voice coil (>25°C),
+        //    and boosts Adaptive Class-H rail above 3.7V (Headphones stay at 24Hz SVF).
+        val speakerCore = com.example.audio.SiliconDspCore(sampleRate).apply {
+            configure(isEnabled = true, target = com.example.model.OutputTarget.SPEAKER)
+        }
+        val headphoneCore = com.example.audio.SiliconDspCore(sampleRate).apply {
+            configure(isEnabled = true, target = com.example.model.OutputTarget.HEADPHONES)
+        }
+        var maxSpeakerSvfHz = 0f
+        var maxExcursionPct = 0f
+        var maxRailV = 0f
+        for (i in 0 until 24000) { // 0.5 seconds at 48 kHz
+            val s = 0.85 * kotlin.math.sin(2.0 * Math.PI * 92.0 * i / sampleRate)
+            speakerCore.processStereoSample(s, s)
+            headphoneCore.processStereoSample(s, s)
+            maxSpeakerSvfHz = maxOf(maxSpeakerSvfHz, speakerCore.latestSvfCutoffHz)
+            maxExcursionPct = maxOf(maxExcursionPct, speakerCore.latestExcursionPercent)
+            maxRailV = maxOf(maxRailV, speakerCore.latestClassHRailV)
+        }
+        assertTrue("92Hz bass must drive membrane excursion ($maxExcursionPct%)", maxExcursionPct > 45f)
+        assertTrue("Phone Speaker SVF cutoff must modulate > 85Hz ($maxSpeakerSvfHz Hz)", maxSpeakerSvfHz > 85f)
+        assertTrue("Headphones SVF cutoff must settle near 24Hz (${headphoneCore.latestSvfCutoffHz} Hz)", headphoneCore.latestSvfCutoffHz < 30f)
+        assertTrue("Dual-tau voice-coil temperature must rise above 25°C (${speakerCore.latestCoilTempC}°C)", speakerCore.latestCoilTempC > 28f)
+        assertTrue("Adaptive Class-H rail must track upward from 3.7V ($maxRailV V)", maxRailV > 8.0f)
+
+        // 3. Stage 3 & Stage 5: Soft-knee ceiling 0.992 + Micro-Air + 4x Catmull-Rom -0.2 dBTP brickwall on hot peaks
+        val tpLimitLinear = Math.pow(10.0, -0.2 / 20.0) // ~0.9772
+        val hotCore = com.example.audio.SiliconDspCore(sampleRate).apply {
+            configure(isEnabled = true, target = com.example.model.OutputTarget.HEADPHONES)
+        }
+        var maxHotOut = 0.0
+        var minTpGrDb = 0f
+        for (i in 0 until 4800) {
+            // Hot 3.5 kHz + 14.5 kHz Micro-Air signal creating inter-sample overshoot above -0.2 dBTP
+            val hot = 0.90 * kotlin.math.sin(2.0 * Math.PI * 3500.0 * i / sampleRate + 0.35) +
+                0.70 * kotlin.math.sin(2.0 * Math.PI * 14500.0 * i / sampleRate + 0.7)
+            val (oL, oR) = hotCore.processStereoSample(hot, hot)
+            maxHotOut = maxOf(maxHotOut, abs(oL), abs(oR))
+            minTpGrDb = minOf(minTpGrDb, hotCore.latestTruePeakGrDb)
+        }
+        assertTrue("4x True-Peak limiter must enforce <= -0.2 dBTP ($tpLimitLinear), actual=$maxHotOut", maxHotOut <= tpLimitLinear + 1e-4)
+        assertTrue("True-Peak reduction telemetry must report negative dB ($minTpGrDb dB)", minTpGrDb < -0.35f)
+
+        // 4. End-to-end BiquadEqFilterBank integration with siliconDspEnabled = true
+        val bank = BiquadEqFilterBank(sampleRate).apply {
+            updateParameters(
+                gainsDb = List(10) { 0f },
+                preampDb = 6f,
+                isBypassed = false,
+                outputTarget = com.example.model.OutputTarget.SPEAKER,
+                siliconDspEnabled = true
+            )
+        }
+        var integratedPeak = 0.0
+        for (i in 0 until 2400) {
+            val s = 0.75 * kotlin.math.sin(2.0 * Math.PI * 100.0 * i / sampleRate)
+            val (oL, oR) = bank.processStereoSample(s, s)
+            integratedPeak = maxOf(integratedPeak, abs(oL), abs(oR))
+        }
+        assertTrue("Integrated Silicon DSP Core output must remain bounded <= 0.99 ($integratedPeak)", integratedPeak <= 0.99)
+        assertTrue("Integrated BiquadEqFilterBank must expose positive excursion telemetry", bank.latestSiliconExcursionPct > 5f)
+    }
 }
