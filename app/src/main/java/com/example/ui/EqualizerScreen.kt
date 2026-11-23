@@ -390,11 +390,9 @@ private fun CompactConsoleLayout(
             midsDb = profile.threeBandMidsDb,
             trebleDb = profile.threeBandTrebleDb,
             isMasterBypassed = profile.isBypassed,
-            isSpeakerTarget = uiState.selectedTarget == OutputTarget.SPEAKER,
             onBassChange = viewModel::updateThreeBandBass,
             onMidsChange = viewModel::updateThreeBandMids,
             onTrebleChange = viewModel::updateThreeBandTreble,
-            onApplyQuickPreset = viewModel::applyThreeBandPreset,
             onToggleEnabled = viewModel::toggleThreeBandEnabled,
             onReset = viewModel::resetThreeBand
         )
@@ -611,11 +609,9 @@ private fun WideConsoleLayout(
                     midsDb = profile.threeBandMidsDb,
                     trebleDb = profile.threeBandTrebleDb,
                     isMasterBypassed = profile.isBypassed,
-                    isSpeakerTarget = uiState.selectedTarget == OutputTarget.SPEAKER,
                     onBassChange = viewModel::updateThreeBandBass,
                     onMidsChange = viewModel::updateThreeBandMids,
                     onTrebleChange = viewModel::updateThreeBandTreble,
-                    onApplyQuickPreset = viewModel::applyThreeBandPreset,
                     onToggleEnabled = viewModel::toggleThreeBandEnabled,
                     onReset = viewModel::resetThreeBand
                 )

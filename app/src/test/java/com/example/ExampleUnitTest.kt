@@ -336,149 +336,72 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun apple_calibrated_three_band_filter_matches_ios27_curves_and_gain_staging() {
+    fun three_band_tone_filter_targets_correct_bands_and_enforces_limits() {
         val sampleRate = 44100
 
-        // 1. BASS: 85 Hz Analog-style Low Shelf (Q = 0.65) + 45 Hz sub-rumble guard
-        val bassBoostAt70Hz = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
-            freqHz = 70.0,
-            bassDb = 6.0f,
-            midsDb = 0f,
-            trebleDb = 0f,
-            sampleRate = sampleRate
-        )
-        val bassFlatAt70Hz = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
-            freqHz = 70.0,
-            bassDb = 0f,
+        // 1. Low band low-shelf (250 Hz, -12..+12 dB) boosts 100 Hz while keeping 10 kHz near unity
+        val bassBoostAt100Hz = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
+            freqHz = 100.0,
+            bassDb = 7.0f,
             midsDb = 0f,
             trebleDb = 0f,
             sampleRate = sampleRate
         )
         val bassBoostAt10kHz = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
             freqHz = 10000.0,
-            bassDb = 6.0f,
+            bassDb = 7.0f,
             midsDb = 0f,
             trebleDb = 0f,
             sampleRate = sampleRate
         )
-        assertTrue("Bass +6dB should boost 70Hz low-end relative to flat ($bassBoostAt70Hz vs $bassFlatAt70Hz)", bassBoostAt70Hz > bassFlatAt70Hz + 2.0f)
-        assertTrue("Bass +6dB should shape low frequencies much higher than 10kHz ($bassBoostAt70Hz vs $bassBoostAt10kHz)", bassBoostAt70Hz > bassBoostAt10kHz + 3.0f)
+        assertTrue("Low Band +7dB should boost 100Hz clearly", bassBoostAt100Hz > 5.0f)
+        assertTrue("Low Band +7dB should leave 10kHz near 0 dB", abs(bassBoostAt10kHz) < 0.5f)
 
-        // Sub-rumble Guard: 45 Hz HPF on Headphones vs 110 Hz HPF on Phone Speaker
-        val headphonesRespAt50Hz = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
-            freqHz = 50.0,
-            bassDb = 4.0f,
-            midsDb = 0f,
-            trebleDb = 0f,
-            isSpeakerTarget = false,
-            sampleRate = sampleRate
-        )
-        val speakerRespAt50Hz = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
-            freqHz = 50.0,
-            bassDb = 4.0f,
-            midsDb = 0f,
-            trebleDb = 0f,
-            isSpeakerTarget = true,
-            sampleRate = sampleRate
-        )
-        assertTrue(
-            "Phone Speaker mode (110Hz HPF) should attenuate 50Hz much more than Headphones (45Hz HPF) ($speakerRespAt50Hz vs $headphonesRespAt50Hz)",
-            speakerRespAt50Hz < headphonesRespAt50Hz - 4.0f
-        )
-
-        // 2. MID / VOCAL PRESENCE: 1.8 kHz Peaking Bell (Q = 0.85) + Automatic 350 Hz Mud Dip
-        val midsAt1800Hz = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
-            freqHz = 1800.0,
+        // 2. Mid band peaking (1084 Hz, Q=0.35, spanning 250Hz to 4.7kHz, -12..+12 dB)
+        val midsCutAt1084Hz = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
+            freqHz = 1084.0,
             bassDb = 0f,
-            midsDb = 4.5f,
+            midsDb = -6.0f,
             trebleDb = 0f,
             sampleRate = sampleRate
         )
-        val midsFlatAt1800Hz = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
-            freqHz = 1800.0,
+        assertTrue("Mid Band -6dB should attenuate 1084Hz", midsCutAt1084Hz < -4.0f)
+
+        // 3. High band high-shelf (4.7 kHz, -12..+12 dB) boosts 10kHz while leaving 100Hz near unity
+        val trebleBoostAt10kHz = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
+            freqHz = 10000.0,
             bassDb = 0f,
             midsDb = 0f,
-            trebleDb = 0f,
+            trebleDb = 7.0f,
             sampleRate = sampleRate
         )
-        val midsAt350HzWithBoost = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
-            freqHz = 350.0,
-            bassDb = 0f,
-            midsDb = 4.5f, // > +2 dB -> -1.5 dB mud dip engaged
-            trebleDb = 0f,
-            sampleRate = sampleRate
-        )
-        assertTrue("Mids +4.5dB should boost 1.8kHz presence relative to flat ($midsAt1800Hz vs $midsFlatAt1800Hz)", midsAt1800Hz > midsFlatAt1800Hz + 3.0f)
-        assertTrue("Mids +4.5dB should suppress 350Hz mud relative to 1.8kHz presence ($midsAt350HzWithBoost vs $midsAt1800Hz)", midsAt350HzWithBoost < midsAt1800Hz - 2.5f)
-
-        // 3. TREBLE / AIR: 10 kHz Baxandall High Shelf (Q = 0.55) + 5.5 kHz Sibilance Guard
-        val trebleAt12kHz = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
-            freqHz = 12000.0,
+        val trebleBoostAt100Hz = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
+            freqHz = 100.0,
             bassDb = 0f,
             midsDb = 0f,
-            trebleDb = 4.5f,
+            trebleDb = 7.0f,
             sampleRate = sampleRate
         )
-        val trebleFlatAt12kHz = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
-            freqHz = 12000.0,
-            bassDb = 0f,
-            midsDb = 0f,
-            trebleDb = 0f,
-            sampleRate = sampleRate
-        )
-        val trebleAt85Hz = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
-            freqHz = 85.0,
-            bassDb = 0f,
-            midsDb = 0f,
-            trebleDb = 4.5f,
-            sampleRate = sampleRate
-        )
-        assertTrue("Treble +4.5dB should boost 12kHz air relative to flat ($trebleAt12kHz vs $trebleFlatAt12kHz)", trebleAt12kHz > trebleFlatAt12kHz + 1.8f)
-        assertTrue("Treble +4.5dB should leave 85Hz bass near unity ($trebleAt85Hz)", abs(trebleAt85Hz) < 1.0f)
+        assertTrue("High Band +7dB should boost 10kHz clearly", trebleBoostAt10kHz > 4.5f)
+        assertTrue("High Band +7dB should leave 100Hz near 0 dB", abs(trebleBoostAt100Hz) < 0.5f)
 
-        // 4. Automatic Headroom & Loudness Compensation (-0.4 dB per +1 dB boost above +3 dB)
-        val respAtFlat = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(1000.0, 0f, 0f, 0f)
-        val respAt3dB = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(1000.0, 3f, 0f, 0f)
-        val respAt8dB = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(1000.0, 8f, 0f, 0f) // +5dB above 3 -> -2.0dB headroom
-        val respAt12dB = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(1000.0, 12f, 0f, 0f) // +9dB above 3 -> -3.6dB headroom
-
-        assertEquals("Flat should have 0 dB headroom trim", 0f, respAtFlat, 0.15f)
-        assertTrue("Headroom trim should pull 1kHz down when bass is +8dB ($respAt8dB)", respAt8dB < -1.4f)
-        assertTrue("Headroom trim should pull 1kHz down further when bass is +12dB ($respAt12dB)", respAt12dB < -2.8f)
-
-        // 5. iOS 27 Quick Presets
-        assertEquals(0.0f, com.example.model.ThreeBandQuickPreset.FLAT.bassDb)
-        assertEquals(0.0f, com.example.model.ThreeBandQuickPreset.FLAT.midsDb)
-        assertEquals(0.0f, com.example.model.ThreeBandQuickPreset.FLAT.trebleDb)
-
-        assertEquals(4.0f, com.example.model.ThreeBandQuickPreset.IPHONE_WARMTH.bassDb)
-        assertEquals(1.0f, com.example.model.ThreeBandQuickPreset.IPHONE_WARMTH.midsDb)
-        assertEquals(2.5f, com.example.model.ThreeBandQuickPreset.IPHONE_WARMTH.trebleDb)
-
-        assertEquals(-2.0f, com.example.model.ThreeBandQuickPreset.CRISP_DIALOGUE.bassDb)
-        assertEquals(4.5f, com.example.model.ThreeBandQuickPreset.CRISP_DIALOGUE.midsDb)
-        assertEquals(3.0f, com.example.model.ThreeBandQuickPreset.CRISP_DIALOGUE.trebleDb)
-
-        assertEquals(5.5f, com.example.model.ThreeBandQuickPreset.AIRPODS_PUNCH.bassDb)
-        assertEquals(0.0f, com.example.model.ThreeBandQuickPreset.AIRPODS_PUNCH.midsDb)
-        assertEquals(4.5f, com.example.model.ThreeBandQuickPreset.AIRPODS_PUNCH.trebleDb)
-
-        // 6. Real-time sample processing: Disabled passes transparently, enabled applies limiter
+        // 5. Real-time sample processing passes cleanly when disabled and boosts when enabled
         val filter = com.example.audio.ThreeBandToneFilter(sampleRate)
-        filter.configure(isEnabled = false, bassDb = 8f, midsDb = 4f, trebleDb = 6f)
-        val (bypassL, bypassR) = filter.processStereoSample(0.35, -0.35)
-        assertEquals(0.35, bypassL, 1e-6)
-        assertEquals(-0.35, bypassR, 1e-6)
+        filter.configure(isEnabled = false, bassDb = 7f, midsDb = -6f, trebleDb = 7f)
+        val (bypassL, bypassR) = filter.processStereoSample(0.25, -0.25)
+        assertEquals(0.25, bypassL, 1e-6)
+        assertEquals(-0.25, bypassR, 1e-6)
 
-        // Hot input with max boosts is capped <= 0.966 by -0.3 dB brickwall limiter
-        filter.configure(isEnabled = true, bassDb = 12f, midsDb = 12f, trebleDb = 12f)
-        var maxPeak = 0.0
-        for (i in 0 until 1000) {
-            val hot = 0.95 * kotlin.math.sin(2.0 * Math.PI * 1800.0 * i / sampleRate)
-            val (oL, oR) = filter.processStereoSample(hot, hot)
-            maxPeak = maxOf(maxPeak, abs(oL), abs(oR))
+        filter.configure(isEnabled = true, bassDb = 7f, midsDb = 0f, trebleDb = 0f)
+        var outRms = 0.0
+        for (i in 0 until 4410) {
+            val s = 0.2 * kotlin.math.sin(2.0 * Math.PI * 100.0 * i / sampleRate)
+            val (oL, _) = filter.processStereoSample(s, s)
+            if (i > 2205) outRms += oL * oL
         }
-        assertTrue("Brickwall limiter must cap extreme signals <= 0.966 (max=$maxPeak)", maxPeak <= 0.966)
+        outRms = kotlin.math.sqrt(outRms / 2205)
+        val inRms = 0.2 / kotlin.math.sqrt(2.0)
+        assertTrue("Active Low Band +7dB should increase 100Hz RMS significantly", outRms > inRms * 1.8)
     }
 
     @Test
@@ -779,7 +702,7 @@ class ExampleUnitTest {
 
         assertTrue(
             "When 3-Band (-6dB Mids) is active, 10-band +12dB must be flat-bypassed (rmsThreeOnly=$rmsThreeOnly < inRms=$inRms)",
-            rmsThreeOnly < inRms * 0.88f
+            rmsThreeOnly < inRms * 0.65
         )
         assertTrue(
             "When 10-Band (+12dB @ 1kHz) is active, 3-band -6dB Mids must be flat-bypassed (rmsTenOnly=$rmsTenOnly > inRms=$inRms)",

@@ -353,48 +353,6 @@ object ThreeBandEqRanges {
     const val TREBLE_MAX_DB = 12f
 }
 
-enum class ThreeBandQuickPreset(
-    val id: String,
-    val label: String,
-    val subtitle: String,
-    val bassDb: Float,
-    val midsDb: Float,
-    val trebleDb: Float
-) {
-    FLAT(
-        id = "flat",
-        label = "Flat",
-        subtitle = "0.0 dB reference",
-        bassDb = 0.0f,
-        midsDb = 0.0f,
-        trebleDb = 0.0f
-    ),
-    IPHONE_WARMTH(
-        id = "iphone_warmth",
-        label = "iPhone Warmth",
-        subtitle = "85Hz warmth & smooth highs",
-        bassDb = 4.0f,
-        midsDb = 1.0f,
-        trebleDb = 2.5f
-    ),
-    CRISP_DIALOGUE(
-        id = "crisp_dialogue",
-        label = "Crisp Dialogue",
-        subtitle = "1.8kHz voice & 350Hz mud dip",
-        bassDb = -2.0f,
-        midsDb = 4.5f,
-        trebleDb = 3.0f
-    ),
-    AIRPODS_PUNCH(
-        id = "airpods_punch",
-        label = "AirPods Punch",
-        subtitle = "85Hz punch & 10kHz air",
-        bassDb = 5.5f,
-        midsDb = 0.0f,
-        trebleDb = 4.5f
-    )
-}
-
 object LoudnessMaximizerSpecs {
     const val SUB_BASS_HPF_HZ = 115.0
     const val MAX_MAKEUP_BOOST_DB = 9.0f
