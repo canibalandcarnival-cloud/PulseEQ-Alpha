@@ -676,6 +676,27 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
         commitProfile(updated)
     }
 
+    fun toggleAdaptiveMultiband() {
+        val current = currentProfile()
+        val enabling = !current.adaptiveMultibandEnabled
+        val updated = current.copy(
+            adaptiveMultibandEnabled = enabling,
+            isBypassed = if (enabling && current.isBypassed) false else current.isBypassed
+        )
+        commitProfile(updated)
+    }
+
+    fun toggleSpeakerPhaseAlignment() {
+        val current = currentProfile()
+        val enabling = !current.speakerPhaseAlignmentEnabled
+        val updated = current.copy(
+            speakerPhaseAlignmentEnabled = enabling,
+            speakerDspEnabled = if (enabling && current.target == OutputTarget.SPEAKER) true else current.speakerDspEnabled,
+            isBypassed = if (enabling && current.isBypassed) false else current.isBypassed
+        )
+        commitProfile(updated)
+    }
+
     fun openCustomAudioSetup() {
         audioEngine.customAudioSetupEngine.open(currentProfile().accommodationsSoftIntensity)
     }
@@ -837,7 +858,9 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             phoneOrientationMode = profile.phoneOrientationMode,
             deviceIsLandscape = deviceIsLandscapeFlow.value,
             masterVolumePercent = profile.masterVolumePercent,
-            proMaxBodyWarmthEnabled = profile.proMaxBodyWarmthEnabled
+            proMaxBodyWarmthEnabled = profile.proMaxBodyWarmthEnabled,
+            adaptiveMultibandEnabled = profile.adaptiveMultibandEnabled,
+            speakerPhaseAlignmentEnabled = profile.speakerPhaseAlignmentEnabled
         )
     }
 

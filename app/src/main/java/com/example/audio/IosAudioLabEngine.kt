@@ -32,22 +32,26 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /**
- * 1. Sound Check (Auto-Volume Normalization toward -16 LUFS):
+ * 1. Apple Music "Sound Check" Dynamic Crest Controller (Target: -16 LUFS):
  * Uses a K-weighted ITU-R BS.1770 style sidechain RMS detector (100Hz HPF + 1.6kHz +4dB shelf)
- * and smoothly slews compensatory preamp gain without heavy peak compression.
+ * paired with a momentary transient crest tracker so quiet videos/songs and loud tracks smoothly
+ * converge toward -16 LUFS without squashing musical punch or clipping dynamic transients.
  */
 class SoundCheckNormalizer(private val sampleRate: Int = 44100) {
-    private val targetLufs = -16.0
+    private val targetLufs = com.example.model.AdaptiveMultibandPhaseSpecs.SOUND_CHECK_TARGET_LUFS
 
     // K-weighting detector stages
     private val kHighPass = StereoBiquad().apply { setHighPass(sampleRate, 100.0, 0.7071) }
     private val kHighShelf = StereoBiquad().apply { setHighShelf(sampleRate, 1600.0, 0.7071, 4.0) }
 
-    private val rmsAlpha = exp(-1.0 / (0.350 * sampleRate)) // 350ms integration window
-    private val gainAttackAlpha = exp(-1.0 / (0.500 * sampleRate))
+    private val rmsAlpha = exp(-1.0 / (0.350 * sampleRate)) // 350ms LUFS integration window
+    private val peakAttackAlpha = exp(-1.0 / (0.005 * sampleRate))
+    private val peakReleaseAlpha = exp(-1.0 / (0.180 * sampleRate))
+    private val gainAttackAlpha = exp(-1.0 / (0.450 * sampleRate))
     private val gainReleaseAlpha = exp(-1.0 / (1.200 * sampleRate))
 
     private var meanSquareEnergy = 10.0.pow(-16.0 / 10.0)
+    private var peakEnvelope = 10.0.pow(-16.0 / 20.0)
     private var currentTrimDb = 0.0
 
     @Volatile
@@ -61,11 +65,17 @@ class SoundCheckNormalizer(private val sampleRate: Int = 44100) {
     var latestTrimDb: Float = 0f
         private set
 
+    @Volatile
+    var latestCrestDb: Float = 0f
+        private set
+
     fun reset() {
         meanSquareEnergy = 10.0.pow(-16.0 / 10.0)
+        peakEnvelope = 10.0.pow(-16.0 / 20.0)
         currentTrimDb = 0.0
         latestLufs = -60f
         latestTrimDb = 0f
+        latestCrestDb = 0f
     }
 
     fun processStereoSample(inL: Double, inR: Double): Pair<Double, Double> {
@@ -81,15 +91,29 @@ class SoundCheckNormalizer(private val sampleRate: Int = 44100) {
         }
         latestLufs = lufs.toFloat()
 
+        val instPeak = maxOf(abs(inL), abs(inR)).coerceAtLeast(1e-6)
+        val pAlpha = if (instPeak > peakEnvelope) peakAttackAlpha else peakReleaseAlpha
+        peakEnvelope = pAlpha * peakEnvelope + (1.0 - pAlpha) * instPeak
+        val peakDb = (20.0 * log10(peakEnvelope.coerceAtLeast(1e-6))).coerceIn(-60.0, 0.0)
+        val crestDb = (peakDb - lufs).coerceIn(0.0, 30.0)
+        latestCrestDb = crestDb.toFloat()
+
         if (!enabled) {
             currentTrimDb = 0.0
             latestTrimDb = 0f
             return inL to inR
         }
 
-        // Only normalize when meaningful audio signal is present (> -48 LUFS)
+        // Only normalize when meaningful audio signal is present (> -48 LUFS);
+        // cap upward makeup cleanly against transient peak headroom to preserve musical punch.
         val desiredTrim = if (lufs > -48.0) {
-            (targetLufs - lufs).coerceIn(-12.0, 12.0)
+            val rawTrim = (targetLufs - lufs).coerceIn(-12.0, 12.0)
+            if (rawTrim > 0.0) {
+                val headroomLimitDb = (-1.2 - peakDb).coerceAtLeast(0.0)
+                minOf(rawTrim, headroomLimitDb)
+            } else {
+                rawTrim
+            }
         } else {
             0.0
         }
@@ -98,7 +122,19 @@ class SoundCheckNormalizer(private val sampleRate: Int = 44100) {
         latestTrimDb = currentTrimDb.toFloat()
 
         val linear = 10.0.pow(currentTrimDb / 20.0)
-        return (inL * linear) to (inR * linear)
+        val outL = softCrestGuard(inL * linear)
+        val outR = softCrestGuard(inR * linear)
+        return outL to outR
+    }
+
+    private fun softCrestGuard(x: Double): Double {
+        val thresh = 0.89
+        val ax = abs(x)
+        if (ax <= thresh) return x
+        val ceil = com.example.model.AdaptiveMultibandPhaseSpecs.CREST_SOFT_LIMITER_CEILING
+        val headroom = ceil - thresh
+        val shaped = thresh + headroom * kotlin.math.tanh((ax - thresh) / headroom)
+        return if (x >= 0.0) shaped else -shaped
     }
 
     companion object {

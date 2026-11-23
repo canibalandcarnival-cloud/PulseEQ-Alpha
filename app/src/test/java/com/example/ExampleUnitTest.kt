@@ -1194,4 +1194,145 @@ class ExampleUnitTest {
         assertTrue("125Hz Body Warmth must noticeably boost 125Hz chamber warmth ($rmsYes vs $rmsNo)", rmsYes > rmsNo * 1.18)
         assertTrue("2nd-order saturation must enrich 250Hz even harmonic ($correlation250Yes vs $correlation250No)", abs(correlation250Yes) > abs(correlation250No) * 1.5)
     }
+
+    @Test
+    fun adaptive_multiband_lr4_crossovers_sum_flat_and_compress_bands_independently() {
+        val sampleRate = 48000
+
+        // 1. LR4 3-band split (<220Hz, 220Hz-3.8kHz, >3.8kHz) must reconstruct multi-tone audio cleanly without crossover dip
+        val splitter = com.example.audio.AdaptiveMultibandToneBalancer(sampleRate).apply {
+            configure(isEnabled = true)
+        }
+        var sumSqIn = 0.0
+        var sumSqOut = 0.0
+        for (i in 0 until 4800) {
+            val s = 0.03 * (
+                kotlin.math.sin(2.0 * Math.PI * 100.0 * i / sampleRate) +
+                    kotlin.math.sin(2.0 * Math.PI * 220.0 * i / sampleRate) +
+                    kotlin.math.sin(2.0 * Math.PI * 1200.0 * i / sampleRate) +
+                    kotlin.math.sin(2.0 * Math.PI * 3800.0 * i / sampleRate) +
+                    kotlin.math.sin(2.0 * Math.PI * 8000.0 * i / sampleRate)
+                )
+            val (low, mid, high) = splitter.splitBandsStereo(s, s)
+            val recon = low.first + mid.first + high.first
+            if (i > 2400) {
+                sumSqIn += s * s
+                sumSqOut += recon * recon
+            }
+        }
+        val rmsIn = kotlin.math.sqrt(sumSqIn / 2400)
+        val rmsOut = kotlin.math.sqrt(sumSqOut / 2400)
+        val ratioDb = 20.0 * kotlin.math.log10(rmsOut / rmsIn)
+        assertTrue("LR4 3-band sum must stay flat within +-0.35 dB across crossovers (got $ratioDb dB)", abs(ratioDb) < 0.35)
+
+        // 2. Heavy 80Hz bass compresses Low band without ducking a simultaneous 1.2kHz Mid vocal tone
+        val balancerLowTest = com.example.audio.AdaptiveMultibandToneBalancer(sampleRate).apply {
+            configure(isEnabled = true)
+        }
+        var minLowGr = 0f
+        var midGrDuringBass = 0f
+        for (i in 0 until 4800) {
+            val heavyBass = 0.65 * kotlin.math.sin(2.0 * Math.PI * 80.0 * i / sampleRate)
+            val vocal = 0.05 * kotlin.math.sin(2.0 * Math.PI * 1200.0 * i / sampleRate)
+            balancerLowTest.processStereoSample(heavyBass + vocal, heavyBass + vocal)
+            if (i > 2400) {
+                minLowGr = minOf(minLowGr, balancerLowTest.latestLowGrDb)
+                midGrDuringBass = minOf(midGrDuringBass, balancerLowTest.latestMidGrDb)
+            }
+        }
+        assertTrue("Heavy 80Hz bass must compress Low band ($minLowGr dB)", minLowGr < -2.0f)
+        assertTrue("Heavy 80Hz bass must NOT duck 1.2kHz vocal Mid band ($midGrDuringBass dB)", abs(midGrDuringBass) < 0.1f)
+
+        // 3. Loud 6kHz transient compresses High band without pumping a simultaneous 1.2kHz Mid vocal tone
+        val balancerHighTest = com.example.audio.AdaptiveMultibandToneBalancer(sampleRate).apply {
+            configure(isEnabled = true)
+        }
+        var minHighGr = 0f
+        var midGrDuringHigh = 0f
+        for (i in 0 until 4800) {
+            val snareHigh = 0.60 * kotlin.math.sin(2.0 * Math.PI * 6000.0 * i / sampleRate)
+            val vocal = 0.05 * kotlin.math.sin(2.0 * Math.PI * 1200.0 * i / sampleRate)
+            balancerHighTest.processStereoSample(snareHigh + vocal, snareHigh + vocal)
+            if (i > 2400) {
+                minHighGr = minOf(minHighGr, balancerHighTest.latestHighGrDb)
+                midGrDuringHigh = minOf(midGrDuringHigh, balancerHighTest.latestMidGrDb)
+            }
+        }
+        assertTrue("Loud 6kHz snare/treble must compress High band ($minHighGr dB)", minHighGr < -2.0f)
+        assertTrue("Loud 6kHz transient must NOT pump 1.2kHz vocal Mid band ($midGrDuringHigh dB)", abs(midGrDuringHigh) < 0.1f)
+    }
+
+    @Test
+    fun speaker_phase_alignment_allpass_preserves_flat_magnitude_and_aligns_1400hz_phase_on_speaker_only() {
+        val sampleRate = 48000
+
+        // 1. Allpass magnitude response must be 0.0 dB across the spectrum (zero impact on 4.5k/7.0k de-harsh or +3dB HF cap)
+        val allpass = com.example.audio.StereoBiquad().apply {
+            setAllPass(
+                sampleRate = sampleRate,
+                freqHz = com.example.model.AdaptiveMultibandPhaseSpecs.PHASE_ALIGN_ALLPASS_HZ,
+                q = com.example.model.AdaptiveMultibandPhaseSpecs.PHASE_ALIGN_ALLPASS_Q
+            )
+        }
+        listOf(100.0, 500.0, 1400.0, 3000.0, 4500.0, 7000.0, 12000.0).forEach { freq ->
+            assertEquals("1.4kHz Allpass must keep strictly 0.0 dB magnitude at $freq Hz", 0.0, allpass.magnitudeDbAt(sampleRate, freq), 1e-4)
+        }
+
+        // Phase at center frequency 1.4 kHz must shift by ~pi radians (180 degrees)
+        val phaseAtCenter = abs(allpass.phaseRadAt(sampleRate, 1400.0))
+        assertTrue("1.4kHz Allpass should shift phase near 180 deg (~3.14 rad, got $phaseAtCenter)", abs(phaseAtCenter - Math.PI) < 0.08)
+
+        // 2. SpeakerPhaseAlignmentFilter engages only when Speaker DSP is active in Phone Speaker Mode
+        val phaseFilter = com.example.audio.SpeakerPhaseAlignmentFilter(sampleRate)
+        phaseFilter.configure(isEnabled = true, outputTarget = com.example.model.OutputTarget.HEADPHONES, speakerDspEnabled = false)
+        assertEquals(false, phaseFilter.isActive)
+
+        val (hpL, hpR) = phaseFilter.processStereoSample(0.37, -0.21)
+        assertEquals(0.37, hpL, 1e-6)
+        assertEquals(-0.21, hpR, 1e-6)
+
+        phaseFilter.configure(isEnabled = true, outputTarget = com.example.model.OutputTarget.SPEAKER, speakerDspEnabled = true)
+        assertEquals(true, phaseFilter.isActive)
+
+        // Verify integrated BiquadEqFilterBank exposes phaseAlignmentActive accurately and keeps treble cap <= +3.0 dB
+        val speakerBank = BiquadEqFilterBank(sampleRate).apply {
+            updateParameters(
+                gainsDb = List(10) { 0f },
+                preampDb = 0f,
+                isBypassed = false,
+                speakerDspEnabled = true,
+                outputTarget = com.example.model.OutputTarget.SPEAKER,
+                accommodationsEnabled = true,
+                accommodationsToneProfile = com.example.model.AccommodationToneProfile.BRIGHTNESS,
+                accommodationsSoftIntensity = com.example.model.SoftSoundIntensity.STRONG,
+                accommodationsApplyToMedia = true,
+                spatialMode = com.example.model.SpatialMode.ATMOS_CINEMA,
+                heightPresence = 1.0f,
+                siliconDspEnabled = true,
+                adaptiveMultibandEnabled = true,
+                speakerPhaseAlignmentEnabled = true
+            )
+        }
+        assertTrue("Phase alignment must report active in Phone Speaker mode", speakerBank.isPhaseAlignmentActive)
+        assertTrue("Combined >4kHz treble cap must remain <= +3.0 dB", speakerBank.latestTrebleCappedBoostDb <= 3.001f)
+    }
+
+    @Test
+    fun sound_check_dynamic_crest_controller_preserves_punch_and_tracks_crest_db() {
+        val sampleRate = 48000
+        val dynamicNormalizer = com.example.audio.SoundCheckNormalizer(sampleRate).apply { enabled = true }
+
+        // Quiet bed (-26 dBFS) punctuated by sharp percussive transients (0.45 peak)
+        var maxOutputAbs = 0.0
+        for (i in 0 until sampleRate) {
+            val isTransient = (i % 4800) in 0 until 240
+            val amp = if (isTransient) 0.45 else 0.05
+            val s = amp * kotlin.math.sin(2.0 * Math.PI * 1000.0 * i / sampleRate)
+            val (oL, oR) = dynamicNormalizer.processStereoSample(s, s)
+            maxOutputAbs = maxOf(maxOutputAbs, abs(oL), abs(oR))
+        }
+
+        assertTrue("Dynamic Crest Controller should report positive crest factor > 3 dB (got ${dynamicNormalizer.latestCrestDb})", dynamicNormalizer.latestCrestDb > 3.0f)
+        assertTrue("Soft-crest guard must keep hot normalized transients <= 0.96 (max=$maxOutputAbs)", maxOutputAbs <= 0.961)
+    }
 }

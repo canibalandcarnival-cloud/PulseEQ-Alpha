@@ -73,6 +73,8 @@ class EqPreferencesRepository(private val context: Context) {
         fun phoneOrientationKey(target: OutputTarget) = stringPreferencesKey("phone_orientation_${target.id}")
         fun masterVolumeKey(target: OutputTarget) = floatPreferencesKey("master_volume_${target.id}")
         fun proMaxBodyWarmthKey(target: OutputTarget) = booleanPreferencesKey("pro_max_body_warmth_${target.id}")
+        fun adaptiveMultibandKey(target: OutputTarget) = booleanPreferencesKey("adaptive_multiband_${target.id}")
+        fun speakerPhaseAlignKey(target: OutputTarget) = booleanPreferencesKey("speaker_phase_align_${target.id}")
     }
 
     val preferencesFlow: Flow<StoredEqPreferences> = context.eqDataStore.data.map { prefs ->
@@ -193,7 +195,9 @@ class EqPreferencesRepository(private val context: Context) {
                     it.name == prefs[Keys.phoneOrientationKey(target)]
                 } ?: com.example.model.PhoneOrientationMode.AUTO_DETECT,
                 masterVolumePercent = (prefs[Keys.masterVolumeKey(target)] ?: 0.75f).coerceIn(0f, 1f),
-                proMaxBodyWarmthEnabled = prefs[Keys.proMaxBodyWarmthKey(target)] ?: (target == OutputTarget.SPEAKER)
+                proMaxBodyWarmthEnabled = prefs[Keys.proMaxBodyWarmthKey(target)] ?: (target == OutputTarget.SPEAKER),
+                adaptiveMultibandEnabled = prefs[Keys.adaptiveMultibandKey(target)] ?: true,
+                speakerPhaseAlignmentEnabled = prefs[Keys.speakerPhaseAlignKey(target)] ?: (target == OutputTarget.SPEAKER)
             )
         }
 
@@ -282,6 +286,8 @@ class EqPreferencesRepository(private val context: Context) {
             prefs[Keys.phoneOrientationKey(profile.target)] = profile.phoneOrientationMode.name
             prefs[Keys.masterVolumeKey(profile.target)] = profile.masterVolumePercent.coerceIn(0f, 1f)
             prefs[Keys.proMaxBodyWarmthKey(profile.target)] = profile.proMaxBodyWarmthEnabled
+            prefs[Keys.adaptiveMultibandKey(profile.target)] = profile.adaptiveMultibandEnabled
+            prefs[Keys.speakerPhaseAlignKey(profile.target)] = profile.speakerPhaseAlignmentEnabled
         }
     }
 }

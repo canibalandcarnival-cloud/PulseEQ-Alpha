@@ -282,7 +282,12 @@ data class AudioLabTelemetry(
     val trebleCappedBoostDb: Float = 0f,
     val resolvedOrientationLandscape: Boolean = true,
     val volumeContourStatus: String = "Linear (40–80%)",
-    val highVolumeDeHarshActive: Boolean = false
+    val highVolumeDeHarshActive: Boolean = false,
+    val multibandLowGrDb: Float = 0f,
+    val multibandMidGrDb: Float = 0f,
+    val multibandHighGrDb: Float = 0f,
+    val phaseAlignmentActive: Boolean = false,
+    val soundCheckCrestDb: Float = 0f
 )
 
 @Immutable
@@ -338,7 +343,9 @@ data class OutputEqProfile(
     val trebleSmoothnessPercent: Float = defaultTrebleSmoothnessForTarget(target),
     val phoneOrientationMode: PhoneOrientationMode = PhoneOrientationMode.AUTO_DETECT,
     val masterVolumePercent: Float = 0.75f,
-    val proMaxBodyWarmthEnabled: Boolean = (target == OutputTarget.SPEAKER)
+    val proMaxBodyWarmthEnabled: Boolean = (target == OutputTarget.SPEAKER),
+    val adaptiveMultibandEnabled: Boolean = true,
+    val speakerPhaseAlignmentEnabled: Boolean = (target == OutputTarget.SPEAKER)
 ) {
     companion object {
         fun defaultTrebleSmoothnessForTarget(target: OutputTarget): Float = when (target) {
@@ -524,6 +531,27 @@ object ProMaxHardwareRefinementSpecs {
     const val HIGH_VOL_DEHARSH_HZ = 6500.0
     const val HIGH_VOL_DEHARSH_Q = 1.15
     const val HIGH_VOL_DEHARSH_MAX_DB = -3.5
+}
+
+object AdaptiveMultibandPhaseSpecs {
+    // 3-Band Linkwitz-Riley (LR4, 24dB/oct) Dynamic Tone Balancer Crossovers
+    const val LOW_CROSSOVER_HZ = 220.0
+    const val HIGH_CROSSOVER_HZ = 3800.0
+    const val BAND_RATIO = 2.2f
+    const val BAND_ATTACK_MS = 8.0f
+    const val BAND_RELEASE_MS = 90.0f
+    const val BAND_KNEE_DB = 8.0f
+    const val LOW_THRESHOLD_DB = -18.0f
+    const val MID_THRESHOLD_DB = -17.0f
+    const val HIGH_THRESHOLD_DB = -19.0f
+
+    // Earpiece-to-Main-Driver Acoustic Phase Alignment Allpass (Phone Speaker Mode)
+    const val PHASE_ALIGN_ALLPASS_HZ = 1400.0
+    const val PHASE_ALIGN_ALLPASS_Q = 0.7071
+
+    // Apple Music Sound Check Dynamic Crest Controller
+    const val SOUND_CHECK_TARGET_LUFS = -16.0
+    const val CREST_SOFT_LIMITER_CEILING = 0.96
 }
 
 @Immutable

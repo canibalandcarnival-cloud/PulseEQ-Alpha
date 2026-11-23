@@ -51,6 +51,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.model.OutputTarget
+import com.example.ui.components.AdaptiveMultibandPhaseCard
 import com.example.ui.components.AudioRoutingServiceCard
 import com.example.ui.components.AudioVisualizerPanel
 import com.example.ui.components.CustomAudioSetupDialog
@@ -451,6 +452,20 @@ private fun CompactConsoleLayout(
             onAbCompareHeld = viewModel::setAbCompareHeld
         )
 
+        AdaptiveMultibandPhaseCard(
+            adaptiveMultibandEnabled = profile.adaptiveMultibandEnabled,
+            speakerPhaseAlignmentEnabled = profile.speakerPhaseAlignmentEnabled,
+            soundCheckEnabled = profile.soundCheckEnabled,
+            speakerDspEnabled = profile.speakerDspEnabled,
+            outputTarget = uiState.selectedTarget,
+            isMasterBypassed = profile.isBypassed,
+            abCompareHeld = uiState.abCompareHeld,
+            telemetry = uiState.audioLabTelemetry,
+            onToggleAdaptiveMultiband = viewModel::toggleAdaptiveMultiband,
+            onToggleSpeakerPhaseAlignment = viewModel::toggleSpeakerPhaseAlignment,
+            onToggleSoundCheck = viewModel::toggleSoundCheck
+        )
+
         LateNightDynamicsCard(
             lateNightEnabled = profile.lateNightEnabled,
             isBypassed = profile.isBypassed,
@@ -700,6 +715,20 @@ private fun WideConsoleLayout(
                     onToggleSiliconDsp = viewModel::toggleSiliconDsp,
                     onTrebleSmoothnessChange = viewModel::updateTrebleSmoothness,
                     onAbCompareHeld = viewModel::setAbCompareHeld
+                )
+
+                AdaptiveMultibandPhaseCard(
+                    adaptiveMultibandEnabled = profile.adaptiveMultibandEnabled,
+                    speakerPhaseAlignmentEnabled = profile.speakerPhaseAlignmentEnabled,
+                    soundCheckEnabled = profile.soundCheckEnabled,
+                    speakerDspEnabled = profile.speakerDspEnabled,
+                    outputTarget = uiState.selectedTarget,
+                    isMasterBypassed = profile.isBypassed,
+                    abCompareHeld = uiState.abCompareHeld,
+                    telemetry = uiState.audioLabTelemetry,
+                    onToggleAdaptiveMultiband = viewModel::toggleAdaptiveMultiband,
+                    onToggleSpeakerPhaseAlignment = viewModel::toggleSpeakerPhaseAlignment,
+                    onToggleSoundCheck = viewModel::toggleSoundCheck
                 )
 
                 LateNightDynamicsCard(

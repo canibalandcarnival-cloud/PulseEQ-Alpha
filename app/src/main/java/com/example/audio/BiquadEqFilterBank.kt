@@ -190,6 +190,25 @@ class StereoBiquad {
         a2 = na2 / na0
     }
 
+    fun setAllPass(sampleRate: Int, freqHz: Double, q: Double) {
+        val w0 = 2.0 * PI * freqHz / sampleRate
+        val cosW0 = cos(w0)
+        val alpha = sin(w0) / (2.0 * q)
+
+        val nb0 = 1.0 - alpha
+        val nb1 = -2.0 * cosW0
+        val nb2 = 1.0 + alpha
+        val na0 = 1.0 + alpha
+        val na1 = -2.0 * cosW0
+        val na2 = 1.0 - alpha
+
+        b0 = nb0 / na0
+        b1 = nb1 / na0
+        b2 = nb2 / na0
+        a1 = na1 / na0
+        a2 = na2 / na0
+    }
+
     fun magnitudeDbAt(sampleRate: Int, freqHz: Double): Double {
         val w = 2.0 * PI * freqHz / sampleRate
         val cosW = cos(w)
@@ -204,6 +223,24 @@ class StereoBiquad {
 
         val magSq = (numRe * numRe + numIm * numIm) / (denRe * denRe + denIm * denIm).coerceAtLeast(1e-18)
         return 10.0 * log10(magSq.coerceAtLeast(1e-12))
+    }
+
+    fun phaseRadAt(sampleRate: Int, freqHz: Double): Double {
+        val w = 2.0 * PI * freqHz / sampleRate
+        val cosW = cos(w)
+        val sinW = sin(w)
+        val cos2W = cos(2.0 * w)
+        val sin2W = sin(2.0 * w)
+
+        val numRe = b0 + b1 * cosW + b2 * cos2W
+        val numIm = -(b1 * sinW + b2 * sin2W)
+        val denRe = 1.0 + a1 * cosW + a2 * cos2W
+        val denIm = -(a1 * sinW + a2 * sin2W)
+
+        val denSq = (denRe * denRe + denIm * denIm).coerceAtLeast(1e-18)
+        val real = (numRe * denRe + numIm * denIm) / denSq
+        val imag = (numIm * denRe - numRe * denIm) / denSq
+        return kotlin.math.atan2(imag, real)
     }
 
     fun processStereo(inL: Double, inR: Double): Pair<Double, Double> {
@@ -1102,6 +1139,8 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
     private val spatialAudioEngine = SpatialAudioEngine(sampleRate)
     private val soundCheckNormalizer = SoundCheckNormalizer(sampleRate)
     private val voiceIsolationProcessor = VoiceIsolationProcessor(sampleRate)
+    private val adaptiveMultibandBalancer = AdaptiveMultibandToneBalancer(sampleRate)
+    private val speakerPhaseAlignmentFilter = SpeakerPhaseAlignmentFilter(sampleRate)
 
     @Volatile
     private var preampLinear: Double = 1.0
@@ -1126,6 +1165,9 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
                 speakerDspChain.latestLimiterReductionDb,
                 loudnessMaximizerChain.latestRmsGrDb,
                 loudnessMaximizerChain.latestBrickwallGrDb,
+                adaptiveMultibandBalancer.latestLowGrDb,
+                adaptiveMultibandBalancer.latestMidGrDb,
+                adaptiveMultibandBalancer.latestHighGrDb,
                 if (siliconDspCore.enabled) siliconDspCore.latestTruePeakGrDb else 0f
             )
             return if (minGr < -0.05f) minGr else 0f
@@ -1136,6 +1178,21 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
 
     val latestSoundCheckTrimDb: Float
         get() = if (bypassed || abCompareHeld) 0f else soundCheckNormalizer.latestTrimDb
+
+    val latestSoundCheckCrestDb: Float
+        get() = soundCheckNormalizer.latestCrestDb
+
+    val latestMultibandLowGrDb: Float
+        get() = if (bypassed || abCompareHeld) 0f else adaptiveMultibandBalancer.latestLowGrDb
+
+    val latestMultibandMidGrDb: Float
+        get() = if (bypassed || abCompareHeld) 0f else adaptiveMultibandBalancer.latestMidGrDb
+
+    val latestMultibandHighGrDb: Float
+        get() = if (bypassed || abCompareHeld) 0f else adaptiveMultibandBalancer.latestHighGrDb
+
+    val isPhaseAlignmentActive: Boolean
+        get() = !bypassed && !abCompareHeld && speakerPhaseAlignmentFilter.isActive
 
     val latestVoiceGateDb: Float
         get() = if (bypassed || abCompareHeld) 0f else voiceIsolationProcessor.latestGateAttenuationDb
@@ -1209,7 +1266,9 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             threeBandBassDb = 0f,
             threeBandMidsDb = 0f,
             threeBandTrebleDb = 0f,
-            siliconDspEnabled = false
+            siliconDspEnabled = false,
+            adaptiveMultibandEnabled = false,
+            speakerPhaseAlignmentEnabled = false
         )
     }
 
@@ -1250,7 +1309,9 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         deviceIsLandscape: Boolean = false,
         masterVolumePercent: Float = 0.75f,
         applyMasterVolumeGain: Boolean = false,
-        proMaxBodyWarmthEnabled: Boolean = false
+        proMaxBodyWarmthEnabled: Boolean = false,
+        adaptiveMultibandEnabled: Boolean = false,
+        speakerPhaseAlignmentEnabled: Boolean = false
     ) {
         bypassed = isBypassed
         this.abCompareHeld = abCompareHeld
@@ -1331,6 +1392,14 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             target = outputTarget,
             microAirGainDb = trebleBudget.cirrusAirShelfDb.toDouble()
         )
+        adaptiveMultibandBalancer.configure(
+            isEnabled = adaptiveMultibandEnabled && effectiveProcessing
+        )
+        speakerPhaseAlignmentFilter.configure(
+            isEnabled = speakerPhaseAlignmentEnabled && effectiveProcessing,
+            outputTarget = outputTarget,
+            speakerDspEnabled = speakerDspEnabled
+        )
 
         val activeBandGains = if (activeTenBand) gainsDb else List(10) { 0f }
         val threeBandAvg = if (activeThreeBand) {
@@ -1403,8 +1472,10 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         val (compL, compR) = lateNightCompressor.processStereoSample(isoL, isoR)
         val (spatL, spatR) = spatialAudioEngine.processStereoSample(compL, compR)
         val (spkL, spkR) = speakerDspChain.processStereoSample(spatL, spatR)
-        val (maxL, maxR) = loudnessMaximizerChain.processStereoSample(spkL, spkR)
-        val (silL, silR) = siliconDspCore.processStereoSample(maxL, maxR)
+        val (phaseL, phaseR) = speakerPhaseAlignmentFilter.processStereoSample(spkL, spkR)
+        val (maxL, maxR) = loudnessMaximizerChain.processStereoSample(phaseL, phaseR)
+        val (mbL, mbR) = adaptiveMultibandBalancer.processStereoSample(maxL, maxR)
+        val (silL, silR) = siliconDspCore.processStereoSample(mbL, mbR)
         val (volL, volR) = volumeContourProcessor.processStereoSample(silL, silR)
 
         // Final safety ceiling + Conversation Awareness auto-ducking
@@ -1451,6 +1522,21 @@ class TestAudioSynthesizer {
 
     val latestSoundCheckTrimDb: Float
         get() = filterBank.latestSoundCheckTrimDb
+
+    val latestSoundCheckCrestDb: Float
+        get() = filterBank.latestSoundCheckCrestDb
+
+    val latestMultibandLowGrDb: Float
+        get() = filterBank.latestMultibandLowGrDb
+
+    val latestMultibandMidGrDb: Float
+        get() = filterBank.latestMultibandMidGrDb
+
+    val latestMultibandHighGrDb: Float
+        get() = filterBank.latestMultibandHighGrDb
+
+    val isPhaseAlignmentActive: Boolean
+        get() = filterBank.isPhaseAlignmentActive
 
     val latestVoiceGateDb: Float
         get() = filterBank.latestVoiceGateDb
@@ -1539,7 +1625,9 @@ class TestAudioSynthesizer {
         phoneOrientationMode: PhoneOrientationMode = PhoneOrientationMode.AUTO_DETECT,
         deviceIsLandscape: Boolean = false,
         masterVolumePercent: Float = 0.75f,
-        proMaxBodyWarmthEnabled: Boolean = false
+        proMaxBodyWarmthEnabled: Boolean = false,
+        adaptiveMultibandEnabled: Boolean = false,
+        speakerPhaseAlignmentEnabled: Boolean = false
     ) {
         backgroundPreset = bgSoundPreset
         backgroundVolume = bgSoundVolume
@@ -1580,7 +1668,9 @@ class TestAudioSynthesizer {
             deviceIsLandscape = deviceIsLandscape,
             masterVolumePercent = masterVolumePercent,
             applyMasterVolumeGain = true,
-            proMaxBodyWarmthEnabled = proMaxBodyWarmthEnabled
+            proMaxBodyWarmthEnabled = proMaxBodyWarmthEnabled,
+            adaptiveMultibandEnabled = adaptiveMultibandEnabled,
+            speakerPhaseAlignmentEnabled = speakerPhaseAlignmentEnabled
         )
     }
 
