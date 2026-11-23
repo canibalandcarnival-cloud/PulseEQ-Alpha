@@ -412,18 +412,22 @@ class SpatialAudioEngine(sampleRate: Int = 44100) {
     var vocalAnchor: Boolean = true
         private set
 
+    private val sampleRateRef: Int = sampleRate
+
     fun configure(
         mode: SpatialMode,
         target: OutputTarget,
         spatialDepth: Float,
         heightPresence: Float,
-        vocalAnchor: Boolean
+        vocalAnchor: Boolean,
+        pinnaAirGainDb: Double = 3.0
     ) {
         this.mode = mode
         this.outputTarget = target
         this.spatialDepth = spatialDepth.coerceIn(0f, 1f)
         this.heightPresence = heightPresence.coerceIn(0f, 1f)
         this.vocalAnchor = vocalAnchor
+        pinnaShelf12000.setHighShelf(sampleRateRef, 12000.0, 0.7071, pinnaAirGainDb.coerceIn(0.0, 3.0))
     }
 
     fun processStereoSample(inL: Double, inR: Double): Pair<Double, Double> {

@@ -71,10 +71,12 @@ class HeadphoneAccommodationsProcessor(private val sampleRate: Int = 44100) {
         isEnabled: Boolean,
         profile: AccommodationToneProfile,
         intensity: SoftSoundIntensity,
-        outputGainDb: Float = 0f
+        outputGainDb: Float = 0f,
+        hfScale: Double = 1.0
     ) {
         enabled = isEnabled
         val scale = intensity.eqScale.toDouble()
+        val cappedHfScale = hfScale.coerceIn(0.1, 1.0)
         val clampedOutDb = outputGainDb.coerceIn(
             com.example.model.HeadphoneAccommodationsSpecs.OUTPUT_GAIN_MIN_DB,
             com.example.model.HeadphoneAccommodationsSpecs.OUTPUT_GAIN_MAX_DB
@@ -87,8 +89,8 @@ class HeadphoneAccommodationsProcessor(private val sampleRate: Int = 44100) {
                 mudCutBand.setPeaking(sampleRate, 300.0, 1.3, -2.0)
                 eqBand1.setPeaking(sampleRate, 1000.0, 1.4, (1.0 * scale).coerceAtMost(3.0))
                 eqBand2.setPeaking(sampleRate, 3000.0, 1.4, (1.8 * scale).coerceAtMost(3.0))
-                eqBand3.setPeaking(sampleRate, 8000.0, 1.5, (2.1 * scale).coerceAtMost(3.0))
-                eqBand4.setPeaking(sampleRate, 14000.0, 1.5, (1.5 * scale).coerceAtMost(3.0))
+                eqBand3.setPeaking(sampleRate, 8000.0, 1.5, (2.1 * scale).coerceAtMost(3.0) * cappedHfScale)
+                eqBand4.setPeaking(sampleRate, 14000.0, 1.5, (1.5 * scale).coerceAtMost(3.0) * cappedHfScale)
             }
 
             AccommodationToneProfile.VOCAL_RANGE -> {
@@ -97,17 +99,17 @@ class HeadphoneAccommodationsProcessor(private val sampleRate: Int = 44100) {
                 mudCutBand.setPeaking(sampleRate, 250.0, 1.3, -2.0)
                 eqBand1.setPeaking(sampleRate, 1000.0, 1.4, (1.5 * scale).coerceAtMost(3.0))
                 eqBand2.setPeaking(sampleRate, 2500.0, 1.5, (2.1 * scale).coerceAtMost(3.0))
-                eqBand3.setPeaking(sampleRate, 4000.0, 1.5, (1.8 * scale).coerceAtMost(3.0))
+                eqBand3.setPeaking(sampleRate, 4000.0, 1.5, (1.8 * scale).coerceAtMost(3.0) * cappedHfScale)
                 eqBand4.setPeaking(sampleRate, 8000.0, 1.5, 0.0)
             }
 
             AccommodationToneProfile.BRIGHTNESS -> {
                 vocalHpfEnabled = false
                 mudCutBand.setPeaking(sampleRate, 300.0, 1.3, -2.0)
-                eqBand1.setPeaking(sampleRate, 4000.0, 2.4, (1.1 * scale).coerceAtMost(3.0))
-                eqBand2.setPeaking(sampleRate, 8000.0, 2.4, (1.4 * scale).coerceAtMost(3.0))
-                eqBand3.setPeaking(sampleRate, 12000.0, 2.4, (1.7 * scale).coerceAtMost(3.0))
-                eqBand4.setPeaking(sampleRate, 16000.0, 2.4, (1.3 * scale).coerceAtMost(3.0))
+                eqBand1.setPeaking(sampleRate, 4000.0, 2.4, (1.1 * scale).coerceAtMost(3.0) * cappedHfScale)
+                eqBand2.setPeaking(sampleRate, 8000.0, 2.4, (1.4 * scale).coerceAtMost(3.0) * cappedHfScale)
+                eqBand3.setPeaking(sampleRate, 12000.0, 2.4, (1.7 * scale).coerceAtMost(3.0) * cappedHfScale)
+                eqBand4.setPeaking(sampleRate, 16000.0, 2.4, (1.3 * scale).coerceAtMost(3.0) * cappedHfScale)
             }
         }
 
@@ -165,9 +167,11 @@ class HeadphoneAccommodationsProcessor(private val sampleRate: Int = 44100) {
             freqHz: Double,
             profile: AccommodationToneProfile,
             intensity: SoftSoundIntensity,
-            sampleRate: Int = 44100
+            sampleRate: Int = 44100,
+            hfScale: Double = 1.0
         ): Float {
             val scale = intensity.eqScale.toDouble()
+            val cappedHfScale = hfScale.coerceIn(0.1, 1.0)
             var totalDb = 0.0
 
             val mud = StereoBiquad()
@@ -181,8 +185,8 @@ class HeadphoneAccommodationsProcessor(private val sampleRate: Int = 44100) {
                     mud.setPeaking(sampleRate, 300.0, 1.3, -2.0)
                     b1.setPeaking(sampleRate, 1000.0, 1.4, (1.0 * scale).coerceAtMost(3.0))
                     b2.setPeaking(sampleRate, 3000.0, 1.4, (1.8 * scale).coerceAtMost(3.0))
-                    b3.setPeaking(sampleRate, 8000.0, 1.5, (2.1 * scale).coerceAtMost(3.0))
-                    b4.setPeaking(sampleRate, 14000.0, 1.5, (1.5 * scale).coerceAtMost(3.0))
+                    b3.setPeaking(sampleRate, 8000.0, 1.5, (2.1 * scale).coerceAtMost(3.0) * cappedHfScale)
+                    b4.setPeaking(sampleRate, 14000.0, 1.5, (1.5 * scale).coerceAtMost(3.0) * cappedHfScale)
                 }
 
                 AccommodationToneProfile.VOCAL_RANGE -> {
@@ -191,16 +195,16 @@ class HeadphoneAccommodationsProcessor(private val sampleRate: Int = 44100) {
                     mud.setPeaking(sampleRate, 250.0, 1.3, -2.0)
                     b1.setPeaking(sampleRate, 1000.0, 1.4, (1.5 * scale).coerceAtMost(3.0))
                     b2.setPeaking(sampleRate, 2500.0, 1.5, (2.1 * scale).coerceAtMost(3.0))
-                    b3.setPeaking(sampleRate, 4000.0, 1.5, (1.8 * scale).coerceAtMost(3.0))
+                    b3.setPeaking(sampleRate, 4000.0, 1.5, (1.8 * scale).coerceAtMost(3.0) * cappedHfScale)
                     b4.setPeaking(sampleRate, 8000.0, 1.5, 0.0)
                 }
 
                 AccommodationToneProfile.BRIGHTNESS -> {
                     mud.setPeaking(sampleRate, 300.0, 1.3, -2.0)
-                    b1.setPeaking(sampleRate, 4000.0, 2.4, (1.1 * scale).coerceAtMost(3.0))
-                    b2.setPeaking(sampleRate, 8000.0, 2.4, (1.4 * scale).coerceAtMost(3.0))
-                    b3.setPeaking(sampleRate, 12000.0, 2.4, (1.7 * scale).coerceAtMost(3.0))
-                    b4.setPeaking(sampleRate, 16000.0, 2.4, (1.3 * scale).coerceAtMost(3.0))
+                    b1.setPeaking(sampleRate, 4000.0, 2.4, (1.1 * scale).coerceAtMost(3.0) * cappedHfScale)
+                    b2.setPeaking(sampleRate, 8000.0, 2.4, (1.4 * scale).coerceAtMost(3.0) * cappedHfScale)
+                    b3.setPeaking(sampleRate, 12000.0, 2.4, (1.7 * scale).coerceAtMost(3.0) * cappedHfScale)
+                    b4.setPeaking(sampleRate, 16000.0, 2.4, (1.3 * scale).coerceAtMost(3.0) * cappedHfScale)
                 }
             }
 

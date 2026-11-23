@@ -24,8 +24,8 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `all 22 presets have 10 valid bands`() {
-        assertEquals(22, EqPresetsCatalog.PRESETS.size)
+    fun `all 23 presets have 10 valid bands`() {
+        assertEquals(23, EqPresetsCatalog.PRESETS.size)
         assertEquals(5, EqPresetsCatalog.PRESETS.count { it.group == PresetGroup.SET_1 })
         assertEquals(8, EqPresetsCatalog.PRESETS.count { it.group == PresetGroup.SET_2 })
         assertEquals(8, EqPresetsCatalog.PRESETS.count { it.group == PresetGroup.SET_3 })

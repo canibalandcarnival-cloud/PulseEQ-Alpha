@@ -29,6 +29,7 @@ import com.example.model.SoftSoundIntensity
 import com.example.model.SpatialMode
 import com.example.model.SpeakerTuningProfile
 import com.example.model.TestAudioSource
+import com.example.model.TrebleGainStagingBudget
 import com.example.model.VisualizerFrame
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -118,10 +119,10 @@ class EqualizerAudioEngine(private val context: Context) {
 
     // Upper cutoff frequencies for the 7 PostEq iPhone 18 Pro Max Speaker DSP shaping bands:
     // [0]: <=55Hz sub-rumble cut, [1]: 55-88Hz 24dB/oct HPF shoulder, [2]: 88-220Hz chamber bass (135Hz +3.5dB),
-    // [3]: 220-480Hz lower-mid scoop (340Hz -3.5dB), [4]: 480-4200Hz crisp presence (3.0kHz +2.0dB),
-    // [5]: 4200-8500Hz surgical de-esser notch (6.8kHz -2.5dB), [6]: 8500-20kHz flagship air (11.5kHz +3.5dB)
+    // [3]: 220-480Hz lower-mid scoop (340Hz -3.5dB), [4]: 480-3600Hz crisp presence (3.0kHz +2.0dB),
+    // [5]: 3600-9000Hz harshness + de-esser dip (4.5kHz -3.0dB, 7.0kHz -3.5dB), [6]: 9000-20kHz gain-staged air (12.0kHz +1.0dB)
     private val speakerPostEqCutoffsHz = floatArrayOf(
-        55f, 88f, 220f, 480f, 4200f, 8500f, 20000f
+        55f, 88f, 220f, 480f, 3600f, 9000f, 20000f
     )
 
     @Volatile
@@ -261,6 +262,10 @@ class EqualizerAudioEngine(private val context: Context) {
         private set
 
     @Volatile
+    var currentTrebleSmoothnessPercent: Float = 0.35f
+        private set
+
+    @Volatile
     private var systemSoundCheckTrimDb: Float = 0f
 
     @Volatile
@@ -335,7 +340,9 @@ class EqualizerAudioEngine(private val context: Context) {
                         siliconSvfCutoffHz = testSynthesizer.latestSiliconSvfCutoffHz,
                         siliconCoilTempC = testSynthesizer.latestSiliconCoilTempC,
                         siliconClassHRailV = testSynthesizer.latestSiliconClassHRailV,
-                        siliconTruePeakGrDb = testSynthesizer.latestSiliconTruePeakGrDb
+                        siliconTruePeakGrDb = testSynthesizer.latestSiliconTruePeakGrDb,
+                        trebleGainStagedCapActive = testSynthesizer.isTrebleCapActive,
+                        trebleCappedBoostDb = testSynthesizer.latestTrebleCappedBoostDb
                     )
                     synthFrame
                 } else {
@@ -403,7 +410,8 @@ class EqualizerAudioEngine(private val context: Context) {
             accommodationsOutputGainDb = currentAccommodationsOutputGainDb,
             loudnessMaximizerEnabled = currentLoudnessMaximizerEnabled,
             loudnessBoostPercent = currentLoudnessBoostPercent,
-            siliconDspEnabled = currentSiliconDspEnabled
+            siliconDspEnabled = currentSiliconDspEnabled,
+            trebleSmoothnessPercent = currentTrebleSmoothnessPercent
         )
     }
 
@@ -594,7 +602,8 @@ class EqualizerAudioEngine(private val context: Context) {
         accommodationsOutputGainDb: Float = currentAccommodationsOutputGainDb,
         loudnessMaximizerEnabled: Boolean = currentLoudnessMaximizerEnabled,
         loudnessBoostPercent: Float = currentLoudnessBoostPercent,
-        siliconDspEnabled: Boolean = currentSiliconDspEnabled
+        siliconDspEnabled: Boolean = currentSiliconDspEnabled,
+        trebleSmoothnessPercent: Float = currentTrebleSmoothnessPercent
     ) {
         val normalizedThreeBand = threeBandEnabled && !tenBandEnabled
         val normalizedTenBand = !normalizedThreeBand
@@ -636,6 +645,7 @@ class EqualizerAudioEngine(private val context: Context) {
         currentLoudnessMaximizerEnabled = loudnessMaximizerEnabled
         currentLoudnessBoostPercent = loudnessBoostPercent.coerceIn(0f, 1f)
         currentSiliconDspEnabled = siliconDspEnabled
+        currentTrebleSmoothnessPercent = trebleSmoothnessPercent.coerceIn(0f, 1f)
 
         val isSpeakerDspActive = (target == OutputTarget.SPEAKER) && speakerDspEnabled
         val isAbHeld = _abCompareHeld.value
@@ -687,7 +697,8 @@ class EqualizerAudioEngine(private val context: Context) {
             accommodationsOutputGainDb = currentAccommodationsOutputGainDb,
             loudnessMaximizerEnabled = loudnessMaximizerEnabled,
             loudnessBoostPercent = currentLoudnessBoostPercent,
-            siliconDspEnabled = siliconDspEnabled
+            siliconDspEnabled = siliconDspEnabled,
+            trebleSmoothnessPercent = currentTrebleSmoothnessPercent
         )
         applyToAllSessions()
     }
@@ -711,6 +722,18 @@ class EqualizerAudioEngine(private val context: Context) {
         } else {
             0f
         }
+        val trebleBudget = TrebleGainStagingBudget.allocate(
+            accommodationsActive = effectiveActive && currentAccommodationsEnabled && currentAccommodationsApplyToMedia,
+            accommodationsProfile = currentAccommodationsToneProfile,
+            accommodationsIntensity = currentAccommodationsSoftIntensity,
+            spatialActive = isSpatialActive,
+            spatialHeightPresence = currentHeightPresence,
+            siliconDspActive = siliconActive
+        )
+        _audioLabTelemetry.value = _audioLabTelemetry.value.copy(
+            trebleGainStagedCapActive = effectiveActive && trebleBudget.isCapEngaged,
+            trebleCappedBoostDb = if (effectiveActive) trebleBudget.cappedCombinedHfDb else 0f
+        )
 
         for (bundle in sessionEffects.values) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && bundle.dynamicsProcessing != null) {
@@ -782,7 +805,16 @@ class EqualizerAudioEngine(private val context: Context) {
                                 HeadphoneAccommodationsProcessor.computeResponseDbAt(
                                     freqHz = EqPresetsCatalog.BANDS[i].frequencyHz.toDouble(),
                                     profile = currentAccommodationsToneProfile,
-                                    intensity = currentAccommodationsSoftIntensity
+                                    intensity = currentAccommodationsSoftIntensity,
+                                    hfScale = trebleBudget.accHfScale.toDouble()
+                                )
+                            } else {
+                                0f
+                            }
+                            val trebleSmoothnessOffset = if (currentTrebleSmoothnessPercent > 0.005f) {
+                                TrebleSmoothnessProcessor.computeResponseDbAt(
+                                    freqHz = EqPresetsCatalog.BANDS[i].frequencyHz.toDouble(),
+                                    smoothnessPercent = currentTrebleSmoothnessPercent
                                 )
                             } else {
                                 0f
@@ -799,7 +831,7 @@ class EqualizerAudioEngine(private val context: Context) {
                                 freqHz = EqPresetsCatalog.BANDS[i].frequencyHz.toDouble(),
                                 mode = currentAudioMixMode
                             )
-                            val combinedGain = (tenBandGain + toneOffset + accommodationsOffset + loudnessPresenceOffset + audioMixOffset)
+                            val combinedGain = (tenBandGain + toneOffset + accommodationsOffset + trebleSmoothnessOffset + loudnessPresenceOffset + audioMixOffset)
                                 .coerceIn(-15f, 15f)
                             dp.setPreEqBandAllChannelsTo(
                                 i,
@@ -807,9 +839,10 @@ class EqualizerAudioEngine(private val context: Context) {
                             )
                         }
 
-                        // PostEq stage: Voice Isolation / iPhone 18 Pro Max Speaker DSP / Pinna Height Atmos contour
+                        // PostEq stage: Voice Isolation / iPhone 18 Pro Max Speaker DSP / Gain-Staged Height Atmos contour
                         val heightScale = currentHeightPresence.coerceIn(0f, 1f)
                         val cinemaBoost = if (currentSpatialMode == SpatialMode.ATMOS_CINEMA) 1.25f else 1.0f
+                        val cappedSpatialShelfDb = trebleBudget.spatialPinnaShelfDb
                         val postEqEnabled = isSpeakerDspActive || isSpatialActive || currentVoiceIsolationEnabled
                         val postEqGains = when {
                             currentVoiceIsolationEnabled -> floatArrayOf(
@@ -826,9 +859,9 @@ class EqualizerAudioEngine(private val context: Context) {
                                 -10.0f, // 55-88Hz steep 24dB/oct HPF shoulder
                                 if (currentVirtualBassEnabled) 3.5f else 1.5f, // 135Hz Pro Max chamber bass punch (+3.5dB)
                                 -3.5f,  // 340Hz lower-mid scoop (-3.5dB)
-                                if (isSpatialActive && currentVocalAnchor) 2.6f else 2.0f, // 3.0kHz presence (+2.0dB)
-                                -2.5f,  // 6.8kHz surgical de-esser notch (-2.5dB)
-                                if (isSpatialActive) 3.5f + 1.0f * heightScale else 3.5f // 11.5kHz crisp air shelf (+3.5dB)
+                                if (isSpatialActive && currentVocalAnchor) 2.4f else 2.0f, // 3.0kHz presence (+2.0dB)
+                                -3.2f,  // 4.5kHz -3.0dB harshness + 7.0kHz -3.5dB de-esser cut
+                                if (isSpatialActive) (1.0f + cappedSpatialShelfDb * 0.5f * heightScale).coerceAtMost(3.0f) else 1.0f // 12kHz gain-staged air (+1.0dB)
                             )
                             isSpeakerDspActive -> floatArrayOf(
                                 -12.0f, // <=55Hz sub-rumble cut
@@ -836,8 +869,8 @@ class EqualizerAudioEngine(private val context: Context) {
                                 1.5f,   // 150Hz warm body
                                 -2.0f,  // 340Hz anti-boxiness
                                 3.2f,   // 1.8kHz–3kHz warm spoken dialogue focus
-                                -3.0f,  // 6.8kHz sibilance tame
-                                1.0f    // gentle top air
+                                -3.5f,  // 4.5k-7.0kHz sibilance tame
+                                0.5f    // gentle top air
                             )
                             isSpatialActive -> floatArrayOf(
                                 0.4f, // Tight <55Hz center mono punch
@@ -846,7 +879,7 @@ class EqualizerAudioEngine(private val context: Context) {
                                 0.0f,
                                 if (currentVocalAnchor) 1.4f else 0.0f, // Vocal Anchor lock
                                 (-1.8f * heightScale * cinemaBoost).coerceIn(-3.5f, 0f), // Pinna dip zone
-                                (2.4f * heightScale * cinemaBoost).coerceIn(0f, 3.5f)   // 12kHz height air shelf
+                                (cappedSpatialShelfDb * heightScale).coerceIn(0f, 3.0f)   // 12kHz gain-staged height air shelf
                             )
                             else -> FloatArray(speakerPostEqCutoffsHz.size) { 0f }
                         }
@@ -1291,7 +1324,8 @@ class EqualizerAudioEngine(private val context: Context) {
             accommodationsOutputGainDb = currentAccommodationsOutputGainDb,
             loudnessMaximizerEnabled = currentLoudnessMaximizerEnabled,
             loudnessBoostPercent = currentLoudnessBoostPercent,
-            siliconDspEnabled = currentSiliconDspEnabled
+            siliconDspEnabled = currentSiliconDspEnabled,
+            trebleSmoothnessPercent = currentTrebleSmoothnessPercent
         )
     }
 

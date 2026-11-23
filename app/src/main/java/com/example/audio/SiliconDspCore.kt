@@ -115,9 +115,20 @@ class SiliconDspCore(private val sampleRate: Int = 48000) {
     var latestTruePeakGrDb: Float = 0f
         private set
 
-    fun configure(isEnabled: Boolean, target: OutputTarget) {
+    fun configure(
+        isEnabled: Boolean,
+        target: OutputTarget,
+        microAirGainDb: Double = SiliconDspSpecs.MICRO_AIR_GAIN_DB
+    ) {
         enabled = isEnabled
         outputTarget = target
+        val safeAirHz = SiliconDspSpecs.MICRO_AIR_HZ.coerceAtMost(sampleRate * 0.42)
+        microAirShelf.setHighShelf(
+            sampleRate,
+            safeAirHz,
+            0.7071,
+            microAirGainDb.coerceIn(0.0, SiliconDspSpecs.MICRO_AIR_GAIN_DB)
+        )
         if (!isEnabled) {
             latestExcursionPercent = 0f
             latestSvfCutoffHz = if (target == OutputTarget.SPEAKER) {

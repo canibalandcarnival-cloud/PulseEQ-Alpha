@@ -15,6 +15,9 @@ import com.example.model.SpatialMode
 import com.example.model.SpeakerTuningProfile
 import com.example.model.TestAudioSource
 import com.example.model.ThreeBandEqRanges
+import com.example.model.TrebleBudgetAllocation
+import com.example.model.TrebleGainStagingBudget
+import com.example.model.TrebleGainStagingSpecs
 import com.example.model.VisualizerFrame
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -359,8 +362,9 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
     private val boxinessScoop340Hz = StereoBiquad()
     private val dialogueFocus1800Hz = StereoBiquad()
     private val presence3000Hz = StereoBiquad()
-    private val deEsser6800Hz = StereoBiquad()
-    private val crispAirShelf11500Hz = StereoBiquad()
+    private val harshnessCut4500Hz = StereoBiquad()
+    private val deEsser7000Hz = StereoBiquad()
+    private val crispAirShelf12000Hz = StereoBiquad()
 
     // Stage 4: Hybrid Earpiece + Bottom Speaker Crossover (<180Hz 24dB/oct mono bass + -22% @ 0.19ms XTC)
     private val hybridSideHpf1 = StereoBiquad().apply {
@@ -458,13 +462,19 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
                     FlagshipSpeakerSpecs.PRESENCE_Q,
                     FlagshipSpeakerSpecs.PRESENCE_DB
                 )
-                deEsser6800Hz.setPeaking(
+                harshnessCut4500Hz.setPeaking(
+                    sampleRate,
+                    FlagshipSpeakerSpecs.HARSHNESS_CUT_HZ,
+                    FlagshipSpeakerSpecs.HARSHNESS_CUT_Q,
+                    FlagshipSpeakerSpecs.HARSHNESS_CUT_DB
+                )
+                deEsser7000Hz.setPeaking(
                     sampleRate,
                     FlagshipSpeakerSpecs.DE_ESSER_HZ,
                     FlagshipSpeakerSpecs.DE_ESSER_Q,
                     FlagshipSpeakerSpecs.DE_ESSER_DB
                 )
-                crispAirShelf11500Hz.setHighShelf(
+                crispAirShelf12000Hz.setHighShelf(
                     sampleRate,
                     FlagshipSpeakerSpecs.AIR_SHELF_HZ,
                     FlagshipSpeakerSpecs.AIR_SHELF_Q,
@@ -479,8 +489,9 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
                 boxinessScoop340Hz.setPeaking(sampleRate, 340.0, 1.3, -2.0)
                 dialogueFocus1800Hz.setPeaking(sampleRate, 1800.0, 1.0, 3.2)
                 presence3000Hz.setPeaking(sampleRate, 3000.0, 1.2, 1.2)
-                deEsser6800Hz.setPeaking(sampleRate, 6800.0, 3.2, -3.0)
-                crispAirShelf11500Hz.setHighShelf(sampleRate, 11500.0, 0.707, 1.0)
+                harshnessCut4500Hz.setPeaking(sampleRate, 4500.0, 1.8, -1.5)
+                deEsser7000Hz.setPeaking(sampleRate, 7000.0, 2.5, -3.5)
+                crispAirShelf12000Hz.setHighShelf(sampleRate, 12000.0, 0.707, 0.5)
             }
         }
 
@@ -534,14 +545,15 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
         var l = hp2L + harmL * harmBlend
         var r = hp2R + harmR * harmBlend
 
-        // Stage 3: Acoustic Chamber & V-Curve EQ
-        // (135Hz +3.5dB -> 340Hz -3.5dB -> 1.8kHz Dialogue -> 3.0kHz +2.0dB -> 6.8kHz -2.5dB De-Esser -> 11.5kHz +3.5dB Air)
+        // Stage 3: Gain-Staged Acoustic Chamber & V-Curve EQ
+        // (135Hz +3.5dB -> 340Hz -3.5dB -> 1.8kHz Dialogue -> 3.0kHz +2.0dB -> 4.5kHz -3.0dB -> 7.0kHz -3.5dB De-Esser -> 12.0kHz +1.0dB Air)
         val (cbL, cbR) = chamberBassEq.processStereo(l, r)
         val (scL, scR) = boxinessScoop340Hz.processStereo(cbL, cbR)
         val (dfL, dfR) = dialogueFocus1800Hz.processStereo(scL, scR)
         val (prL, prR) = presence3000Hz.processStereo(dfL, dfR)
-        val (deL, deR) = deEsser6800Hz.processStereo(prL, prR)
-        val (arL, arR) = crispAirShelf11500Hz.processStereo(deL, deR)
+        val (hcL, hcR) = harshnessCut4500Hz.processStereo(prL, prR)
+        val (deL, deR) = deEsser7000Hz.processStereo(hcL, hcR)
+        val (arL, arR) = crispAirShelf12000Hz.processStereo(deL, deR)
         l = arL
         r = arR
 
@@ -607,6 +619,7 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
             val scoop = StereoBiquad()
             val dlg = StereoBiquad()
             val pres = StereoBiquad()
+            val harsh = StereoBiquad()
             val deEss = StereoBiquad()
             val air = StereoBiquad()
 
@@ -633,6 +646,12 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
                         FlagshipSpeakerSpecs.PRESENCE_Q,
                         FlagshipSpeakerSpecs.PRESENCE_DB
                     )
+                    harsh.setPeaking(
+                        sampleRate,
+                        FlagshipSpeakerSpecs.HARSHNESS_CUT_HZ,
+                        FlagshipSpeakerSpecs.HARSHNESS_CUT_Q,
+                        FlagshipSpeakerSpecs.HARSHNESS_CUT_DB
+                    )
                     deEss.setPeaking(
                         sampleRate,
                         FlagshipSpeakerSpecs.DE_ESSER_HZ,
@@ -654,8 +673,9 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
                     scoop.setPeaking(sampleRate, 340.0, 1.3, -2.0)
                     dlg.setPeaking(sampleRate, 1800.0, 1.0, 3.2)
                     pres.setPeaking(sampleRate, 3000.0, 1.2, 1.2)
-                    deEss.setPeaking(sampleRate, 6800.0, 3.2, -3.0)
-                    air.setHighShelf(sampleRate, 11500.0, 0.707, 1.0)
+                    harsh.setPeaking(sampleRate, 4500.0, 1.8, -1.5)
+                    deEss.setPeaking(sampleRate, 7000.0, 2.5, -3.5)
+                    air.setHighShelf(sampleRate, 12000.0, 0.707, 0.5)
                 }
             }
 
@@ -665,6 +685,7 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
                 scoop.magnitudeDbAt(sampleRate, freqHz) +
                 dlg.magnitudeDbAt(sampleRate, freqHz) +
                 pres.magnitudeDbAt(sampleRate, freqHz) +
+                harsh.magnitudeDbAt(sampleRate, freqHz) +
                 deEss.magnitudeDbAt(sampleRate, freqHz) +
                 air.magnitudeDbAt(sampleRate, freqHz)).toFloat()
         }
@@ -762,6 +783,68 @@ class ThreeBandToneFilter(private val sampleRate: Int = 44100) {
 }
 
 /**
+ * iPhone Warmth / Treble Smoothness (De-Harsh) Contour Processor:
+ * - Smoothly rolls off harsh 3.5 kHz – 10 kHz ear fatigue (-4.5 dB peaking @ 5.5 kHz, -2.5 dB shelf @ 8.5 kHz at 100%)
+ * - Adds up to +2.0 dB of warm low-mid chassis body at 160 Hz.
+ */
+class TrebleSmoothnessProcessor(private val sampleRate: Int = 44100) {
+    private val warmBody160Hz = StereoBiquad()
+    private val fatigueDip5500Hz = StereoBiquad()
+    private val silkyShelf8500Hz = StereoBiquad()
+
+    @Volatile
+    private var enabled: Boolean = false
+
+    init {
+        configure(isEnabled = false, smoothnessPercent = 0f)
+    }
+
+    fun configure(isEnabled: Boolean, smoothnessPercent: Float) {
+        val p = smoothnessPercent.coerceIn(0f, 1f).toDouble()
+        enabled = isEnabled && p > 0.005
+        if (enabled) {
+            warmBody160Hz.setPeaking(sampleRate, 160.0, 0.95, TrebleGainStagingSpecs.WARM_BODY_160_MAX_DB * p)
+            fatigueDip5500Hz.setPeaking(sampleRate, 5500.0, 0.65, TrebleGainStagingSpecs.DEHARSH_5500_MAX_CUT_DB * p)
+            silkyShelf8500Hz.setHighShelf(sampleRate, 8500.0, 0.65, TrebleGainStagingSpecs.DEHARSH_SHELF_8500_MAX_CUT_DB * p)
+        } else {
+            warmBody160Hz.reset()
+            fatigueDip5500Hz.reset()
+            silkyShelf8500Hz.reset()
+        }
+    }
+
+    fun processStereoSample(inL: Double, inR: Double): Pair<Double, Double> {
+        if (!enabled) return inL to inR
+        val (bL, bR) = warmBody160Hz.processStereo(inL, inR)
+        val (dL, dR) = fatigueDip5500Hz.processStereo(bL, bR)
+        return silkyShelf8500Hz.processStereo(dL, dR)
+    }
+
+    companion object {
+        fun computeResponseDbAt(
+            freqHz: Double,
+            smoothnessPercent: Float,
+            sampleRate: Int = 44100
+        ): Float {
+            val p = smoothnessPercent.coerceIn(0f, 1f).toDouble()
+            if (p <= 0.005) return 0f
+            val body = StereoBiquad().apply {
+                setPeaking(sampleRate, 160.0, 0.95, TrebleGainStagingSpecs.WARM_BODY_160_MAX_DB * p)
+            }
+            val dip = StereoBiquad().apply {
+                setPeaking(sampleRate, 5500.0, 0.65, TrebleGainStagingSpecs.DEHARSH_5500_MAX_CUT_DB * p)
+            }
+            val shelf = StereoBiquad().apply {
+                setHighShelf(sampleRate, 8500.0, 0.65, TrebleGainStagingSpecs.DEHARSH_SHELF_8500_MAX_CUT_DB * p)
+            }
+            return (body.magnitudeDbAt(sampleRate, freqHz) +
+                dip.magnitudeDbAt(sampleRate, freqHz) +
+                shelf.magnitudeDbAt(sampleRate, freqHz)).toFloat()
+        }
+    }
+}
+
+/**
  * Cascaded 10-band stereo biquad peaking EQ filter + 3-band Bass/Mids/Treble tone stage +
  * preamp + Sound Check + Voice Isolation + Late Night compressor + Spatial Audio + Phone Speaker DSP.
  */
@@ -770,6 +853,7 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
     private val headphoneAccommodationsProcessor = HeadphoneAccommodationsProcessor(sampleRate)
     private val bandFilters = Array(10) { StereoBiquad() }
     private val threeBandToneFilter = ThreeBandToneFilter(sampleRate)
+    private val trebleSmoothnessProcessor = TrebleSmoothnessProcessor(sampleRate)
     private val audioMixStemShaper = AudioMixStemShaper(sampleRate)
     private val lateNightCompressor = DynamicRangeCompressor(sampleRate)
     private val speakerDspChain = PhoneSpeakerDspChain(sampleRate)
@@ -843,6 +927,16 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
     val latestSiliconTruePeakGrDb: Float
         get() = if (bypassed || abCompareHeld || !siliconDspCore.enabled) 0f else siliconDspCore.latestTruePeakGrDb
 
+    @Volatile
+    var latestTrebleBudget: TrebleBudgetAllocation? = null
+        private set
+
+    val isTrebleCapActive: Boolean
+        get() = !bypassed && !abCompareHeld && (latestTrebleBudget?.isCapEngaged == true)
+
+    val latestTrebleCappedBoostDb: Float
+        get() = if (bypassed || abCompareHeld) 0f else (latestTrebleBudget?.cappedCombinedHfDb ?: 0f)
+
     init {
         updateParameters(
             gainsDb = List(10) { 0f },
@@ -900,7 +994,8 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         accommodationsOutputGainDb: Float = 0f,
         loudnessMaximizerEnabled: Boolean = false,
         loudnessBoostPercent: Float = 0.50f,
-        siliconDspEnabled: Boolean = false
+        siliconDspEnabled: Boolean = false,
+        trebleSmoothnessPercent: Float = 0f
     ) {
         bypassed = isBypassed
         this.abCompareHeld = abCompareHeld
@@ -911,6 +1006,16 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         val activeThreeBand = threeBandEnabled && !tenBandEnabled
         val activeTenBand = !activeThreeBand
 
+        val trebleBudget = TrebleGainStagingBudget.allocate(
+            accommodationsActive = accommodationsEnabled && accommodationsApplyToMedia && effectiveProcessing,
+            accommodationsProfile = accommodationsToneProfile,
+            accommodationsIntensity = accommodationsSoftIntensity,
+            spatialActive = effectiveProcessing && spatialMode != SpatialMode.OFF,
+            spatialHeightPresence = heightPresence,
+            siliconDspActive = siliconDspEnabled && effectiveProcessing
+        )
+        latestTrebleBudget = trebleBudget
+
         soundCheckNormalizer.enabled = soundCheckEnabled && effectiveProcessing
         voiceIsolationProcessor.enabled = voiceIsolationEnabled && effectiveProcessing
         audioMixStemShaper.mode = if (effectiveProcessing) audioMixMode else AudioMixMode.STANDARD
@@ -918,7 +1023,8 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             isEnabled = accommodationsEnabled && accommodationsApplyToMedia && effectiveProcessing,
             profile = accommodationsToneProfile,
             intensity = accommodationsSoftIntensity,
-            outputGainDb = accommodationsOutputGainDb
+            outputGainDb = accommodationsOutputGainDb,
+            hfScale = trebleBudget.accHfScale.toDouble()
         )
         threeBandToneFilter.configure(
             isEnabled = activeThreeBand && effectiveProcessing,
@@ -926,6 +1032,10 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             midsDb = if (activeThreeBand) threeBandMidsDb else 0f,
             trebleDb = if (activeThreeBand) threeBandTrebleDb else 0f,
             isSpeakerTarget = (outputTarget == OutputTarget.SPEAKER)
+        )
+        trebleSmoothnessProcessor.configure(
+            isEnabled = effectiveProcessing && trebleSmoothnessPercent > 0.005f,
+            smoothnessPercent = trebleSmoothnessPercent
         )
         lateNightCompressor.configure(isEnabled = lateNightEnabled && effectiveProcessing, intensity = nightIntensity)
         speakerDspChain.configure(
@@ -939,7 +1049,8 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             target = outputTarget,
             spatialDepth = spatialDepth,
             heightPresence = heightPresence,
-            vocalAnchor = vocalAnchor
+            vocalAnchor = vocalAnchor,
+            pinnaAirGainDb = trebleBudget.spatialPinnaShelfDb.toDouble()
         )
         loudnessMaximizerChain.configure(
             isEnabled = loudnessMaximizerEnabled && effectiveProcessing,
@@ -948,7 +1059,8 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         )
         siliconDspCore.configure(
             isEnabled = siliconDspEnabled && effectiveProcessing,
-            target = outputTarget
+            target = outputTarget,
+            microAirGainDb = trebleBudget.cirrusAirShelfDb.toDouble()
         )
 
         val activeBandGains = if (activeTenBand) gainsDb else List(10) { 0f }
@@ -1016,7 +1128,8 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         }
 
         val (toneL, toneR) = threeBandToneFilter.processStereoSample(l, r)
-        val (mixL, mixR) = audioMixStemShaper.processStereoSample(toneL, toneR)
+        val (smoothL, smoothR) = trebleSmoothnessProcessor.processStereoSample(toneL, toneR)
+        val (mixL, mixR) = audioMixStemShaper.processStereoSample(smoothL, smoothR)
         val (isoL, isoR) = voiceIsolationProcessor.processStereoSample(mixL, mixR)
         val (compL, compR) = lateNightCompressor.processStereoSample(isoL, isoR)
         val (spatL, spatR) = spatialAudioEngine.processStereoSample(compL, compR)
@@ -1099,6 +1212,12 @@ class TestAudioSynthesizer {
     val latestSiliconTruePeakGrDb: Float
         get() = filterBank.latestSiliconTruePeakGrDb
 
+    val isTrebleCapActive: Boolean
+        get() = filterBank.isTrebleCapActive
+
+    val latestTrebleCappedBoostDb: Float
+        get() = filterBank.latestTrebleCappedBoostDb
+
     fun setConversationDuckGain(duckGainLinear: Float) {
         filterBank.conversationDuckLinear = duckGainLinear.toDouble()
     }
@@ -1136,7 +1255,8 @@ class TestAudioSynthesizer {
         accommodationsOutputGainDb: Float = 0f,
         loudnessMaximizerEnabled: Boolean = false,
         loudnessBoostPercent: Float = 0.50f,
-        siliconDspEnabled: Boolean = false
+        siliconDspEnabled: Boolean = false,
+        trebleSmoothnessPercent: Float = 0f
     ) {
         backgroundPreset = bgSoundPreset
         backgroundVolume = bgSoundVolume
@@ -1171,7 +1291,8 @@ class TestAudioSynthesizer {
             accommodationsOutputGainDb = accommodationsOutputGainDb,
             loudnessMaximizerEnabled = loudnessMaximizerEnabled,
             loudnessBoostPercent = loudnessBoostPercent,
-            siliconDspEnabled = siliconDspEnabled
+            siliconDspEnabled = siliconDspEnabled,
+            trebleSmoothnessPercent = trebleSmoothnessPercent
         )
     }
 

@@ -15,10 +15,13 @@ class ExampleUnitTest {
 
     @Test
     fun all_presets_including_late_night_have_10_valid_bands() {
-        assertEquals(22, EqPresetsCatalog.PRESETS.size)
+        assertEquals(23, EqPresetsCatalog.PRESETS.size)
         assertEquals(5, EqPresetsCatalog.PRESETS.count { it.group == PresetGroup.SET_1 })
         assertEquals(8, EqPresetsCatalog.PRESETS.count { it.group == PresetGroup.SET_2 })
         assertEquals(8, EqPresetsCatalog.PRESETS.count { it.group == PresetGroup.SET_3 })
+
+        val warmBalance = EqPresetsCatalog.findById(EqPresetsCatalog.WARM_IPHONE_BALANCE_ID)
+        assertEquals("Warm iPhone Balance", warmBalance?.name)
 
         val lateNight = EqPresetsCatalog.findById(EqPresetsCatalog.LATE_NIGHT_ID)
         assertEquals(
@@ -164,21 +167,27 @@ class ExampleUnitTest {
             com.example.model.SpeakerTuningProfile.PRO_MAX_MUSIC,
             sampleRate
         )
-        val resp6800 = com.example.audio.PhoneSpeakerDspChain.computeVcurveResponseDbAt(
-            6800.0,
+        val resp4500 = com.example.audio.PhoneSpeakerDspChain.computeVcurveResponseDbAt(
+            4500.0,
             com.example.model.SpeakerTuningProfile.PRO_MAX_MUSIC,
             sampleRate
         )
-        val resp14000 = com.example.audio.PhoneSpeakerDspChain.computeVcurveResponseDbAt(
-            14000.0,
+        val resp7000 = com.example.audio.PhoneSpeakerDspChain.computeVcurveResponseDbAt(
+            7000.0,
+            com.example.model.SpeakerTuningProfile.PRO_MAX_MUSIC,
+            sampleRate
+        )
+        val resp16000 = com.example.audio.PhoneSpeakerDspChain.computeVcurveResponseDbAt(
+            16000.0,
             com.example.model.SpeakerTuningProfile.PRO_MAX_MUSIC,
             sampleRate
         )
         assertTrue("135Hz Pro Max Chamber Bass Punch should boost > +2.0 dB ($resp135)", resp135 > 2.0f)
         assertTrue("340Hz lower-mid scoop should dip < -2.2 dB ($resp340)", resp340 < -2.2f)
-        assertTrue("3.0kHz presence should boost > +1.5 dB ($resp3000)", resp3000 > 1.5f)
-        assertTrue("6.8kHz surgical de-esser should dip below 3kHz & 14kHz ($resp6800)", resp6800 < -0.8f)
-        assertTrue("11.5kHz crisp air shelf should boost > +2.2 dB at 14kHz ($resp14000)", resp14000 > 2.2f)
+        assertTrue("3.0kHz presence should boost > +0.75 dB ($resp3000)", resp3000 > 0.75f)
+        assertTrue("4.5kHz harshness cut should dip < -2.0 dB ($resp4500)", resp4500 < -2.0f)
+        assertTrue("7.0kHz surgical de-esser should dip < -2.5 dB ($resp7000)", resp7000 < -2.5f)
+        assertTrue("12kHz gain-staged air shelf should stay gentle (+0.2..+1.8 dB at 16kHz, got $resp16000)", resp16000 in 0.2f..1.8f)
 
         // 3b. 18 Pro (Warm Spoken Dialogue) emphasizes 1.8kHz dialogue clarity while taming high air relative to Music
         val dialogue1800 = com.example.audio.PhoneSpeakerDspChain.computeVcurveResponseDbAt(
@@ -927,5 +936,79 @@ class ExampleUnitTest {
         }
         assertTrue("Integrated Silicon DSP Core output must remain bounded <= 0.99 ($integratedPeak)", integratedPeak <= 0.99)
         assertTrue("Integrated BiquadEqFilterBank must expose positive excursion telemetry", bank.latestSiliconExcursionPct > 5f)
+    }
+
+    @Test
+    fun default_speaker_preset_is_warm_iphone_balance() {
+        val speakerProfile = com.example.model.OutputEqProfile(target = com.example.model.OutputTarget.SPEAKER)
+        assertEquals(EqPresetsCatalog.WARM_IPHONE_BALANCE_ID, speakerProfile.selectedPresetId)
+        assertEquals(EqPresetsCatalog.WARM_IPHONE_BALANCE_PRESET.gainsDb, speakerProfile.bandGainsDb)
+        assertEquals(0.35f, speakerProfile.trebleSmoothnessPercent, 0.001f)
+
+        val headphoneProfile = com.example.model.OutputEqProfile(target = com.example.model.OutputTarget.HEADPHONES)
+        assertEquals(0.15f, headphoneProfile.trebleSmoothnessPercent, 0.001f)
+    }
+
+    @Test
+    fun treble_gain_staging_budget_caps_stacked_high_boosts_to_3db() {
+        val allocation = com.example.model.TrebleGainStagingBudget.allocate(
+            accommodationsActive = true,
+            accommodationsProfile = com.example.model.AccommodationToneProfile.BRIGHTNESS,
+            accommodationsIntensity = com.example.model.SoftSoundIntensity.STRONG,
+            spatialActive = true,
+            spatialHeightPresence = 1.0f,
+            siliconDspActive = true
+        )
+        assertTrue("Stacking Accommodations + Spatial + Silicon Air must engage >4kHz cap", allocation.isCapEngaged)
+        assertTrue("Raw combined HF boost should exceed +3.0 dB (${allocation.rawCombinedHfDb})", allocation.rawCombinedHfDb > 3.0f)
+        assertTrue(
+            "Capped combined HF boost must not exceed +3.0 dB (${allocation.cappedCombinedHfDb})",
+            allocation.cappedCombinedHfDb <= 3.001f
+        )
+
+        val bank = BiquadEqFilterBank(48000).apply {
+            updateParameters(
+                gainsDb = List(10) { 0f },
+                preampDb = 0f,
+                isBypassed = false,
+                outputTarget = com.example.model.OutputTarget.HEADPHONES,
+                accommodationsEnabled = true,
+                accommodationsToneProfile = com.example.model.AccommodationToneProfile.BRIGHTNESS,
+                accommodationsSoftIntensity = com.example.model.SoftSoundIntensity.STRONG,
+                accommodationsApplyToMedia = true,
+                spatialMode = com.example.model.SpatialMode.ATMOS_CINEMA,
+                heightPresence = 1.0f,
+                siliconDspEnabled = true
+            )
+        }
+        assertTrue("BiquadEqFilterBank must report active >4kHz treble cap", bank.isTrebleCapActive)
+        assertTrue("Reported capped boost must stay <= +3.0 dB", bank.latestTrebleCappedBoostDb <= 3.001f)
+    }
+
+    @Test
+    fun treble_smoothness_processor_warms_160hz_and_attenuates_fatigue_zone() {
+        val sampleRate = 48000
+        val neutral160 = com.example.audio.TrebleSmoothnessProcessor.computeResponseDbAt(160.0, 0f, sampleRate)
+        val warm160 = com.example.audio.TrebleSmoothnessProcessor.computeResponseDbAt(160.0, 1.0f, sampleRate)
+        val warm5500 = com.example.audio.TrebleSmoothnessProcessor.computeResponseDbAt(5500.0, 1.0f, sampleRate)
+        val warm9500 = com.example.audio.TrebleSmoothnessProcessor.computeResponseDbAt(9500.0, 1.0f, sampleRate)
+
+        assertEquals(0f, neutral160, 0.001f)
+        assertTrue("100% Treble Smoothness must add ~+2.0 dB warm body at 160Hz (got $warm160)", warm160 in 1.4f..2.6f)
+        assertTrue("100% Treble Smoothness must attenuate 5.5kHz fatigue zone < -3.5 dB (got $warm5500)", warm5500 < -3.5f)
+        assertTrue("100% Treble Smoothness must roll off 9.5kHz highs < -3.0 dB (got $warm9500)", warm9500 < -3.0f)
+
+        val processor = com.example.audio.TrebleSmoothnessProcessor(sampleRate).apply {
+            configure(isEnabled = true, smoothnessPercent = 1.0f)
+        }
+        var rms6k = 0.0
+        for (i in 0 until 4800) {
+            val s = 0.25 * kotlin.math.sin(2.0 * Math.PI * 6000.0 * i / sampleRate)
+            val (oL, _) = processor.processStereoSample(s, s)
+            if (i > 2400) rms6k += oL * oL
+        }
+        rms6k = kotlin.math.sqrt(rms6k / 2400)
+        val inRms = 0.25 / kotlin.math.sqrt(2.0)
+        assertTrue("Active 100% Treble Smoothness must audibly tame 6kHz sibilance/harshness ($rms6k < $inRms)", rms6k < inRms * 0.65)
     }
 }

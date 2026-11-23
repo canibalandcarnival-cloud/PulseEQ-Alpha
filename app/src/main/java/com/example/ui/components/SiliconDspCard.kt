@@ -30,8 +30,11 @@ import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Thermostat
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
@@ -82,7 +85,9 @@ fun SiliconDspCard(
     isMasterBypassed: Boolean,
     abCompareHeld: Boolean,
     telemetry: AudioLabTelemetry,
+    trebleSmoothnessPercent: Float = 0.35f,
     onToggleSiliconDsp: () -> Unit,
+    onTrebleSmoothnessChange: (Float) -> Unit = {},
     onAbCompareHeld: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -374,6 +379,147 @@ fun SiliconDspCard(
             }
         }
 
+        // iPhone Warmth / Treble Smoothness (De-Harsh) Slider
+        val smoothnessClamped = trebleSmoothnessPercent.coerceIn(0f, 1f)
+        val smoothnessPctInt = (smoothnessClamped * 100f).toInt()
+        val warmBodyGain = smoothnessClamped * 2.0f
+        val deHarshCut = smoothnessClamped * 4.5f
+        val smoothnessActive = !isMasterBypassed && !abCompareHeld && smoothnessClamped > 0.005f
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(StudioBackground.copy(alpha = 0.65f))
+                .border(
+                    width = 1.dp,
+                    color = if (smoothnessActive) WarmAmber.copy(alpha = 0.62f) else AppleGlassBorder.copy(alpha = 0.65f),
+                    shape = RoundedCornerShape(14.dp)
+                )
+                .padding(horizontal = 12.dp, vertical = 9.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Tune,
+                        contentDescription = "iPhone Warmth and Treble Smoothness",
+                        tint = if (smoothnessActive) WarmAmber else TextMuted,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Column {
+                        Text(
+                            text = "iPhone Warmth / Treble Smoothness",
+                            style = MaterialTheme.typography.labelLarge.copy(
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            ),
+                            color = TextPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = String.format(
+                                Locale.US,
+                                "+%.1fdB @ 160Hz • -%.1fdB De-Harsh (3.5–10kHz)",
+                                warmBodyGain,
+                                deHarshCut
+                            ),
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                            color = if (smoothnessActive) WarmAmber else TextMuted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(
+                            if (smoothnessActive) WarmAmber.copy(alpha = 0.18f) else StudioSurfaceElevated
+                        )
+                        .border(
+                            width = 1.dp,
+                            color = if (smoothnessActive) WarmAmber.copy(alpha = 0.68f) else StudioBorder,
+                            shape = RoundedCornerShape(999.dp)
+                        )
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                        .testTag("treble_smoothness_badge")
+                ) {
+                    Text(
+                        text = "$smoothnessPctInt%",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = if (smoothnessActive) WarmAmber else TextSecondary
+                    )
+                }
+            }
+
+            Slider(
+                value = smoothnessClamped,
+                onValueChange = onTrebleSmoothnessChange,
+                valueRange = 0f..1f,
+                colors = SliderDefaults.colors(
+                    thumbColor = WarmAmber,
+                    activeTrackColor = WarmAmber,
+                    inactiveTrackColor = StudioSurfaceElevated
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .defaultMinSize(minHeight = 48.dp)
+                    .testTag("treble_smoothness_slider")
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "0% Natural",
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.5.sp),
+                    color = TextMuted
+                )
+                Text(
+                    text = if (telemetry.trebleGainStagedCapActive && !isMasterBypassed && !abCompareHeld) {
+                        String.format(
+                            Locale.US,
+                            "HF Cap Active: +%.1f dB (≤ +3.0 dB)",
+                            telemetry.trebleCappedBoostDb
+                        )
+                    } else {
+                        "Gain-Staged >4kHz ≤ +3.0 dB"
+                    },
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = 8.5.sp,
+                        fontWeight = FontWeight.SemiBold
+                    ),
+                    color = if (telemetry.trebleGainStagedCapActive && !isMasterBypassed && !abCompareHeld) {
+                        RouteEmerald
+                    } else {
+                        TextSecondary
+                    },
+                    modifier = Modifier.testTag("treble_cap_status_badge")
+                )
+                Text(
+                    text = "100% Silky Warm",
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.5.sp),
+                    color = WarmAmber
+                )
+            }
+        }
+
         // 5-Stage Hardware Pipeline Chips
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -398,7 +544,7 @@ fun SiliconDspCard(
                 bgColor = AppleBlueSoft
             )
             SiliconStageChip(
-                text = "4. 19.2kHz LPF + 14.5kHz Air",
+                text = "4. 19.2kHz LPF + Gain-Staged Air",
                 isActive = active,
                 highlightColor = WarmAmber,
                 bgColor = WarmAmber.copy(alpha = 0.18f)

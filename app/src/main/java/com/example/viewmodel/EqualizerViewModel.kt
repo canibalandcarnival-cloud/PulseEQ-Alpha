@@ -622,6 +622,16 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
         commitProfile(updated)
     }
 
+    fun updateTrebleSmoothness(rawPercent: Float) {
+        val current = currentProfile()
+        val snapped = ((rawPercent.coerceIn(0f, 1f) * 100f).roundToInt() / 100f).coerceIn(0f, 1f)
+        val updated = current.copy(
+            trebleSmoothnessPercent = snapped,
+            isBypassed = if (snapped > 0f && current.isBypassed) false else current.isBypassed
+        )
+        commitProfile(updated)
+    }
+
     fun openCustomAudioSetup() {
         audioEngine.customAudioSetupEngine.open(currentProfile().accommodationsSoftIntensity)
     }
@@ -778,7 +788,8 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             accommodationsOutputGainDb = profile.accommodationsOutputGainDb,
             loudnessMaximizerEnabled = profile.loudnessMaximizerEnabled,
             loudnessBoostPercent = profile.loudnessBoostPercent,
-            siliconDspEnabled = profile.siliconDspEnabled
+            siliconDspEnabled = profile.siliconDspEnabled,
+            trebleSmoothnessPercent = profile.trebleSmoothnessPercent
         )
     }
 

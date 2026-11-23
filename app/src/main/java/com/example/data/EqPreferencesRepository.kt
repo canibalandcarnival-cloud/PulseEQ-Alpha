@@ -69,6 +69,7 @@ class EqPreferencesRepository(private val context: Context) {
         fun loudnessMaxEnabledKey(target: OutputTarget) = booleanPreferencesKey("loudness_max_enabled_${target.id}")
         fun loudnessBoostPctKey(target: OutputTarget) = floatPreferencesKey("loudness_boost_pct_${target.id}")
         fun siliconDspKey(target: OutputTarget) = booleanPreferencesKey("silicon_dsp_${target.id}")
+        fun trebleSmoothnessKey(target: OutputTarget) = floatPreferencesKey("treble_smoothness_${target.id}")
     }
 
     val preferencesFlow: Flow<StoredEqPreferences> = context.eqDataStore.data.map { prefs ->
@@ -182,7 +183,9 @@ class EqPreferencesRepository(private val context: Context) {
                     ),
                 loudnessMaximizerEnabled = prefs[Keys.loudnessMaxEnabledKey(target)] ?: false,
                 loudnessBoostPercent = (prefs[Keys.loudnessBoostPctKey(target)] ?: 0.50f).coerceIn(0f, 1f),
-                siliconDspEnabled = prefs[Keys.siliconDspKey(target)] ?: true
+                siliconDspEnabled = prefs[Keys.siliconDspKey(target)] ?: true,
+                trebleSmoothnessPercent = (prefs[Keys.trebleSmoothnessKey(target)]
+                    ?: OutputEqProfile.defaultTrebleSmoothnessForTarget(target)).coerceIn(0f, 1f)
             )
         }
 
@@ -267,6 +270,7 @@ class EqPreferencesRepository(private val context: Context) {
             prefs[Keys.loudnessMaxEnabledKey(profile.target)] = profile.loudnessMaximizerEnabled
             prefs[Keys.loudnessBoostPctKey(profile.target)] = profile.loudnessBoostPercent.coerceIn(0f, 1f)
             prefs[Keys.siliconDspKey(profile.target)] = profile.siliconDspEnabled
+            prefs[Keys.trebleSmoothnessKey(profile.target)] = profile.trebleSmoothnessPercent.coerceIn(0f, 1f)
         }
     }
 }

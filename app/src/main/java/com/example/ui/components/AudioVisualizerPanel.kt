@@ -51,12 +51,15 @@ import com.example.audio.AudioMixStemShaper
 import com.example.audio.HeadphoneAccommodationsProcessor
 import com.example.audio.IphoneLoudnessMaximizerChain
 import com.example.audio.ThreeBandToneFilter
+import com.example.audio.TrebleSmoothnessProcessor
 import com.example.model.AccommodationToneProfile
 import com.example.model.AudioMixMode
 import com.example.model.EqPresetsCatalog
 import com.example.model.OutputTarget
 import com.example.model.SoftSoundIntensity
+import com.example.model.SpatialMode
 import com.example.model.TestAudioSource
+import com.example.model.TrebleGainStagingBudget
 import com.example.model.VisualizerFrame
 import com.example.model.VisualizerMode
 import com.example.ui.theme.AnalyzerCyan
@@ -105,10 +108,22 @@ fun AudioVisualizerPanel(
     loudnessMaximizerEnabled: Boolean = false,
     outputTarget: OutputTarget = OutputTarget.HEADPHONES,
     audioMixMode: AudioMixMode = AudioMixMode.STANDARD,
+    trebleSmoothnessPercent: Float = 0f,
+    spatialMode: SpatialMode = SpatialMode.OFF,
+    spatialHeightPresence: Float = 0.58f,
+    siliconDspEnabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val activeThreeBand = threeBandEnabled && !tenBandEnabled
     val activeTenBand = !activeThreeBand
+    val trebleBudget = TrebleGainStagingBudget.allocate(
+        accommodationsActive = accommodationsEnabled && accommodationsApplyToMedia && !isBypassed,
+        accommodationsProfile = accommodationsToneProfile,
+        accommodationsIntensity = accommodationsSoftIntensity,
+        spatialActive = !isBypassed && spatialMode != SpatialMode.OFF,
+        spatialHeightPresence = spatialHeightPresence,
+        siliconDspActive = siliconDspEnabled && !isBypassed
+    )
 
     // Animate EQ response curve points for smooth transitions on preset changes
     val animatedCurveGains = bandGainsDb.mapIndexed { index, gain ->
@@ -129,7 +144,16 @@ fun AudioVisualizerPanel(
             HeadphoneAccommodationsProcessor.computeResponseDbAt(
                 freqHz = freqHz,
                 profile = accommodationsToneProfile,
-                intensity = accommodationsSoftIntensity
+                intensity = accommodationsSoftIntensity,
+                hfScale = trebleBudget.accHfScale.toDouble()
+            )
+        } else {
+            0f
+        }
+        val smoothnessOffset = if (!isBypassed && trebleSmoothnessPercent > 0.005f) {
+            TrebleSmoothnessProcessor.computeResponseDbAt(
+                freqHz = freqHz,
+                smoothnessPercent = trebleSmoothnessPercent
             )
         } else {
             0f
@@ -150,7 +174,7 @@ fun AudioVisualizerPanel(
         } else {
             0f
         }
-        val target = if (isBypassed) 0f else (tenBandGain + toneOffset + accommodationsOffset + loudnessOffset + audioMixOffset + preampDb * 0.5f)
+        val target = if (isBypassed) 0f else (tenBandGain + toneOffset + accommodationsOffset + smoothnessOffset + loudnessOffset + audioMixOffset + preampDb * 0.5f)
             .coerceIn(EqPresetsCatalog.MIN_GAIN_DB, EqPresetsCatalog.MAX_GAIN_DB)
         val anim by animateFloatAsState(
             targetValue = target,

@@ -184,14 +184,14 @@ enum class SpeakerTuningProfile(
     PRO_MAX_MUSIC(
         id = "pro_max_music",
         label = "18 Pro Max Music",
-        subtitleTag = "Rich Bass & Air",
-        detailSummary = "88Hz HPF • 135Hz +3.5 • 340Hz -3.5 • 3k +2 • 6.8k -2.5 • 11.5k +3.5dB"
+        subtitleTag = "Warm Rich Bass",
+        detailSummary = "88Hz HPF • 135Hz +3.5 • 340Hz -3.5 • 4.5k -3.0 • 7k -3.5 • 12k +1.0dB"
     ),
     PRO_WARM_DIALOGUE(
         id = "pro_warm_dialogue",
         label = "18 Pro",
         subtitleTag = "Warm Spoken Dialogue",
-        detailSummary = "100Hz HPF • 150Hz +1.5 • 340Hz -2 • 1.8kHz +3.2 • 6.8k -3.0dB"
+        detailSummary = "100Hz HPF • 150Hz +1.5 • 340Hz -2 • 1.8kHz +3.2 • 7k -3.5dB"
     )
 }
 
@@ -268,7 +268,9 @@ data class AudioLabTelemetry(
     val siliconSvfCutoffHz: Float = 68f,
     val siliconCoilTempC: Float = 25f,
     val siliconClassHRailV: Float = 3.7f,
-    val siliconTruePeakGrDb: Float = 0f
+    val siliconTruePeakGrDb: Float = 0f,
+    val trebleGainStagedCapActive: Boolean = false,
+    val trebleCappedBoostDb: Float = 0f
 )
 
 @Immutable
@@ -320,19 +322,26 @@ data class OutputEqProfile(
     val accommodationsOutputGainDb: Float = 0f,
     val loudnessMaximizerEnabled: Boolean = false,
     val loudnessBoostPercent: Float = 0.50f,
-    val siliconDspEnabled: Boolean = true
+    val siliconDspEnabled: Boolean = true,
+    val trebleSmoothnessPercent: Float = defaultTrebleSmoothnessForTarget(target)
 ) {
     companion object {
+        fun defaultTrebleSmoothnessForTarget(target: OutputTarget): Float = when (target) {
+            OutputTarget.SPEAKER -> 0.35f
+            OutputTarget.HEADPHONES,
+            OutputTarget.BLUETOOTH -> 0.15f
+        }
+
         fun defaultGainsForTarget(target: OutputTarget): List<Float> = when (target) {
-            // Cuts sub-bass below 100Hz to prevent phone speaker rattle & boosts vocal clarity
-            OutputTarget.SPEAKER -> listOf(-6.0f, -3.5f, 0.0f, 0.5f, 1.0f, 2.0f, 3.0f, 2.5f, 1.0f, 0.0f)
+            // Warm iPhone Balance default curve: cuts sub-bass rattle, enriches 125-250Hz & vocals, smooths harsh highs
+            OutputTarget.SPEAKER -> EqPresetsCatalog.WARM_IPHONE_BALANCE_PRESET.gainsDb
             // Full-range bass & crisp treble for headphones
             OutputTarget.HEADPHONES -> listOf(2.5f, 2.0f, 1.0f, 0.0f, 0.0f, 0.5f, 1.0f, 1.5f, 2.5f, 3.0f)
             OutputTarget.BLUETOOTH -> List(10) { 0f }
         }
 
         fun defaultPresetIdForTarget(target: OutputTarget): String = when (target) {
-            OutputTarget.SPEAKER -> EqPresetsCatalog.CUSTOM_ID
+            OutputTarget.SPEAKER -> EqPresetsCatalog.WARM_IPHONE_BALANCE_ID
             OutputTarget.HEADPHONES -> EqPresetsCatalog.CUSTOM_ID
             OutputTarget.BLUETOOTH -> EqPresetsCatalog.FLAT_ID
         }
@@ -406,12 +415,15 @@ object FlagshipSpeakerSpecs {
     const val PRESENCE_HZ = 3000.0
     const val PRESENCE_Q = 1.2
     const val PRESENCE_DB = 2.0
-    const val DE_ESSER_HZ = 6800.0
-    const val DE_ESSER_Q = 3.5
-    const val DE_ESSER_DB = -2.5
-    const val AIR_SHELF_HZ = 11500.0
+    const val HARSHNESS_CUT_HZ = 4500.0
+    const val HARSHNESS_CUT_Q = 1.8
+    const val HARSHNESS_CUT_DB = -3.0
+    const val DE_ESSER_HZ = 7000.0
+    const val DE_ESSER_Q = 2.5
+    const val DE_ESSER_DB = -3.5
+    const val AIR_SHELF_HZ = 12000.0
     const val AIR_SHELF_Q = 0.707
-    const val AIR_SHELF_DB = 3.5
+    const val AIR_SHELF_DB = 1.0
 
     // Hybrid Earpiece + Bottom Speaker Crossover Simulation
     const val HYBRID_CROSSOVER_BASS_HZ = 180.0
@@ -469,12 +481,76 @@ object SiliconDspSpecs {
     const val TRUE_PEAK_CEILING_DBTP = -0.2
 }
 
+object TrebleGainStagingSpecs {
+    const val MAX_COMBINED_HF_BOOST_DB = 3.0f
+    const val WARM_BODY_160_MAX_DB = 2.0
+    const val DEHARSH_5500_MAX_CUT_DB = -4.5
+    const val DEHARSH_SHELF_8500_MAX_CUT_DB = -2.5
+}
+
+@Immutable
+data class TrebleBudgetAllocation(
+    val accHfScale: Float,
+    val spatialPinnaShelfDb: Float,
+    val cirrusAirShelfDb: Float,
+    val rawCombinedHfDb: Float,
+    val cappedCombinedHfDb: Float
+) {
+    val isCapEngaged: Boolean
+        get() = rawCombinedHfDb > TrebleGainStagingSpecs.MAX_COMBINED_HF_BOOST_DB + 0.05f
+}
+
+object TrebleGainStagingBudget {
+    /**
+     * Prevents stacked treble boosts (>4kHz) across Headphone Accommodations, Spatial Audio,
+     * and the Cirrus Logic Air Shelf by scaling active >4kHz boosts whenever their sum > +3.0 dB.
+     */
+    fun allocate(
+        accommodationsActive: Boolean,
+        accommodationsProfile: AccommodationToneProfile,
+        accommodationsIntensity: SoftSoundIntensity,
+        spatialActive: Boolean,
+        spatialHeightPresence: Float,
+        siliconDspActive: Boolean
+    ): TrebleBudgetAllocation {
+        val eqScale = accommodationsIntensity.eqScale
+        val accRawDb = if (!accommodationsActive) {
+            0f
+        } else {
+            when (accommodationsProfile) {
+                AccommodationToneProfile.BALANCED_TONE -> (2.1f * eqScale).coerceAtMost(HeadphoneAccommodationsSpecs.MAX_PROFILE_BOOST_DB)
+                AccommodationToneProfile.VOCAL_RANGE -> (1.8f * eqScale).coerceAtMost(HeadphoneAccommodationsSpecs.MAX_PROFILE_BOOST_DB)
+                AccommodationToneProfile.BRIGHTNESS -> (1.7f * eqScale).coerceAtMost(HeadphoneAccommodationsSpecs.MAX_PROFILE_BOOST_DB)
+            }
+        }
+        val spatialRawDb = if (spatialActive) {
+            (2.4f * (0.65f + 0.35f * spatialHeightPresence.coerceIn(0f, 1f))).coerceIn(1.5f, 3.0f)
+        } else {
+            0f
+        }
+        val cirrusRawDb = if (siliconDspActive) SiliconDspSpecs.MICRO_AIR_GAIN_DB.toFloat() else 0f
+
+        val rawSum = accRawDb + spatialRawDb + cirrusRawDb
+        val cap = TrebleGainStagingSpecs.MAX_COMBINED_HF_BOOST_DB
+        val scale = if (rawSum > cap && rawSum > 0f) (cap / rawSum).coerceIn(0.1f, 1.0f) else 1.0f
+
+        return TrebleBudgetAllocation(
+            accHfScale = scale,
+            spatialPinnaShelfDb = if (spatialActive) (3.0f * scale) else 0f,
+            cirrusAirShelfDb = if (siliconDspActive) (SiliconDspSpecs.MICRO_AIR_GAIN_DB.toFloat() * scale) else 0f,
+            rawCombinedHfDb = rawSum,
+            cappedCombinedHfDb = minOf(rawSum, cap)
+        )
+    }
+}
+
 object EqPresetsCatalog {
     const val MIN_GAIN_DB = -12f
     const val MAX_GAIN_DB = 12f
     const val FLAT_ID = "flat"
     const val CUSTOM_ID = "custom"
     const val LATE_NIGHT_ID = "late_night"
+    const val WARM_IPHONE_BALANCE_ID = "warm_iphone_balance"
 
     val BANDS: List<EqBand> = listOf(
         EqBand(0, 32, "32", "32Hz"),
@@ -497,6 +573,14 @@ object EqPresetsCatalog {
         gainsDb = List(10) { 0f }
     )
 
+    val WARM_IPHONE_BALANCE_PRESET = EqPreset(
+        id = WARM_IPHONE_BALANCE_ID,
+        name = "Warm iPhone Balance",
+        group = PresetGroup.ALL,
+        subtitle = "Rich chassis warmth, clear vocals & fatigue-free highs",
+        gainsDb = listOf(-4.5f, -2.0f, 2.0f, 1.0f, 0.5f, 1.5f, 2.0f, -0.5f, -1.0f, 0.5f)
+    )
+
     val LATE_NIGHT_PRESET = EqPreset(
         id = LATE_NIGHT_ID,
         name = "Late Night",
@@ -506,12 +590,13 @@ object EqPresetsCatalog {
     )
 
     /**
-     * 21 presets mapped from the 3 reference preset images + iPhone-style Late Night preset:
+     * 21 presets mapped from the 3 reference preset images + Warm iPhone Balance + Late Night:
      * Image 1: Small Speakers, Spoken Word, Rock, Pop, Reduce Bass
      * Image 2: Jazz, Increase Vocals, Loudness, Lounge, Latin, R&B, Piano, Reduce Treble
      * Image 3: Acoustic, Classical, Dance, Deep, Hip-Hop, Electronic, Increase Bass, Increase Treble
      */
     val PRESETS: List<EqPreset> = listOf(
+        WARM_IPHONE_BALANCE_PRESET,
         LATE_NIGHT_PRESET,
         // --- Image 1 ---
         EqPreset(

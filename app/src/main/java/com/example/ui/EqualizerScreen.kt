@@ -339,7 +339,11 @@ private fun CompactConsoleLayout(
             accommodationsApplyToMedia = profile.accommodationsApplyToMedia,
             loudnessMaximizerEnabled = profile.loudnessMaximizerEnabled,
             outputTarget = uiState.selectedTarget,
-            audioMixMode = profile.audioMixMode
+            audioMixMode = profile.audioMixMode,
+            trebleSmoothnessPercent = profile.trebleSmoothnessPercent,
+            spatialMode = profile.spatialMode,
+            spatialHeightPresence = profile.heightPresence,
+            siliconDspEnabled = profile.siliconDspEnabled
         )
 
         MasterActionBar(
@@ -418,7 +422,9 @@ private fun CompactConsoleLayout(
             isMasterBypassed = profile.isBypassed,
             abCompareHeld = uiState.abCompareHeld,
             telemetry = uiState.audioLabTelemetry,
+            trebleSmoothnessPercent = profile.trebleSmoothnessPercent,
             onToggleSiliconDsp = viewModel::toggleSiliconDsp,
+            onTrebleSmoothnessChange = viewModel::updateTrebleSmoothness,
             onAbCompareHeld = viewModel::setAbCompareHeld
         )
 
@@ -552,7 +558,11 @@ private fun WideConsoleLayout(
                     accommodationsApplyToMedia = profile.accommodationsApplyToMedia,
                     loudnessMaximizerEnabled = profile.loudnessMaximizerEnabled,
                     outputTarget = uiState.selectedTarget,
-                    audioMixMode = profile.audioMixMode
+                    audioMixMode = profile.audioMixMode,
+                    trebleSmoothnessPercent = profile.trebleSmoothnessPercent,
+                    spatialMode = profile.spatialMode,
+                    spatialHeightPresence = profile.heightPresence,
+                    siliconDspEnabled = profile.siliconDspEnabled
                 )
 
                 PresetQuickStrip(
@@ -649,7 +659,9 @@ private fun WideConsoleLayout(
                     isMasterBypassed = profile.isBypassed,
                     abCompareHeld = uiState.abCompareHeld,
                     telemetry = uiState.audioLabTelemetry,
+                    trebleSmoothnessPercent = profile.trebleSmoothnessPercent,
                     onToggleSiliconDsp = viewModel::toggleSiliconDsp,
+                    onTrebleSmoothnessChange = viewModel::updateTrebleSmoothness,
                     onAbCompareHeld = viewModel::setAbCompareHeld
                 )
 

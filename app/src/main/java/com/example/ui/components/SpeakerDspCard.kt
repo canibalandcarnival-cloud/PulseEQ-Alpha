@@ -383,7 +383,7 @@ fun SpeakerDspCard(
                 bgColor = SignalCoralSoft
             )
             DspStageChip(
-                text = if (isMusicProfile) "3k +2 • 6.8k -2.5 De-Ess • 11.5k +3.5dB" else "6.8k -3.0dB De-Ess • 11.5k +1dB",
+                text = if (isMusicProfile) "4.5k -3.0dB • 7k -3.5dB De-Ess • 12k +1.0dB" else "4.5k -1.5 • 7k -3.5 De-Ess • 12k +0.5dB",
                 isActive = active,
                 highlightColor = SignalCoral,
                 bgColor = SignalCoralSoft
