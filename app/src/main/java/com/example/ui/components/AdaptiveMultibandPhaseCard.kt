@@ -151,7 +151,7 @@ fun AdaptiveMultibandPhaseCard(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = "LR4 220Hz / 3.8kHz Balancer • 1.4kHz Allpass • Sound Check",
+                        text = "LR4 220Hz / 3.8kHz Balancer • 1.45kHz+0.14ms • Sound Check",
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.5.sp),
                         color = if (multibandActive) AppleMint else TextMuted,
                         maxLines = 1,
@@ -214,7 +214,7 @@ fun AdaptiveMultibandPhaseCard(
                     modifier = Modifier.weight(1f)
                 )
                 Text(
-                    text = "2.2:1 • 8ms / 90ms",
+                    text = "2.2:1 • 6ms / 85ms",
                     style = MaterialTheme.typography.labelSmall.copy(
                         fontSize = 9.sp,
                         fontWeight = FontWeight.Bold
@@ -304,10 +304,10 @@ fun AdaptiveMultibandPhaseCard(
                     )
                     Text(
                         text = when {
-                            !isSpeaker -> "Allpass 1.4 kHz (Q=0.707) • Auto-bypassed on ${outputTarget.label}"
-                            !speakerDspEnabled -> "Enable Phone Speaker DSP to engage 1.4 kHz Allpass"
-                            speakerPhaseAlignmentEnabled -> "Allpass 1.4 kHz (Q=0.707) • Locks center vocal phase (0.0 dB flat)"
-                            else -> "Allpass 1.4 kHz disabled"
+                            !isSpeaker -> "Allpass 1.45kHz (Q=0.707) + 0.14ms >2.2kHz • Auto-bypassed on ${outputTarget.label}"
+                            !speakerDspEnabled -> "Enable Phone Speaker DSP to engage 1.45 kHz + 0.14ms alignment"
+                            speakerPhaseAlignmentEnabled -> "Allpass 1.45kHz (Q=0.707) + 0.14ms (>2.2kHz) • Locks center vocals"
+                            else -> "1.45 kHz + 0.14ms alignment disabled"
                         },
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
                         color = if (phaseEffective) AnalyzerCyan else TextMuted,

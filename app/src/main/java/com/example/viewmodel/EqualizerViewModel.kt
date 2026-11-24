@@ -392,6 +392,7 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
         val updated = current.copy(
             speakerTuningProfile = profile,
             speakerDspEnabled = true,
+            landscapeStereoStage = if (profile == SpeakerTuningProfile.CINEMA_LANDSCAPE) true else current.landscapeStereoStage,
             isBypassed = false
         )
         commitProfile(updated)

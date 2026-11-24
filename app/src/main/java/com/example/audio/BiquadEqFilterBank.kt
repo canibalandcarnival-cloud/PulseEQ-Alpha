@@ -380,13 +380,14 @@ class DynamicRangeCompressor(private val sampleRate: Int = 44100) {
 
 /**
  * iPhone 18 Pro Max (iOS 27) Hybrid Stereo Speaker System DSP Chain:
- * 1. Acoustic Chamber & V-Curve EQ:
- *    - Sub-Rumble Cut: 88Hz 24dB/oct Butterworth HPF (100Hz in 18 Pro Dialogue)
- *    - Pro Max Chamber Bass Punch: 135Hz (+3.5dB, Q=1.1) + 2nd-Order Harmonic Bass Exciter (110Hz–220Hz)
- *    - Lower-Mid Scoop: 340Hz (-3.5dB, Q=1.4)
- *    - Crisp Air & De-Esser: 3.0kHz (+2.0dB), 6.8kHz notch (-2.5dB, Q=3.5), 11.5kHz high shelf (+3.5dB)
+ * 1. Apple Porous-Cavity Bass Extension & Resonant Damping:
+ *    - Sub-Sonic Excursion Guard: 86Hz 24dB/oct Butterworth HPF (100Hz in 18 Pro Voice Focus)
+ *    - Porous-Cavity Compliance Shelf: 128Hz (+3.2dB, Q=1.25) + 2nd-Order Harmonic Warmth (110Hz–220Hz)
+ *    - Surgical Chassis Boxiness Scoop: 350Hz (-3.5dB, Q=1.5)
+ *    - Apple Sibilance & Harshness Guard: 3.0kHz (+2.0dB), 4.5kHz (-3.0dB, Q=1.8), 7.0kHz (-3.5dB, Q=2.5), 12kHz (+1.0dB)
  * 2. Hybrid Earpiece + Bottom Speaker Crossover Simulation:
- *    - Keeps bass (<180Hz) tight & centered while applying Landscape Crosstalk Cancellation (-22% @ 0.19ms)
+ *    - Keeps bass (<180Hz) tight & centered while applying Orientation-Aware XTC (-22% @ 0.19ms)
+ *      or Cinema Landscape 2nd-Order Transaural XTC (-26% @ 0.17ms + +12% @ 0.34ms, 4.5kHz head-shadow LPF).
  * 3. Apple Dynamic Excursion Protection (Smart Bass Limiter):
  *    - Dynamic low-end (<220Hz) limiter (Threshold -14dB, Ratio 6:1, Attack 3ms, Release 120ms)
  *      feeding into +4.5dB clean makeup gain and -0.3dB Brickwall Limiter
@@ -401,7 +402,7 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
     private val subExtractor = StereoBiquad().apply { setBandPass(sampleRate, 70.0, 0.90) }
     private val harmonicBandPass = StereoBiquad().apply { setBandPass(sampleRate, 155.0, 1.15) }
 
-    // Stage 3: 18 Pro Max Acoustic Chamber & V-Curve EQ (or 18 Pro Warm Spoken Dialogue)
+    // Stage 3: 18 Pro Max Porous-Cavity & V-Curve EQ (or 18 Pro Voice Focus)
     private val chamberBassEq = StereoBiquad()
     private val bodyWarmth125HzEq = StereoBiquad()
     private val bodyWarmthExtractor125 = StereoBiquad().apply {
@@ -410,7 +411,7 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
     private val bodyWarmthHarmonicOut250 = StereoBiquad().apply {
         setBandPass(sampleRate, ProMaxHardwareRefinementSpecs.BODY_WARMTH_HZ * 2.0, 1.15)
     }
-    private val boxinessScoop340Hz = StereoBiquad()
+    private val boxinessScoop350Hz = StereoBiquad()
     private val dialogueFocus1800Hz = StereoBiquad()
     private val portraitVocalCenter2000Hz = StereoBiquad()
     private val presence3000Hz = StereoBiquad()
@@ -418,7 +419,7 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
     private val deEsser7000Hz = StereoBiquad()
     private val crispAirShelf12000Hz = StereoBiquad()
 
-    // Stage 4: Hybrid Earpiece + Bottom Speaker Crossover (<180Hz 24dB/oct mono bass + -22% @ 0.19ms XTC)
+    // Stage 4: Hybrid Earpiece + Bottom Speaker Crossover (<180Hz 24dB/oct mono bass + Orientation/Cinema XTC)
     private val hybridSideHpf1 = StereoBiquad().apply {
         setHighPass(sampleRate, FlagshipSpeakerSpecs.HYBRID_CROSSOVER_BASS_HZ, 0.5411961)
     }
@@ -428,11 +429,18 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
     private val xtcHighPass180 = StereoBiquad().apply {
         setHighPass(sampleRate, FlagshipSpeakerSpecs.HYBRID_CROSSOVER_BASS_HZ, 0.7071)
     }
+    private val cinemaHeadShadowLpf = StereoBiquad().apply {
+        setLowPass(sampleRate, FlagshipSpeakerSpecs.CINEMA_XTC_HEAD_SHADOW_LPF_HZ, 0.7071)
+    }
     private val xtcDelaySamples: Double = FlagshipSpeakerSpecs.XTC_DELAY_SEC * sampleRate
+    private val cinemaPrimaryDelaySamples: Double = FlagshipSpeakerSpecs.CINEMA_XTC_PRIMARY_DELAY_SEC * sampleRate
+    private val cinemaSecondaryDelaySamples: Double = FlagshipSpeakerSpecs.CINEMA_XTC_SECONDARY_DELAY_SEC * sampleRate
     private val xtcBufSize = 64
     private val xtcMask = xtcBufSize - 1
     private val xtcRingL = DoubleArray(xtcBufSize)
     private val xtcRingR = DoubleArray(xtcBufSize)
+    private val cinemaRingL = DoubleArray(xtcBufSize)
+    private val cinemaRingR = DoubleArray(xtcBufSize)
     private var xtcWriteIdx = 0
 
     // Stage 5a: Apple Dynamic Excursion Protection (fast dynamic low-end limiter < 220Hz)
@@ -521,7 +529,8 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
         }
 
         when (profile) {
-            SpeakerTuningProfile.PRO_MAX_MUSIC -> {
+            SpeakerTuningProfile.PRO_MAX_MUSIC,
+            SpeakerTuningProfile.CINEMA_LANDSCAPE -> {
                 hpfStage1.setHighPass(sampleRate, FlagshipSpeakerSpecs.SUB_BASS_HPF_HZ, 0.5411961)
                 hpfStage2.setHighPass(sampleRate, FlagshipSpeakerSpecs.SUB_BASS_HPF_HZ, 1.3065630)
                 chamberBassEq.setPeaking(
@@ -530,7 +539,7 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
                     FlagshipSpeakerSpecs.CHAMBER_BASS_Q,
                     FlagshipSpeakerSpecs.CHAMBER_BASS_DB
                 )
-                boxinessScoop340Hz.setPeaking(
+                boxinessScoop350Hz.setPeaking(
                     sampleRate,
                     FlagshipSpeakerSpecs.BOXINESS_CUT_HZ,
                     FlagshipSpeakerSpecs.BOXINESS_CUT_Q,
@@ -567,11 +576,21 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
                 hpfStage1.setHighPass(sampleRate, 100.0, 0.5411961)
                 hpfStage2.setHighPass(sampleRate, 100.0, 1.3065630)
                 chamberBassEq.setPeaking(sampleRate, 150.0, 1.0, 1.5)
-                boxinessScoop340Hz.setPeaking(sampleRate, 340.0, 1.3, -2.0)
+                boxinessScoop350Hz.setPeaking(sampleRate, FlagshipSpeakerSpecs.BOXINESS_CUT_HZ, FlagshipSpeakerSpecs.BOXINESS_CUT_Q, -2.5)
                 dialogueFocus1800Hz.setPeaking(sampleRate, 1800.0, 1.0, 3.2)
                 presence3000Hz.setPeaking(sampleRate, 3000.0, 1.2, 1.2)
-                harshnessCut4500Hz.setPeaking(sampleRate, 4500.0, 1.8, -1.5)
-                deEsser7000Hz.setPeaking(sampleRate, 7000.0, 2.5, -3.5)
+                harshnessCut4500Hz.setPeaking(
+                    sampleRate,
+                    FlagshipSpeakerSpecs.HARSHNESS_CUT_HZ,
+                    FlagshipSpeakerSpecs.HARSHNESS_CUT_Q,
+                    FlagshipSpeakerSpecs.HARSHNESS_CUT_DB
+                )
+                deEsser7000Hz.setPeaking(
+                    sampleRate,
+                    FlagshipSpeakerSpecs.DE_ESSER_HZ,
+                    FlagshipSpeakerSpecs.DE_ESSER_Q,
+                    FlagshipSpeakerSpecs.DE_ESSER_DB
+                )
                 crispAirShelf12000Hz.setHighShelf(sampleRate, 12000.0, 0.707, 0.5)
             }
         }
@@ -591,9 +610,9 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
         )
     }
 
-    private fun readXtcDelayed(ring: DoubleArray): Double {
-        val intD = xtcDelaySamples.toInt()
-        val frac = xtcDelaySamples - intD
+    private fun readXtcDelayed(ring: DoubleArray, delaySamples: Double = xtcDelaySamples): Double {
+        val intD = delaySamples.toInt()
+        val frac = delaySamples - intD
         val idx0 = (xtcWriteIdx - intD) and xtcMask
         val idx1 = (xtcWriteIdx - intD - 1) and xtcMask
         return ring[idx0] * (1.0 - frac) + ring[idx1] * frac
@@ -604,7 +623,7 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
 
         val profile = tuningProfile
 
-        // Stage 2 extraction pre-HPF so sub-bass energy below 88Hz feeds warm 2nd-order harmonic synthesis (110Hz–220Hz)
+        // Stage 2 extraction pre-HPF so sub-bass energy below 86Hz feeds warm 2nd-order harmonic synthesis (110Hz–220Hz)
         val (harmL, harmR) = if (virtualBassEnabled) {
             val (subL, subR) = subExtractor.processStereo(inL, inR)
             val driveL = (subL * 2.2).coerceIn(-1.25, 1.25)
@@ -617,16 +636,16 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
             0.0 to 0.0
         }
 
-        // Stage 1: Steep 88Hz (24dB/oct) sub-rumble high-pass protection
+        // Stage 1: Steep 86Hz (24dB/oct) sub-sonic excursion guard
         val (hp1L, hp1R) = hpfStage1.processStereo(inL, inR)
         val (hp2L, hp2R) = hpfStage2.processStereo(hp1L, hp1R)
 
         // Blend synthesized 110Hz–220Hz warm 2nd-order harmonic bass back in
-        val harmBlend = if (profile == SpeakerTuningProfile.PRO_MAX_MUSIC) 0.85 else 0.40
+        val harmBlend = if (profile == SpeakerTuningProfile.PRO_WARM_DIALOGUE) 0.40 else 0.85
         var l = hp2L + harmL * harmBlend
         var r = hp2R + harmR * harmBlend
 
-        // Stage 3: Gain-Staged Acoustic Chamber & V-Curve EQ + Optional 125Hz Pro Max Body Warmth
+        // Stage 3: Gain-Staged Porous-Cavity Compliance Shelf (+3.2dB @ 128Hz, Q=1.25) + 350Hz Boxiness Scoop (-3.5dB, Q=1.5)
         val (cbL, cbR) = chamberBassEq.processStereo(l, r)
         val (bwL, bwR) = if (bodyWarmthEnabled) {
             val (eqWarmL, eqWarmR) = bodyWarmth125HzEq.processStereo(cbL, cbR)
@@ -640,7 +659,7 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
         } else {
             cbL to cbR
         }
-        val (scL, scR) = boxinessScoop340Hz.processStereo(bwL, bwR)
+        val (scL, scR) = boxinessScoop350Hz.processStereo(bwL, bwR)
         val (dfL, dfR) = dialogueFocus1800Hz.processStereo(scL, scR)
         val (prL, prR) = presence3000Hz.processStereo(dfL, dfR)
         val (hcL, hcR) = harshnessCut4500Hz.processStereo(prL, prR)
@@ -649,16 +668,18 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
         l = arL
         r = arR
 
-        // Stage 4: Orientation-Aware Hybrid Earpiece + Bottom Speaker Crossover Simulation
+        // Stage 4: Orientation-Aware & Cinema Landscape Hybrid Earpiece + Bottom Speaker Crossover Simulation
         // Always keeps <180Hz bass centered mono L=R for balanced vertical weight.
-        // - Portrait: focuses center vocals (2kHz +1.4dB) & trims >180Hz side width (0.72x).
+        // - Portrait: focuses center vocals (2kHz) & trims >180Hz side width.
         // - Landscape: widens horizontal stereo via -22% phase-inverted crossfeed delayed by 0.19ms.
+        // - Cinema Landscape profile: engages 2nd-order transaural XTC (-26% @ 0.17ms + +12% @ 0.34ms, 4.5kHz shadow LPF).
+        val isCinemaLandscape = profile == SpeakerTuningProfile.CINEMA_LANDSCAPE
         val mid = 0.5 * (l + r)
         val side = 0.5 * (l - r)
         val (_, s1) = hybridSideHpf1.processStereo(0.0, side)
         val (_, sideAbove180) = hybridSideHpf2.processStereo(0.0, s1)
-        val effectiveSide = if (portraitVocalFocusEnabled) sideAbove180 * 0.62 else sideAbove180
-        val focusedMid = if (portraitVocalFocusEnabled) {
+        val effectiveSide = if (portraitVocalFocusEnabled && !isCinemaLandscape) sideAbove180 * 0.62 else sideAbove180
+        val focusedMid = if (portraitVocalFocusEnabled && !isCinemaLandscape) {
             portraitVocalCenter2000Hz.processStereo(mid, mid).first
         } else {
             mid
@@ -667,12 +688,28 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
         val centeredR = focusedMid - effectiveSide
 
         val (hpXtcL, hpXtcR) = xtcHighPass180.processStereo(centeredL, centeredR)
+        val (cinL, cinR) = cinemaHeadShadowLpf.processStereo(hpXtcL, hpXtcR)
         xtcRingL[xtcWriteIdx] = hpXtcL
         xtcRingR[xtcWriteIdx] = hpXtcR
-        val delayedXtcL = readXtcDelayed(xtcRingL)
-        val delayedXtcR = readXtcDelayed(xtcRingR)
+        cinemaRingL[xtcWriteIdx] = cinL
+        cinemaRingR[xtcWriteIdx] = cinR
+
+        val delayedXtcL = readXtcDelayed(xtcRingL, xtcDelaySamples)
+        val delayedXtcR = readXtcDelayed(xtcRingR, xtcDelaySamples)
+        val cinemaPrimL = readXtcDelayed(cinemaRingL, cinemaPrimaryDelaySamples)
+        val cinemaPrimR = readXtcDelayed(cinemaRingR, cinemaPrimaryDelaySamples)
+        val cinemaSecL = readXtcDelayed(cinemaRingL, cinemaSecondaryDelaySamples)
+        val cinemaSecR = readXtcDelayed(cinemaRingR, cinemaSecondaryDelaySamples)
         xtcWriteIdx = (xtcWriteIdx + 1) and xtcMask
-        if (landscapeStereoEnabled) {
+
+        if (isCinemaLandscape) {
+            l = centeredL -
+                FlagshipSpeakerSpecs.CINEMA_XTC_PRIMARY_GAIN * cinemaPrimR +
+                FlagshipSpeakerSpecs.CINEMA_XTC_SECONDARY_GAIN * cinemaSecL
+            r = centeredR -
+                FlagshipSpeakerSpecs.CINEMA_XTC_PRIMARY_GAIN * cinemaPrimL +
+                FlagshipSpeakerSpecs.CINEMA_XTC_SECONDARY_GAIN * cinemaSecR
+        } else if (landscapeStereoEnabled) {
             val crossGain = FlagshipSpeakerSpecs.XTC_CROSSFEED_GAIN
             l = centeredL - crossGain * delayedXtcR
             r = centeredR - crossGain * delayedXtcL
@@ -743,7 +780,8 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
             val air = StereoBiquad()
 
             when (profile) {
-                SpeakerTuningProfile.PRO_MAX_MUSIC -> {
+                SpeakerTuningProfile.PRO_MAX_MUSIC,
+                SpeakerTuningProfile.CINEMA_LANDSCAPE -> {
                     h1.setHighPass(sampleRate, FlagshipSpeakerSpecs.SUB_BASS_HPF_HZ, 0.5411961)
                     h2.setHighPass(sampleRate, FlagshipSpeakerSpecs.SUB_BASS_HPF_HZ, 1.3065630)
                     bass.setPeaking(
@@ -789,11 +827,21 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
                     h1.setHighPass(sampleRate, 100.0, 0.5411961)
                     h2.setHighPass(sampleRate, 100.0, 1.3065630)
                     bass.setPeaking(sampleRate, 150.0, 1.0, 1.5)
-                    scoop.setPeaking(sampleRate, 340.0, 1.3, -2.0)
+                    scoop.setPeaking(sampleRate, FlagshipSpeakerSpecs.BOXINESS_CUT_HZ, FlagshipSpeakerSpecs.BOXINESS_CUT_Q, -2.5)
                     dlg.setPeaking(sampleRate, 1800.0, 1.0, 3.2)
                     pres.setPeaking(sampleRate, 3000.0, 1.2, 1.2)
-                    harsh.setPeaking(sampleRate, 4500.0, 1.8, -1.5)
-                    deEss.setPeaking(sampleRate, 7000.0, 2.5, -3.5)
+                    harsh.setPeaking(
+                        sampleRate,
+                        FlagshipSpeakerSpecs.HARSHNESS_CUT_HZ,
+                        FlagshipSpeakerSpecs.HARSHNESS_CUT_Q,
+                        FlagshipSpeakerSpecs.HARSHNESS_CUT_DB
+                    )
+                    deEss.setPeaking(
+                        sampleRate,
+                        FlagshipSpeakerSpecs.DE_ESSER_HZ,
+                        FlagshipSpeakerSpecs.DE_ESSER_Q,
+                        FlagshipSpeakerSpecs.DE_ESSER_DB
+                    )
                     air.setHighShelf(sampleRate, 12000.0, 0.707, 0.5)
                 }
             }
@@ -1419,12 +1467,13 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             applyVolumeScale = applyMasterVolumeGain
         )
         lateNightCompressor.configure(isEnabled = lateNightEnabled && effectiveProcessing, intensity = nightIntensity)
+        val isCinemaProfile = speakerTuningProfile == SpeakerTuningProfile.CINEMA_LANDSCAPE
         speakerDspChain.configure(
             isSpeakerDspEnabled = speakerDspEnabled && effectiveProcessing,
             isVirtualBassEnabled = virtualBassEnabled && effectiveProcessing,
-            isLandscapeStereoEnabled = landscapeStereoStage && resolvedLandscape && effectiveProcessing,
+            isLandscapeStereoEnabled = ((landscapeStereoStage && resolvedLandscape) || isCinemaProfile) && effectiveProcessing,
             profile = speakerTuningProfile,
-            isPortraitVocalFocus = landscapeStereoStage && !resolvedLandscape && effectiveProcessing,
+            isPortraitVocalFocus = landscapeStereoStage && !resolvedLandscape && !isCinemaProfile && effectiveProcessing,
             isBodyWarmthEnabled = proMaxBodyWarmthEnabled && effectiveProcessing
         )
         spatialAudioEngine.configure(

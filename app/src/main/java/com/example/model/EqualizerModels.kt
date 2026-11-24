@@ -183,15 +183,21 @@ enum class SpeakerTuningProfile(
 ) {
     PRO_MAX_MUSIC(
         id = "pro_max_music",
-        label = "18 Pro Max Music",
-        subtitleTag = "Warm Rich Bass",
-        detailSummary = "88Hz HPF • 135Hz +3.5 • 340Hz -3.5 • 4.5k -3.0 • 7k -3.5 • 12k +1.0dB"
+        label = "18 Pro Max Signature",
+        subtitleTag = "Rich Bass & Open Stage",
+        detailSummary = "86Hz HPF • 128Hz +3.2 • 350Hz -3.5 • 1.45kHz+0.14ms • 4.5k/7k Guard"
     ),
     PRO_WARM_DIALOGUE(
         id = "pro_warm_dialogue",
-        label = "18 Pro",
-        subtitleTag = "Warm Spoken Dialogue",
-        detailSummary = "100Hz HPF • 150Hz +1.5 • 340Hz -2 • 1.8kHz +3.2 • 7k -3.5dB"
+        label = "18 Pro Voice Focus",
+        subtitleTag = "Clear Dialogue & Podcasts",
+        detailSummary = "100Hz HPF • 150Hz +1.5 • 350Hz -2.5 • 1.8kHz +3.2 • 4.5k/7k Guard"
+    ),
+    CINEMA_LANDSCAPE(
+        id = "cinema_landscape",
+        label = "Cinema Landscape",
+        subtitleTag = "Wide Transaural Crosstalk Cancellation",
+        detailSummary = "86Hz HPF • 128Hz +3.2 • 350Hz -3.5 • Wide -26% Transaural XTC"
     )
 }
 
@@ -475,12 +481,12 @@ object LoudnessMaximizerSpecs {
 }
 
 object FlagshipSpeakerSpecs {
-    const val SUB_BASS_HPF_HZ = 88.0
-    const val CHAMBER_BASS_HZ = 135.0
-    const val CHAMBER_BASS_Q = 1.1
-    const val CHAMBER_BASS_DB = 3.5
-    const val BOXINESS_CUT_HZ = 340.0
-    const val BOXINESS_CUT_Q = 1.4
+    const val SUB_BASS_HPF_HZ = 86.0
+    const val CHAMBER_BASS_HZ = 128.0
+    const val CHAMBER_BASS_Q = 1.25
+    const val CHAMBER_BASS_DB = 3.2
+    const val BOXINESS_CUT_HZ = 350.0
+    const val BOXINESS_CUT_Q = 1.5
     const val BOXINESS_CUT_DB = -3.5
     const val PRESENCE_HZ = 3000.0
     const val PRESENCE_Q = 1.2
@@ -495,10 +501,15 @@ object FlagshipSpeakerSpecs {
     const val AIR_SHELF_Q = 0.707
     const val AIR_SHELF_DB = 1.0
 
-    // Hybrid Earpiece + Bottom Speaker Crossover Simulation
+    // Hybrid Earpiece + Bottom Speaker Crossover Simulation & Transaural XTC
     const val HYBRID_CROSSOVER_BASS_HZ = 180.0
     const val XTC_CROSSFEED_GAIN = 0.22
     const val XTC_DELAY_SEC = 0.00019
+    const val CINEMA_XTC_PRIMARY_GAIN = 0.26
+    const val CINEMA_XTC_PRIMARY_DELAY_SEC = 0.00017
+    const val CINEMA_XTC_SECONDARY_GAIN = 0.12
+    const val CINEMA_XTC_SECONDARY_DELAY_SEC = 0.00034
+    const val CINEMA_XTC_HEAD_SHADOW_LPF_HZ = 4500.0
 
     // Apple Dynamic Excursion Protection (Smart Bass Limiter -> -0.3 dB Brickwall with +4.5 dB clean makeup)
     const val EXCURSION_LOW_BAND_HZ = 220.0
@@ -586,16 +597,18 @@ object AdaptiveMultibandPhaseSpecs {
     const val LOW_CROSSOVER_HZ = 220.0
     const val HIGH_CROSSOVER_HZ = 3800.0
     const val BAND_RATIO = 2.2f
-    const val BAND_ATTACK_MS = 8.0f
-    const val BAND_RELEASE_MS = 90.0f
+    const val BAND_ATTACK_MS = 6.0f
+    const val BAND_RELEASE_MS = 85.0f
     const val BAND_KNEE_DB = 8.0f
     const val LOW_THRESHOLD_DB = -18.0f
     const val MID_THRESHOLD_DB = -17.0f
     const val HIGH_THRESHOLD_DB = -19.0f
 
-    // Earpiece-to-Main-Driver Acoustic Phase Alignment Allpass (Phone Speaker Mode)
-    const val PHASE_ALIGN_ALLPASS_HZ = 1400.0
+    // Hybrid Earpiece-to-Bottom-Driver Phase & Arrival Alignment (Phone Speaker Mode)
+    const val PHASE_ALIGN_ALLPASS_HZ = 1450.0
     const val PHASE_ALIGN_ALLPASS_Q = 0.7071
+    const val TREBLE_MICRO_OFFSET_CUTOFF_HZ = 2200.0
+    const val TREBLE_MICRO_ARRIVAL_OFFSET_SEC = 0.00014
 
     // Apple Music Sound Check Dynamic Crest Controller
     const val SOUND_CHECK_TARGET_LUFS = -16.0

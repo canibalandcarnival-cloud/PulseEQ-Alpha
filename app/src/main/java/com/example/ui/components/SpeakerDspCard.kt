@@ -81,12 +81,14 @@ fun SpeakerDspCard(
     modifier: Modifier = Modifier
 ) {
     val active = speakerDspEnabled && !isBypassed
-    val isMusicProfile = speakerTuningProfile == SpeakerTuningProfile.PRO_MAX_MUSIC
+    val isDialogueProfile = speakerTuningProfile == SpeakerTuningProfile.PRO_WARM_DIALOGUE
+    val isCinemaProfile = speakerTuningProfile == SpeakerTuningProfile.CINEMA_LANDSCAPE
     val resolvedLandscape = when (phoneOrientationMode) {
         PhoneOrientationMode.AUTO_DETECT -> deviceIsLandscape
         PhoneOrientationMode.PORTRAIT -> false
         PhoneOrientationMode.LANDSCAPE -> true
     }
+    val effectiveCinemaOrLandscapeXtc = isCinemaProfile || (landscapeStereoStage && resolvedLandscape)
     val borderColor by animateColorAsState(
         targetValue = if (active) RouteEmerald.copy(alpha = 0.68f) else AppleGlassBorder,
         animationSpec = tween(200),
@@ -146,8 +148,9 @@ fun SpeakerDspCard(
                     Text(
                         text = when {
                             !active -> "Hybrid earpiece + bottom speaker acoustic tuning off"
-                            isMusicProfile -> "88Hz 24dB/oct HPF • Excursion -14dB 6:1 (+4.5dB) → -0.3dB"
-                            else -> "100Hz HPF • Warm Spoken Dialogue • Excursion -14dB 6:1 → -0.3dB"
+                            isCinemaProfile -> "86Hz HPF • 128Hz +3.2dB • Cinema -26% Transaural XTC → -0.3dB"
+                            isDialogueProfile -> "100Hz HPF • 18 Pro Voice Focus • 4.5k/7k Guard → -0.3dB"
+                            else -> "86Hz 24dB/oct HPF • 128Hz +3.2dB Porous-Cavity • 1.45kHz+0.14ms"
                         },
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.5.sp),
                         color = if (active) RouteEmerald else TextMuted,
@@ -180,12 +183,13 @@ fun SpeakerDspCard(
             }
         }
 
-        // Speaker Tuning Sub-Toggle: 18 Pro Max Music (Rich Bass & Air) vs 18 Pro (Warm Spoken Dialogue)
+        // iPhone 18 Pro Max Acoustic Profile Selector:
+        // 18 Pro Max Signature | 18 Pro Voice Focus | Cinema Landscape
         Column(
-            verticalArrangement = Arrangement.spacedBy(5.dp)
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Text(
-                text = "SPEAKER TUNING PROFILE",
+                text = "IPHONE 18 PRO MAX ACOUSTIC PROFILE",
                 style = MaterialTheme.typography.labelSmall.copy(
                     fontSize = 9.sp,
                     letterSpacing = 0.8.sp
@@ -193,23 +197,41 @@ fun SpeakerDspCard(
                 color = TextMuted
             )
 
-            Row(
+            Column(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 SpeakerTuningProfile.entries.forEach { profile ->
                     val selected = speakerTuningProfile == profile
-                    val accent = if (profile == SpeakerTuningProfile.PRO_MAX_MUSIC) RouteEmerald else WarmAmber
-                    val softBg = if (profile == SpeakerTuningProfile.PRO_MAX_MUSIC) RouteEmeraldSoft else WarmAmber.copy(alpha = 0.18f)
-                    val tag = if (profile == SpeakerTuningProfile.PRO_MAX_MUSIC) {
-                        "speaker_tuning_pro_max_music"
-                    } else {
-                        "speaker_tuning_pro_dialogue"
+                    val accent = when (profile) {
+                        SpeakerTuningProfile.PRO_MAX_MUSIC -> RouteEmerald
+                        SpeakerTuningProfile.PRO_WARM_DIALOGUE -> WarmAmber
+                        SpeakerTuningProfile.CINEMA_LANDSCAPE -> AppleBlue
+                    }
+                    val softBg = when (profile) {
+                        SpeakerTuningProfile.PRO_MAX_MUSIC -> RouteEmeraldSoft
+                        SpeakerTuningProfile.PRO_WARM_DIALOGUE -> WarmAmber.copy(alpha = 0.18f)
+                        SpeakerTuningProfile.CINEMA_LANDSCAPE -> AppleBlueSoft
+                    }
+                    val tag = when (profile) {
+                        SpeakerTuningProfile.PRO_MAX_MUSIC -> "speaker_tuning_pro_max_music"
+                        SpeakerTuningProfile.PRO_WARM_DIALOGUE -> "speaker_tuning_pro_dialogue"
+                        SpeakerTuningProfile.CINEMA_LANDSCAPE -> "speaker_tuning_cinema_landscape"
+                    }
+                    val icon = when (profile) {
+                        SpeakerTuningProfile.PRO_MAX_MUSIC -> Icons.Rounded.GraphicEq
+                        SpeakerTuningProfile.PRO_WARM_DIALOGUE -> Icons.Rounded.RecordVoiceOver
+                        SpeakerTuningProfile.CINEMA_LANDSCAPE -> Icons.Rounded.SurroundSound
+                    }
+                    val badgeLabel = when (profile) {
+                        SpeakerTuningProfile.PRO_MAX_MUSIC -> "SIGNATURE"
+                        SpeakerTuningProfile.PRO_WARM_DIALOGUE -> "VOICE"
+                        SpeakerTuningProfile.CINEMA_LANDSCAPE -> "XTC WIDE"
                     }
 
                     Row(
                         modifier = Modifier
-                            .weight(1f)
+                            .fillMaxWidth()
                             .defaultMinSize(minHeight = 48.dp)
                             .clip(RoundedCornerShape(12.dp))
                             .background(
@@ -221,38 +243,63 @@ fun SpeakerDspCard(
                                 shape = RoundedCornerShape(12.dp)
                             )
                             .clickable { onSelectTuningProfile(profile) }
-                            .padding(horizontal = 10.dp, vertical = 7.dp)
+                            .padding(horizontal = 11.dp, vertical = 7.dp)
                             .testTag(tag),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(7.dp)
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Icon(
-                            imageVector = if (profile == SpeakerTuningProfile.PRO_MAX_MUSIC) {
-                                Icons.Rounded.GraphicEq
-                            } else {
-                                Icons.Rounded.RecordVoiceOver
-                            },
-                            contentDescription = profile.label,
-                            tint = if (active && selected) accent else TextMuted,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Column {
-                            Text(
-                                text = profile.label,
-                                style = MaterialTheme.typography.labelMedium.copy(
-                                    fontSize = 11.5.sp,
-                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
-                                ),
-                                color = if (selected) TextPrimary else TextSecondary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(9.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = icon,
+                                contentDescription = profile.label,
+                                tint = if (active && selected) accent else TextMuted,
+                                modifier = Modifier.size(17.dp)
                             )
+                            Column {
+                                Text(
+                                    text = profile.label,
+                                    style = MaterialTheme.typography.labelMedium.copy(
+                                        fontSize = 12.sp,
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+                                    ),
+                                    color = if (selected) TextPrimary else TextSecondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = profile.subtitleTag,
+                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                                    color = if (active && selected) accent else TextMuted,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(7.dp))
+                                .background(
+                                    if (active && selected) accent.copy(alpha = 0.22f) else StudioSurfaceElevated
+                                )
+                                .border(
+                                    1.dp,
+                                    if (active && selected) accent.copy(alpha = 0.5f) else StudioBorder,
+                                    RoundedCornerShape(7.dp)
+                                )
+                                .padding(horizontal = 7.dp, vertical = 3.dp)
+                        ) {
                             Text(
-                                text = profile.subtitleTag,
-                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.8.sp),
-                                color = if (active && selected) accent else TextMuted,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                text = badgeLabel,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 8.sp,
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                color = if (active && selected) accent else TextMuted
                             )
                         }
                     }
@@ -278,18 +325,18 @@ fun SpeakerDspCard(
                     color = TextMuted
                 )
                 Text(
-                    text = if (!active || !landscapeStereoStage) {
-                        "Stage Off"
-                    } else if (resolvedLandscape) {
-                        "Landscape: -22% 0.19ms XTC"
-                    } else {
-                        "Portrait: Center Vocal + Balanced Bass"
+                    text = when {
+                        !active -> "Stage Off"
+                        isCinemaProfile -> "Cinema XTC: -26% 0.17ms + 0.34ms"
+                        !landscapeStereoStage -> "Stage Off"
+                        resolvedLandscape -> "Landscape: -22% 0.19ms XTC"
+                        else -> "Portrait: Center Vocal + Balanced Bass"
                     },
                     style = MaterialTheme.typography.labelSmall.copy(
                         fontSize = 9.sp,
                         fontWeight = FontWeight.SemiBold
                     ),
-                    color = if (active && landscapeStereoStage) AppleBlue else TextMuted,
+                    color = if (active && effectiveCinemaOrLandscapeXtc) AppleBlue else if (active && landscapeStereoStage) AppleBlue else TextMuted,
                     modifier = Modifier.testTag("resolved_orientation_stage_label")
                 )
             }
@@ -513,7 +560,7 @@ fun SpeakerDspCard(
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             DspStageChip(
-                text = if (isMusicProfile) "88Hz HPF 24dB/oct" else "100Hz HPF 24dB/oct",
+                text = if (!isDialogueProfile) "86Hz HPF 24dB/oct" else "100Hz HPF 24dB/oct",
                 isActive = active,
                 highlightColor = RouteEmerald,
                 bgColor = RouteEmeraldSoft
@@ -525,35 +572,41 @@ fun SpeakerDspCard(
                 bgColor = WarmAmber.copy(alpha = 0.18f)
             )
             DspStageChip(
-                text = if (isMusicProfile) "135Hz +3.5dB • 110–220Hz 2nd" else "1.8kHz +3.2dB Dialogue",
-                isActive = active && (virtualBassEnabled || !isMusicProfile),
-                highlightColor = if (isMusicProfile) AnalyzerCyan else WarmAmber,
-                bgColor = if (isMusicProfile) AnalyzerCyanSoft else WarmAmber.copy(alpha = 0.18f)
+                text = if (!isDialogueProfile) "128Hz +3.2dB (Q1.25) • 110–220Hz 2nd" else "1.8kHz +3.2dB Voice Focus",
+                isActive = active && (virtualBassEnabled || isDialogueProfile),
+                highlightColor = if (!isDialogueProfile) AnalyzerCyan else WarmAmber,
+                bgColor = if (!isDialogueProfile) AnalyzerCyanSoft else WarmAmber.copy(alpha = 0.18f)
             )
             DspStageChip(
-                text = if (isMusicProfile) "340Hz -3.5dB Scoop" else "340Hz -2.0dB Scoop",
+                text = if (!isDialogueProfile) "350Hz -3.5dB (Q1.5) Scoop" else "350Hz -2.5dB (Q1.5) Scoop",
                 isActive = active,
                 highlightColor = SignalCoral,
                 bgColor = SignalCoralSoft
             )
             DspStageChip(
-                text = if (isMusicProfile) "4.5k -3.0dB • 7k -3.5dB De-Ess • 12k +1.0dB" else "4.5k -1.5 • 7k -3.5 De-Ess • 12k +0.5dB",
+                text = "1.45kHz Allpass + 0.14ms (>2.2kHz)",
+                isActive = active,
+                highlightColor = AnalyzerCyan,
+                bgColor = AnalyzerCyanSoft
+            )
+            DspStageChip(
+                text = if (!isDialogueProfile) "4.5k -3.0 • 7k -3.5 Guard • 12k +1.0dB" else "4.5k -3.0 • 7k -3.5 Guard • 12k +0.5dB",
                 isActive = active,
                 highlightColor = SignalCoral,
                 bgColor = SignalCoralSoft
             )
             DspStageChip(
-                text = if (resolvedLandscape) {
-                    "Landscape: -22% 0.19ms XTC"
-                } else {
-                    "Portrait: Vocal Center + Mono Bass"
+                text = when {
+                    isCinemaProfile -> "Cinema Landscape: -26% 2nd-Order XTC"
+                    resolvedLandscape -> "Landscape: -22% 0.19ms XTC"
+                    else -> "Portrait: Vocal Center + Mono Bass"
                 },
-                isActive = active && landscapeStereoStage,
+                isActive = active && effectiveCinemaOrLandscapeXtc || (active && landscapeStereoStage),
                 highlightColor = AppleBlue,
                 bgColor = AppleBlueSoft
             )
             DspStageChip(
-                text = "Excursion -14dB 6:1 (+4.5dB) → -0.3dB",
+                text = "3-Band LR4 2.2:1 (6ms / 85ms) → -0.3dB",
                 isActive = active,
                 highlightColor = RouteEmerald,
                 bgColor = RouteEmeraldSoft

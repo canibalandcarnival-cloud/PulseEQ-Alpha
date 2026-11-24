@@ -9,7 +9,7 @@ import com.example.model.OutputTarget
  *    - Phase-coherent Linkwitz-Riley 4th-order (LR4 = cascaded Q=0.7071 Butterworth pairs) crossovers:
  *      Low (<220Hz), Mid (220Hz–3.8kHz), High (>3.8kHz), with a 3.8kHz Allpass on the Low band
  *      so Low + Mid + High sum to unity magnitude with zero crossover phase cancellation.
- *    - Independent per-band soft-knee dynamic compression (Ratio 2.2:1, Attack 8ms, Release 90ms, 0dB makeup)
+ *    - Independent per-band soft-knee dynamic compression (Ratio 2.2:1, Attack 6ms, Release 85ms, 0dB makeup)
  *      so heavy bass never ducks vocal clarity and loud snare/treble hits never cause mid-vocal pumping,
  *      while strictly respecting existing 4.5kHz/7.0kHz de-harsh cuts and the +3.0 dB treble cap.
  */
@@ -48,7 +48,7 @@ class AdaptiveMultibandToneBalancer(private val sampleRate: Int = 44100) {
         setHighPass(sampleRate, AdaptiveMultibandPhaseSpecs.HIGH_CROSSOVER_HZ, 0.7071)
     }
 
-    // Independent per-band compressors: Ratio 2.2:1, Attack 8ms, Release 90ms, 0dB makeup
+    // Independent per-band compressors: Ratio 2.2:1, Attack 6ms, Release 85ms, 0dB makeup
     private val lowCompressor = DynamicRangeCompressor(sampleRate)
     private val midCompressor = DynamicRangeCompressor(sampleRate)
     private val highCompressor = DynamicRangeCompressor(sampleRate)
@@ -131,10 +131,10 @@ class AdaptiveMultibandToneBalancer(private val sampleRate: Int = 44100) {
 }
 
 /**
- * 2. Earpiece-to-Main-Driver Phase Alignment (Allpass Filter):
- * Biquad Allpass tuned to 1.4kHz (Q = 0.7071) active in Phone Speaker Mode.
- * Preserves strictly flat 0.0 dB magnitude across all frequencies while aligning acoustic arrival
- * phase between upper-midrange earpiece vocals and lower-midrange bottom-driver chest resonance.
+ * 2. Hybrid Earpiece-to-Bottom-Driver Phase & Arrival Alignment:
+ * - Biquad Allpass tuned to 1.45 kHz (Q = 0.7071) active in Phone Speaker Mode.
+ * - 2.2 kHz LR4 crossover + 0.14 ms fractional micro-arrival offset on the upper treble (> 2.2 kHz)
+ *   simulating physical spacing between bottom main driver and top earpiece tweeter to anchor vocals dead-center.
  */
 class SpeakerPhaseAlignmentFilter(private val sampleRate: Int = 44100) {
 
@@ -146,9 +146,39 @@ class SpeakerPhaseAlignmentFilter(private val sampleRate: Int = 44100) {
         )
     }
 
+    // 2.2 kHz LR4 split for upper-treble (>2.2 kHz) 0.14 ms micro-arrival offset
+    private val trebleSplitLp1 = StereoBiquad().apply {
+        setLowPass(sampleRate, AdaptiveMultibandPhaseSpecs.TREBLE_MICRO_OFFSET_CUTOFF_HZ, 0.7071)
+    }
+    private val trebleSplitLp2 = StereoBiquad().apply {
+        setLowPass(sampleRate, AdaptiveMultibandPhaseSpecs.TREBLE_MICRO_OFFSET_CUTOFF_HZ, 0.7071)
+    }
+    private val trebleSplitHp1 = StereoBiquad().apply {
+        setHighPass(sampleRate, AdaptiveMultibandPhaseSpecs.TREBLE_MICRO_OFFSET_CUTOFF_HZ, 0.7071)
+    }
+    private val trebleSplitHp2 = StereoBiquad().apply {
+        setHighPass(sampleRate, AdaptiveMultibandPhaseSpecs.TREBLE_MICRO_OFFSET_CUTOFF_HZ, 0.7071)
+    }
+
+    private val microDelaySamples: Double =
+        AdaptiveMultibandPhaseSpecs.TREBLE_MICRO_ARRIVAL_OFFSET_SEC * sampleRate
+    private val delayBufSize = 64
+    private val delayMask = delayBufSize - 1
+    private val delayRingL = DoubleArray(delayBufSize)
+    private val delayRingR = DoubleArray(delayBufSize)
+    private var delayWriteIdx = 0
+
     @Volatile
     var isActive: Boolean = false
         private set
+
+    private fun readDelayed(ring: DoubleArray): Double {
+        val intD = microDelaySamples.toInt()
+        val frac = microDelaySamples - intD
+        val idx0 = (delayWriteIdx - intD) and delayMask
+        val idx1 = (delayWriteIdx - intD - 1) and delayMask
+        return ring[idx0] * (1.0 - frac) + ring[idx1] * frac
+    }
 
     fun configure(
         isEnabled: Boolean,
@@ -162,12 +192,35 @@ class SpeakerPhaseAlignmentFilter(private val sampleRate: Int = 44100) {
                 freqHz = AdaptiveMultibandPhaseSpecs.PHASE_ALIGN_ALLPASS_HZ,
                 q = AdaptiveMultibandPhaseSpecs.PHASE_ALIGN_ALLPASS_Q
             )
+            trebleSplitLp1.setLowPass(sampleRate, AdaptiveMultibandPhaseSpecs.TREBLE_MICRO_OFFSET_CUTOFF_HZ, 0.7071)
+            trebleSplitLp2.setLowPass(sampleRate, AdaptiveMultibandPhaseSpecs.TREBLE_MICRO_OFFSET_CUTOFF_HZ, 0.7071)
+            trebleSplitHp1.setHighPass(sampleRate, AdaptiveMultibandPhaseSpecs.TREBLE_MICRO_OFFSET_CUTOFF_HZ, 0.7071)
+            trebleSplitHp2.setHighPass(sampleRate, AdaptiveMultibandPhaseSpecs.TREBLE_MICRO_OFFSET_CUTOFF_HZ, 0.7071)
+            delayRingL.fill(0.0)
+            delayRingR.fill(0.0)
+            delayWriteIdx = 0
         }
         isActive = active
     }
 
     fun processStereoSample(inL: Double, inR: Double): Pair<Double, Double> {
         if (!isActive) return inL to inR
-        return allpassFilter.processStereo(inL, inR)
+
+        val (apL, apR) = allpassFilter.processStereo(inL, inR)
+
+        // Split <2.2kHz and >2.2kHz via LR4; delay >2.2kHz by 0.14ms (~111-177 deg across 2.2-3.5kHz).
+        // Subtracting the delayed high band aligns polarity across the 2.2-3.8kHz vocal zone with zero dip.
+        val (lp1L, lp1R) = trebleSplitLp1.processStereo(apL, apR)
+        val (lowL, lowR) = trebleSplitLp2.processStereo(lp1L, lp1R)
+        val (hp1L, hp1R) = trebleSplitHp1.processStereo(apL, apR)
+        val (highL, highR) = trebleSplitHp2.processStereo(hp1L, hp1R)
+
+        delayRingL[delayWriteIdx] = highL
+        delayRingR[delayWriteIdx] = highR
+        val delayedHighL = readDelayed(delayRingL)
+        val delayedHighR = readDelayed(delayRingR)
+        delayWriteIdx = (delayWriteIdx + 1) and delayMask
+
+        return (lowL - delayedHighL) to (lowR - delayedHighR)
     }
 }

@@ -152,11 +152,11 @@ class EqualizerAudioEngine(private val context: Context) {
     )
 
     // Upper cutoff frequencies for the 7 PostEq iPhone 18 Pro Max Speaker DSP shaping bands:
-    // [0]: <=55Hz sub-rumble cut, [1]: 55-88Hz 24dB/oct HPF shoulder, [2]: 88-220Hz chamber bass (135Hz +3.5dB),
-    // [3]: 220-480Hz lower-mid scoop (340Hz -3.5dB), [4]: 480-3600Hz crisp presence (3.0kHz +2.0dB),
+    // [0]: <=55Hz sub-rumble cut, [1]: 55-86Hz 24dB/oct HPF shoulder, [2]: 86-220Hz porous-cavity shelf (128Hz +3.2dB),
+    // [3]: 220-480Hz chassis boxiness scoop (350Hz -3.5dB), [4]: 480-3600Hz crisp presence (3.0kHz +2.0dB),
     // [5]: 3600-9000Hz harshness + de-esser dip (4.5kHz -3.0dB, 7.0kHz -3.5dB), [6]: 9000-20kHz gain-staged air (12.0kHz +1.0dB)
     private val speakerPostEqCutoffsHz = floatArrayOf(
-        55f, 88f, 220f, 480f, 3600f, 9000f, 20000f
+        55f, 86f, 220f, 480f, 3600f, 9000f, 20000f
     )
 
     @Volatile
@@ -1162,11 +1162,12 @@ class EqualizerAudioEngine(private val context: Context) {
                                 -2.5f,  // 2.4-4.6kHz sibilance tame
                                 -10.0f  // >6.5kHz hiss cut
                             )
-                            isSpeakerDspActive && currentSpeakerTuningProfile == SpeakerTuningProfile.PRO_MAX_MUSIC -> floatArrayOf(
+                            isSpeakerDspActive && (currentSpeakerTuningProfile == SpeakerTuningProfile.PRO_MAX_MUSIC ||
+                                currentSpeakerTuningProfile == SpeakerTuningProfile.CINEMA_LANDSCAPE) -> floatArrayOf(
                                 -12.0f, // <=55Hz steep sub-rumble protection
-                                -10.0f, // 55-88Hz steep 24dB/oct HPF shoulder
-                                (if (currentVirtualBassEnabled) 3.5f else 1.5f) + bodyWarmthDb, // 135Hz punch + optional 125Hz Body Warmth (+2.5dB)
-                                -3.5f,  // 340Hz lower-mid scoop (-3.5dB)
+                                -10.0f, // 55-86Hz steep 24dB/oct excursion guard
+                                (if (currentVirtualBassEnabled) 3.2f else 1.5f) + bodyWarmthDb, // 128Hz porous-cavity shelf + optional 125Hz Body Warmth (+2.5dB)
+                                -3.5f,  // 350Hz chassis boxiness scoop (-3.5dB)
                                 2.0f + asarVocalFocusDb * 0.7f + portraitVocalBoostDb, // 1–3.5kHz Dry Vocal Focus + Portrait center focus
                                 -3.2f,  // 4.5kHz -3.0dB harshness + 7.0kHz -3.5dB de-esser cut
                                 if (isSpatialActive) (1.0f + cappedSpatialShelfDb * 0.5f * heightScale).coerceAtMost(3.0f) else 1.0f // 12kHz gain-staged air (+1.0dB)
@@ -1175,9 +1176,9 @@ class EqualizerAudioEngine(private val context: Context) {
                                 -12.0f, // <=55Hz sub-rumble cut
                                 -11.0f, // 100Hz dialogue HPF protection
                                 1.5f + bodyWarmthDb,   // 150Hz warm body + optional 125Hz Body Warmth
-                                -2.0f,  // 340Hz anti-boxiness
+                                -2.5f,  // 350Hz chassis boxiness scoop
                                 3.2f + asarVocalFocusDb * 0.5f + portraitVocalBoostDb,   // 1.8kHz–3kHz warm spoken dialogue focus
-                                -3.5f,  // 4.5k-7.0kHz sibilance tame
+                                -3.5f,  // 4.5k-7.0kHz Apple Sibilance & Harshness Guard
                                 0.5f    // gentle top air
                             )
                             isSpatialActive -> floatArrayOf(
@@ -1200,7 +1201,7 @@ class EqualizerAudioEngine(private val context: Context) {
                         }
                         dp.setPostEqAllChannelsTo(postEq)
 
-                        // Mbc stage: 3-Band Adaptive Dynamic Tone Balancer (220Hz / 3.8kHz, 2.2:1, 8ms/90ms)
+                        // Mbc stage: 3-Band Adaptive Dynamic Tone Balancer (220Hz / 3.8kHz, 2.2:1, 6ms/85ms)
                         // combined with Late Night / Boost Soft Sounds / Loudness / Excursion when active
                         val strongGlobalComp = currentLateNightEnabled || accommodationsMediaActive || loudnessMaxActive || isSpeakerDspActive
                         val compEnabled = strongGlobalComp || currentAdaptiveMultibandEnabled
@@ -1411,14 +1412,14 @@ class EqualizerAudioEngine(private val context: Context) {
             isSpatialActive -> "Spatial ${currentSpatialMode.label}$siliconTag"
             accMediaActive -> "Accommodations • ${currentAccommodationsToneProfile.label}$siliconTag"
             isSpeakerDspActive && currentLateNightEnabled -> "iPhone 18 DSP + Late Night$siliconTag"
-            isSpeakerDspActive -> if (currentSpeakerTuningProfile == SpeakerTuningProfile.PRO_WARM_DIALOGUE) {
-                "18 Pro • Dialogue DSP$siliconTag"
-            } else if (currentLandscapeStereoStage && resolvedLandscape) {
-                "18 Pro Max • Landscape XTC$siliconTag"
-            } else if (currentLandscapeStereoStage) {
-                "18 Pro Max • Portrait Vocal$siliconTag"
-            } else {
-                "18 Pro Max Speaker DSP$siliconTag"
+            isSpeakerDspActive -> when (currentSpeakerTuningProfile) {
+                SpeakerTuningProfile.PRO_WARM_DIALOGUE -> "18 Pro • Voice Focus DSP$siliconTag"
+                SpeakerTuningProfile.CINEMA_LANDSCAPE -> "18 Pro Max • Cinema Landscape XTC$siliconTag"
+                SpeakerTuningProfile.PRO_MAX_MUSIC -> when {
+                    currentLandscapeStereoStage && resolvedLandscape -> "18 Pro Max • Landscape XTC$siliconTag"
+                    currentLandscapeStereoStage -> "18 Pro Max • Portrait Vocal$siliconTag"
+                    else -> "18 Pro Max Signature DSP$siliconTag"
+                }
             }
             anyDpActive && sessionCount > 0 -> {
                 if (currentLateNightEnabled) "App DSP + Late Night ($sessionCount)$siliconTag" else "$activeEqPrefix App DSP ($sessionCount)$siliconTag"

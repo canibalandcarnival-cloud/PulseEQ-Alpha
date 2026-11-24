@@ -1320,9 +1320,9 @@ class ExampleUnitTest {
             assertEquals("1.4kHz Allpass must keep strictly 0.0 dB magnitude at $freq Hz", 0.0, allpass.magnitudeDbAt(sampleRate, freq), 1e-4)
         }
 
-        // Phase at center frequency 1.4 kHz must shift by ~pi radians (180 degrees)
-        val phaseAtCenter = abs(allpass.phaseRadAt(sampleRate, 1400.0))
-        assertTrue("1.4kHz Allpass should shift phase near 180 deg (~3.14 rad, got $phaseAtCenter)", abs(phaseAtCenter - Math.PI) < 0.08)
+        // Phase at center frequency 1.45 kHz must shift by ~pi radians (180 degrees)
+        val phaseAtCenter = abs(allpass.phaseRadAt(sampleRate, com.example.model.AdaptiveMultibandPhaseSpecs.PHASE_ALIGN_ALLPASS_HZ))
+        assertTrue("1.45kHz Allpass should shift phase near 180 deg (~3.14 rad, got $phaseAtCenter)", abs(phaseAtCenter - Math.PI) < 0.08)
 
         // 2. SpeakerPhaseAlignmentFilter engages only when Speaker DSP is active in Phone Speaker Mode
         val phaseFilter = com.example.audio.SpeakerPhaseAlignmentFilter(sampleRate)
@@ -1829,5 +1829,132 @@ class ExampleUnitTest {
                 }
             }
         }
+    }
+
+    @Test
+    fun iphone_18_pro_max_porous_cavity_and_cinema_landscape_dsp_specs() {
+        val sampleRate = 48000
+
+        // 1. Verify exact Porous-Cavity (128Hz +3.2dB, Q=1.25), 86Hz HPF, 350Hz (-3.5dB, Q=1.5), and 4.5k/7k guard
+        assertEquals(86.0, com.example.model.FlagshipSpeakerSpecs.SUB_BASS_HPF_HZ, 1e-4)
+        assertEquals(128.0, com.example.model.FlagshipSpeakerSpecs.CHAMBER_BASS_HZ, 1e-4)
+        assertEquals(1.25, com.example.model.FlagshipSpeakerSpecs.CHAMBER_BASS_Q, 1e-4)
+        assertEquals(3.2, com.example.model.FlagshipSpeakerSpecs.CHAMBER_BASS_DB, 1e-4)
+        assertEquals(350.0, com.example.model.FlagshipSpeakerSpecs.BOXINESS_CUT_HZ, 1e-4)
+        assertEquals(1.5, com.example.model.FlagshipSpeakerSpecs.BOXINESS_CUT_Q, 1e-4)
+        assertEquals(-3.5, com.example.model.FlagshipSpeakerSpecs.BOXINESS_CUT_DB, 1e-4)
+        assertEquals(6.0f, com.example.model.AdaptiveMultibandPhaseSpecs.BAND_ATTACK_MS, 1e-4f)
+        assertEquals(85.0f, com.example.model.AdaptiveMultibandPhaseSpecs.BAND_RELEASE_MS, 1e-4f)
+        assertEquals(1450.0, com.example.model.AdaptiveMultibandPhaseSpecs.PHASE_ALIGN_ALLPASS_HZ, 1e-4)
+        assertEquals(0.00014, com.example.model.AdaptiveMultibandPhaseSpecs.TREBLE_MICRO_ARRIVAL_OFFSET_SEC, 1e-7)
+
+        // Preserved +8.5 dB / +9.0 dB Loudness Maximizer & +3.0 dB max treble cap
+        assertTrue(com.example.model.LoudnessMaximizerSpecs.MAX_MAKEUP_BOOST_DB >= 8.5f)
+        assertEquals(3.0f, com.example.model.TrebleGainStagingSpecs.MAX_COMBINED_HF_BOOST_DB, 1e-4f)
+
+        val resp128 = com.example.audio.PhoneSpeakerDspChain.computeVcurveResponseDbAt(
+            128.0,
+            com.example.model.SpeakerTuningProfile.PRO_MAX_MUSIC,
+            sampleRate
+        )
+        val resp350 = com.example.audio.PhoneSpeakerDspChain.computeVcurveResponseDbAt(
+            350.0,
+            com.example.model.SpeakerTuningProfile.PRO_MAX_MUSIC,
+            sampleRate
+        )
+        assertTrue("128Hz Porous-Cavity Compliance Shelf must boost (> +2.0 dB, got $resp128)", resp128 > 2.0f)
+        assertTrue("350Hz Chassis Boxiness Scoop must cut (< -2.8 dB, got $resp350)", resp350 < -2.8f)
+
+        // Apple Sibilance & Harshness Guard at 4.5kHz and 7.0kHz must stay active across ALL 3 profiles
+        com.example.model.SpeakerTuningProfile.entries.forEach { profile ->
+            val r4500 = com.example.audio.PhoneSpeakerDspChain.computeVcurveResponseDbAt(4500.0, profile, sampleRate)
+            val r7000 = com.example.audio.PhoneSpeakerDspChain.computeVcurveResponseDbAt(7000.0, profile, sampleRate)
+            assertTrue("$profile must keep 4.5kHz guard active (< -1.8 dB, got $r4500)", r4500 < -1.8f)
+            assertTrue("$profile must keep 7.0kHz guard active (< -2.5 dB, got $r7000)", r7000 < -2.5f)
+        }
+
+        // 2. Cinema Landscape engages wide 2nd-order transaural XTC even without orientation flag
+        val sigChain = com.example.audio.PhoneSpeakerDspChain(sampleRate).apply {
+            configure(
+                isSpeakerDspEnabled = true,
+                isVirtualBassEnabled = true,
+                isLandscapeStereoEnabled = false,
+                profile = com.example.model.SpeakerTuningProfile.PRO_MAX_MUSIC
+            )
+        }
+        val cinemaChain = com.example.audio.PhoneSpeakerDspChain(sampleRate).apply {
+            configure(
+                isSpeakerDspEnabled = true,
+                isVirtualBassEnabled = true,
+                isLandscapeStereoEnabled = false,
+                profile = com.example.model.SpeakerTuningProfile.CINEMA_LANDSCAPE
+            )
+        }
+        var sigSide = 0.0
+        var cinemaSide = 0.0
+        for (i in 0 until 2400) {
+            val l = 0.08 * kotlin.math.sin(2.0 * Math.PI * 800.0 * i / sampleRate)
+            val r = 0.01 * kotlin.math.sin(2.0 * Math.PI * 800.0 * i / sampleRate)
+            val (sL, sR) = sigChain.processStereoSample(l, r)
+            val (cL, cR) = cinemaChain.processStereoSample(l, r)
+            if (i > 1200) {
+                sigSide += abs(sL - sR)
+                cinemaSide += abs(cL - cR)
+            }
+        }
+        assertTrue("Cinema Landscape must engage wide transaural XTC ($cinemaSide vs $sigSide)", cinemaSide > sigSide * 1.15)
+
+        // 3. SpeakerPhaseAlignmentFilter 0.14ms (~6.72 samples @ 48kHz) micro-arrival offset on >2.2kHz upper treble
+        val phaseFilter = com.example.audio.SpeakerPhaseAlignmentFilter(sampleRate).apply {
+            configure(
+                isEnabled = true,
+                outputTarget = com.example.model.OutputTarget.SPEAKER,
+                speakerDspEnabled = true
+            )
+        }
+        val apOnlyHigh = com.example.audio.StereoBiquad().apply {
+            setAllPass(sampleRate, com.example.model.AdaptiveMultibandPhaseSpecs.PHASE_ALIGN_ALLPASS_HZ, com.example.model.AdaptiveMultibandPhaseSpecs.PHASE_ALIGN_ALLPASS_Q)
+        }
+        val apOnlyLow = com.example.audio.StereoBiquad().apply {
+            setAllPass(sampleRate, com.example.model.AdaptiveMultibandPhaseSpecs.PHASE_ALIGN_ALLPASS_HZ, com.example.model.AdaptiveMultibandPhaseSpecs.PHASE_ALIGN_ALLPASS_Q)
+        }
+        val phaseFilterLow = com.example.audio.SpeakerPhaseAlignmentFilter(sampleRate).apply {
+            configure(isEnabled = true, outputTarget = com.example.model.OutputTarget.SPEAKER, speakerDspEnabled = true)
+        }
+        val totalLen = 256
+        val pulseCenter = 60
+        var wFullHigh = 0.0
+        var sFullHigh = 0.0
+        var wApHigh = 0.0
+        var sApHigh = 0.0
+        var wFullLow = 0.0
+        var sFullLow = 0.0
+        var wApLow = 0.0
+        var sApLow = 0.0
+        for (i in 0 until totalLen) {
+            val env = kotlin.math.exp(-((i - pulseCenter).toDouble() * (i - pulseCenter).toDouble()) / 18.0)
+            val hfBurst = env * kotlin.math.sin(2.0 * Math.PI * 6000.0 * i / sampleRate)
+            val lfBurst = env * kotlin.math.sin(2.0 * Math.PI * 500.0 * i / sampleRate)
+
+            val fullH = abs(phaseFilter.processStereoSample(hfBurst, hfBurst).first)
+            val baseH = abs(apOnlyHigh.processStereo(hfBurst, hfBurst).first)
+            val fullL = abs(phaseFilterLow.processStereoSample(lfBurst, lfBurst).first)
+            val baseL = abs(apOnlyLow.processStereo(lfBurst, lfBurst).first)
+
+            wFullHigh += i * fullH
+            sFullHigh += fullH
+            wApHigh += i * baseH
+            sApHigh += baseH
+            wFullLow += i * fullL
+            sFullLow += fullL
+            wApLow += i * baseL
+            sApLow += baseL
+        }
+        val highDelaySamples = (wFullHigh / sFullHigh) - (wApHigh / sApHigh)
+        val lowDelaySamples = (wFullLow / sFullLow) - (wApLow / sApLow)
+        assertTrue(
+            "Upper treble (>2.2kHz) must include ~0.14ms (~6.72 samples) micro-arrival offset (highDelay=$highDelaySamples, lowDelay=$lowDelaySamples)",
+            highDelaySamples in 6.5..10.5 && sFullHigh > sApHigh * 0.92
+        )
     }
 }
