@@ -1771,4 +1771,63 @@ class ExampleUnitTest {
         }
         assertTrue("Conversation Awareness 0.25x ducking must lower music energy strongly", duckedRms < out110Rms * 0.1)
     }
+
+    @Test
+    fun dynamics_processing_mbc_spec_matches_3_band_configuration() {
+        assertEquals(10, com.example.audio.EqualizerAudioEngine.PRE_EQ_BAND_COUNT)
+        assertEquals(3, com.example.audio.EqualizerAudioEngine.MBC_BAND_COUNT)
+        val cutoffs = com.example.audio.EqualizerAudioEngine.MBC_UPPER_CUTOFFS_HZ
+        assertEquals(com.example.audio.EqualizerAudioEngine.MBC_BAND_COUNT, cutoffs.size)
+        for (i in 1 until cutoffs.size) {
+            assertTrue("MBC cutoffs must be strictly ascending", cutoffs[i] > cutoffs[i - 1])
+        }
+        assertTrue("Top MBC cutoff must not exceed 20 kHz (${cutoffs.last()})", cutoffs.last() <= 20000f)
+    }
+
+    @Test
+    fun full_dsp_chain_remains_finite_and_bounded_across_all_listening_modes() {
+        val sampleRate = 48000
+        val bank = BiquadEqFilterBank(sampleRate)
+        val listeningModes = com.example.model.ListeningMode.entries
+        val targets = com.example.model.OutputTarget.entries
+
+        for (target in targets) {
+            for (mode in listeningModes) {
+                bank.updateParameters(
+                    gainsDb = listOf(4f, 3f, 2f, -1f, 0f, 1.5f, 3f, 2f, 1f, 1.5f),
+                    preampDb = 2f,
+                    isBypassed = false,
+                    lateNightEnabled = true,
+                    speakerDspEnabled = (target == com.example.model.OutputTarget.SPEAKER),
+                    virtualBassEnabled = (target == com.example.model.OutputTarget.SPEAKER),
+                    landscapeStereoStage = (target == com.example.model.OutputTarget.SPEAKER),
+                    spatialMode = com.example.model.SpatialMode.ATMOS_MUSIC,
+                    soundCheckEnabled = true,
+                    voiceIsolationEnabled = false,
+                    accommodationsEnabled = true,
+                    loudnessMaximizerEnabled = true,
+                    siliconDspEnabled = true,
+                    trebleSmoothnessPercent = 0.5f,
+                    masterVolumePercent = 0.85f,
+                    proMaxBodyWarmthEnabled = true,
+                    adaptiveMultibandEnabled = true,
+                    speakerPhaseAlignmentEnabled = true,
+                    oversampledEqEnabled = true,
+                    harmonicSheenPercent = 0.6f,
+                    noiseFloorGateEnabled = true,
+                    listeningMode = mode,
+                    ambientPassThroughPercent = 0.75f
+                )
+                for (i in 0 until 1200) {
+                    val inL = 0.35 * kotlin.math.sin(2.0 * Math.PI * 110.0 * i / sampleRate) +
+                        0.15 * kotlin.math.sin(2.0 * Math.PI * 2400.0 * i / sampleRate)
+                    val inR = 0.35 * kotlin.math.sin(2.0 * Math.PI * 110.0 * i / sampleRate) -
+                        0.15 * kotlin.math.sin(2.0 * Math.PI * 2400.0 * i / sampleRate)
+                    val (outL, outR) = bank.processStereoSample(inL, inR)
+                    assertTrue("Left sample must be finite & bounded for $target/$mode", outL.isFinite() && outL in -1.2..1.2)
+                    assertTrue("Right sample must be finite & bounded for $target/$mode", outR.isFinite() && outR in -1.2..1.2)
+                }
+            }
+        }
+    }
 }

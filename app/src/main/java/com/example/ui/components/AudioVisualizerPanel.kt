@@ -30,6 +30,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -125,88 +126,117 @@ fun AudioVisualizerPanel(
 ) {
     val activeThreeBand = threeBandEnabled && !tenBandEnabled
     val activeTenBand = !activeThreeBand
-    val trebleBudget = TrebleGainStagingBudget.allocate(
-        accommodationsActive = accommodationsEnabled && accommodationsApplyToMedia && !isBypassed,
-        accommodationsProfile = accommodationsToneProfile,
-        accommodationsIntensity = accommodationsSoftIntensity,
-        spatialActive = !isBypassed && spatialMode != SpatialMode.OFF,
-        spatialHeightPresence = spatialHeightPresence,
-        siliconDspActive = siliconDspEnabled && !isBypassed
-    )
+    val targetCurveGains = remember(
+        bandGainsDb,
+        preampDb,
+        isBypassed,
+        activeTenBand,
+        activeThreeBand,
+        threeBandBassDb,
+        threeBandMidsDb,
+        threeBandTrebleDb,
+        accommodationsEnabled,
+        accommodationsToneProfile,
+        accommodationsSoftIntensity,
+        accommodationsApplyToMedia,
+        loudnessMaximizerEnabled,
+        outputTarget,
+        audioMixMode,
+        trebleSmoothnessPercent,
+        spatialMode,
+        spatialHeightPresence,
+        siliconDspEnabled,
+        masterVolumePercent,
+        speakerDspEnabled,
+        proMaxBodyWarmthEnabled,
+        listeningMode,
+        adaptiveWarmthActive
+    ) {
+        if (isBypassed) {
+            List(bandGainsDb.size) { 0f }
+        } else {
+            val trebleBudget = TrebleGainStagingBudget.allocate(
+                accommodationsActive = accommodationsEnabled && accommodationsApplyToMedia,
+                accommodationsProfile = accommodationsToneProfile,
+                accommodationsIntensity = accommodationsSoftIntensity,
+                spatialActive = spatialMode != SpatialMode.OFF,
+                spatialHeightPresence = spatialHeightPresence,
+                siliconDspActive = siliconDspEnabled
+            )
+            bandGainsDb.mapIndexed { index, gain ->
+                val freqHz = EqPresetsCatalog.BANDS.getOrNull(index)?.frequencyHz?.toDouble() ?: 1000.0
+                val tenBandGain = if (activeTenBand) gain else 0f
+                val toneOffset = if (activeThreeBand) {
+                    ThreeBandToneFilter.computeCombinedResponseDbAt(
+                        freqHz = freqHz,
+                        bassDb = threeBandBassDb,
+                        midsDb = threeBandMidsDb,
+                        trebleDb = threeBandTrebleDb,
+                        isSpeakerTarget = (outputTarget == OutputTarget.SPEAKER)
+                    )
+                } else {
+                    0f
+                }
+                val accommodationsOffset = if (accommodationsEnabled && accommodationsApplyToMedia) {
+                    HeadphoneAccommodationsProcessor.computeResponseDbAt(
+                        freqHz = freqHz,
+                        profile = accommodationsToneProfile,
+                        intensity = accommodationsSoftIntensity,
+                        hfScale = trebleBudget.accHfScale.toDouble()
+                    )
+                } else {
+                    0f
+                }
+                val smoothnessOffset = if (trebleSmoothnessPercent > 0.005f) {
+                    TrebleSmoothnessProcessor.computeResponseDbAt(
+                        freqHz = freqHz,
+                        smoothnessPercent = trebleSmoothnessPercent
+                    )
+                } else {
+                    0f
+                }
+                val loudnessOffset = if (loudnessMaximizerEnabled) {
+                    IphoneLoudnessMaximizerChain.computePresenceAndHpfResponseDbAt(
+                        freqHz = freqHz,
+                        target = outputTarget
+                    )
+                } else {
+                    0f
+                }
+                val audioMixOffset = if (audioMixMode != AudioMixMode.STANDARD) {
+                    AudioMixStemShaper.computeFrequencyTiltDbAt(
+                        freqHz = freqHz,
+                        mode = audioMixMode
+                    )
+                } else {
+                    0f
+                }
+                val volumeContourOffset = IosVolumeContourAndDeHarshProcessor.computeContourResponseDbAt(
+                    freqHz = freqHz,
+                    volumePercent = masterVolumePercent
+                )
+                val bodyWarmthOffset = if (outputTarget == OutputTarget.SPEAKER && speakerDspEnabled && proMaxBodyWarmthEnabled) {
+                    PhoneSpeakerDspChain.computeBodyWarmthResponseDbAt(freqHz = freqHz)
+                } else {
+                    0f
+                }
+                val listeningModeOffset = if (listeningMode != ListeningMode.OFF) {
+                    ListeningModeProcessor.computeMusicResponseDbAt(
+                        freqHz = freqHz,
+                        mode = listeningMode,
+                        adaptiveWarmthRatio = if (adaptiveWarmthActive) 1f else 0f
+                    )
+                } else {
+                    0f
+                }
+                (tenBandGain + toneOffset + accommodationsOffset + smoothnessOffset + loudnessOffset + audioMixOffset + volumeContourOffset + bodyWarmthOffset + listeningModeOffset + preampDb * 0.5f)
+                    .coerceIn(EqPresetsCatalog.MIN_GAIN_DB, EqPresetsCatalog.MAX_GAIN_DB)
+            }
+        }
+    }
 
     // Animate EQ response curve points for smooth transitions on preset changes
-    val animatedCurveGains = bandGainsDb.mapIndexed { index, gain ->
-        val freqHz = EqPresetsCatalog.BANDS.getOrNull(index)?.frequencyHz?.toDouble() ?: 1000.0
-        val tenBandGain = if (activeTenBand && !isBypassed) gain else 0f
-        val toneOffset = if (activeThreeBand && !isBypassed) {
-            ThreeBandToneFilter.computeCombinedResponseDbAt(
-                freqHz = freqHz,
-                bassDb = threeBandBassDb,
-                midsDb = threeBandMidsDb,
-                trebleDb = threeBandTrebleDb,
-                isSpeakerTarget = (outputTarget == OutputTarget.SPEAKER)
-            )
-        } else {
-            0f
-        }
-        val accommodationsOffset = if (accommodationsEnabled && accommodationsApplyToMedia && !isBypassed) {
-            HeadphoneAccommodationsProcessor.computeResponseDbAt(
-                freqHz = freqHz,
-                profile = accommodationsToneProfile,
-                intensity = accommodationsSoftIntensity,
-                hfScale = trebleBudget.accHfScale.toDouble()
-            )
-        } else {
-            0f
-        }
-        val smoothnessOffset = if (!isBypassed && trebleSmoothnessPercent > 0.005f) {
-            TrebleSmoothnessProcessor.computeResponseDbAt(
-                freqHz = freqHz,
-                smoothnessPercent = trebleSmoothnessPercent
-            )
-        } else {
-            0f
-        }
-        val loudnessOffset = if (loudnessMaximizerEnabled && !isBypassed) {
-            IphoneLoudnessMaximizerChain.computePresenceAndHpfResponseDbAt(
-                freqHz = freqHz,
-                target = outputTarget
-            )
-        } else {
-            0f
-        }
-        val audioMixOffset = if (!isBypassed && audioMixMode != AudioMixMode.STANDARD) {
-            AudioMixStemShaper.computeFrequencyTiltDbAt(
-                freqHz = freqHz,
-                mode = audioMixMode
-            )
-        } else {
-            0f
-        }
-        val volumeContourOffset = if (!isBypassed) {
-            IosVolumeContourAndDeHarshProcessor.computeContourResponseDbAt(
-                freqHz = freqHz,
-                volumePercent = masterVolumePercent
-            )
-        } else {
-            0f
-        }
-        val bodyWarmthOffset = if (!isBypassed && outputTarget == OutputTarget.SPEAKER && speakerDspEnabled && proMaxBodyWarmthEnabled) {
-            PhoneSpeakerDspChain.computeBodyWarmthResponseDbAt(freqHz = freqHz)
-        } else {
-            0f
-        }
-        val listeningModeOffset = if (!isBypassed && listeningMode != ListeningMode.OFF) {
-            ListeningModeProcessor.computeMusicResponseDbAt(
-                freqHz = freqHz,
-                mode = listeningMode,
-                adaptiveWarmthRatio = if (adaptiveWarmthActive) 1f else 0f
-            )
-        } else {
-            0f
-        }
-        val target = if (isBypassed) 0f else (tenBandGain + toneOffset + accommodationsOffset + smoothnessOffset + loudnessOffset + audioMixOffset + volumeContourOffset + bodyWarmthOffset + listeningModeOffset + preampDb * 0.5f)
-            .coerceIn(EqPresetsCatalog.MIN_GAIN_DB, EqPresetsCatalog.MAX_GAIN_DB)
+    val animatedCurveGains = targetCurveGains.mapIndexed { index, target ->
         val anim by animateFloatAsState(
             targetValue = target,
             animationSpec = tween(220),

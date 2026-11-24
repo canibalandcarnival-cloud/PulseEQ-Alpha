@@ -38,13 +38,18 @@ import com.example.model.TrebleGainStagingBudget
 import com.example.model.VisualizerFrame
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.log10
 import kotlin.math.pow
@@ -62,6 +67,7 @@ object EqualizerEngineHolder {
     }
 }
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class EqualizerAudioEngine(private val context: Context) {
 
     private data class SessionEffect(
@@ -83,6 +89,11 @@ class EqualizerAudioEngine(private val context: Context) {
 
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val dpScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
+    private val visScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val dpWakeChannel = Channel<Unit>(Channel.CONFLATED)
+    private val pendingReconcile = AtomicBoolean(false)
+    private val pendingVisualizerRefresh = AtomicBoolean(false)
 
     val testSynthesizer = TestAudioSynthesizer()
     val audiogramEngine = AudiogramCheckEngine()
@@ -91,6 +102,24 @@ class EqualizerAudioEngine(private val context: Context) {
 
     private val sessionEffects = ConcurrentHashMap<Int, SessionEffect>()
     private var systemVisualizer: Visualizer? = null
+
+    @Volatile
+    private var lastAnyDpActive: Boolean = false
+
+    @Volatile
+    private var lastAnyLegacyActive: Boolean = false
+
+    @Volatile
+    private var lastDpDuckGain: Float = 1f
+
+    @Volatile
+    private var lastDpSpeechActive: Boolean = false
+
+    @Volatile
+    private var lastVisTelemetryMs: Long = 0L
+
+    @Volatile
+    private var lastSynthTelemetryMs: Long = 0L
 
     private val _connectedDevices = MutableStateFlow(ConnectedDeviceState())
     val connectedDevices: StateFlow<ConnectedDeviceState> = _connectedDevices.asStateFlow()
@@ -335,38 +364,46 @@ class EqualizerAudioEngine(private val context: Context) {
             (currentListeningMode == ListeningMode.TRANSPARENCY ||
                 currentListeningMode == ListeningMode.ADAPTIVE ||
                 currentConversationAwarenessEnabled)
-        _audioLabTelemetry.value = _audioLabTelemetry.value.copy(
-            speechDetected = speechDetected,
-            duckingGainLinear = duckGain,
-            feedbackProtectionActive = feedbackProtected
-        )
-        scope.launch {
-            applyToAllSessions()
+        _audioLabTelemetry.update {
+            it.copy(
+                speechDetected = speechDetected,
+                duckingGainLinear = duckGain,
+                feedbackProtectionActive = feedbackProtected
+            )
+        }
+        val speechFlipped = speechDetected != lastDpSpeechActive
+        val gainMoved = abs(duckGain - lastDpDuckGain) >= 0.02f || (duckGain == 1f && lastDpDuckGain != 1f)
+        if (speechFlipped || gainMoved) {
+            lastDpSpeechActive = speechDetected
+            lastDpDuckGain = duckGain
+            dpWakeChannel.trySend(Unit)
         }
     }
 
     private val voiceMicMonitor = VoiceMicAccommodationsMonitor { active, levelDb ->
-        _audioLabTelemetry.value = _audioLabTelemetry.value.copy(
-            voiceMicMonitorActive = active,
-            voiceMicLevelDb = levelDb
-        )
+        _audioLabTelemetry.update {
+            it.copy(
+                voiceMicMonitorActive = active,
+                voiceMicLevelDb = levelDb
+            )
+        }
     }
 
     private val liveAmbientPassThroughMonitor = LiveAmbientPassThroughMonitor(
         onTelemetryUpdate = { gain, ambDb, rumbleDb, rumbleDuckActive, running ->
             val prevDuckActive = currentAdaptiveWarmthRatio > 0.5f
             currentAdaptiveWarmthRatio = if (rumbleDuckActive) 1f else 0f
-            _audioLabTelemetry.value = _audioLabTelemetry.value.copy(
-                listeningPassThroughGain = if (currentTarget == OutputTarget.SPEAKER) 0f else gain,
-                ambientNoiseRmsDb = ambDb,
-                ambientRumbleRmsDb = rumbleDb,
-                adaptiveRumbleDuckActive = rumbleDuckActive,
-                liveMicPassThroughRunning = running && currentTarget != OutputTarget.SPEAKER
-            )
+            _audioLabTelemetry.update {
+                it.copy(
+                    listeningPassThroughGain = if (currentTarget == OutputTarget.SPEAKER) 0f else gain,
+                    ambientNoiseRmsDb = ambDb,
+                    ambientRumbleRmsDb = rumbleDb,
+                    adaptiveRumbleDuckActive = rumbleDuckActive,
+                    liveMicPassThroughRunning = running && currentTarget != OutputTarget.SPEAKER
+                )
+            }
             if (prevDuckActive != rumbleDuckActive) {
-                scope.launch {
-                    applyToAllSessions()
-                }
+                dpWakeChannel.trySend(Unit)
             }
         },
         onConversationDuckUpdate = { speechDetected, duckGain ->
@@ -395,8 +432,21 @@ class EqualizerAudioEngine(private val context: Context) {
         } catch (_: Throwable) {
         }
 
-        reconcileAttachedSessions()
-        refreshSystemVisualizer()
+        dpScope.launch {
+            for (signal in dpWakeChannel) {
+                if (pendingVisualizerRefresh.getAndSet(false)) {
+                    refreshSystemVisualizerInternal()
+                }
+                if (pendingReconcile.getAndSet(false)) {
+                    reconcileAttachedSessionsInternal()
+                }
+                applyToAllSessionsInternal()
+            }
+        }
+
+        pendingReconcile.set(true)
+        pendingVisualizerRefresh.set(true)
+        dpWakeChannel.trySend(Unit)
 
         scope.launch {
             combine(
@@ -409,47 +459,51 @@ class EqualizerAudioEngine(private val context: Context) {
             }
         }
 
-        scope.launch {
+        visScope.launch {
             combine(
                 testSynthesizer.currentSource,
                 testSynthesizer.visualizerFrame,
                 _systemVisualizerFrame
             ) { testSource, synthFrame, sysFrame ->
-                if (testSource != TestAudioSource.OFF) {
-                    _audioLabTelemetry.value = _audioLabTelemetry.value.copy(
-                        inputLufs = testSynthesizer.latestInputLufs,
-                        soundCheckTrimDb = testSynthesizer.latestSoundCheckTrimDb,
-                        voiceGateAttenuationDb = testSynthesizer.latestVoiceGateDb,
-                        accommodationsGrDb = testSynthesizer.latestAccommodationsGrDb,
-                        loudnessRmsGrDb = testSynthesizer.latestLoudnessRmsGrDb,
-                        loudnessBrickwallGrDb = testSynthesizer.latestLoudnessBrickwallGrDb,
-                        loudnessAntiClipActive = testSynthesizer.isLoudnessAntiClipActive,
-                        siliconExcursionPct = testSynthesizer.latestSiliconExcursionPct,
-                        siliconSvfCutoffHz = testSynthesizer.latestSiliconSvfCutoffHz,
-                        siliconCoilTempC = testSynthesizer.latestSiliconCoilTempC,
-                        siliconClassHRailV = testSynthesizer.latestSiliconClassHRailV,
-                        siliconTruePeakGrDb = testSynthesizer.latestSiliconTruePeakGrDb,
-                        trebleGainStagedCapActive = testSynthesizer.isTrebleCapActive,
-                        trebleCappedBoostDb = testSynthesizer.latestTrebleCappedBoostDb,
-                        resolvedOrientationLandscape = testSynthesizer.latestResolvedOrientationLandscape,
-                        volumeContourStatus = testSynthesizer.latestVolumeContourStatus,
-                        highVolumeDeHarshActive = testSynthesizer.isHighVolumeDeHarshActive,
-                        multibandLowGrDb = testSynthesizer.latestMultibandLowGrDb,
-                        multibandMidGrDb = testSynthesizer.latestMultibandMidGrDb,
-                        multibandHighGrDb = testSynthesizer.latestMultibandHighGrDb,
-                        phaseAlignmentActive = testSynthesizer.isPhaseAlignmentActive,
-                        soundCheckCrestDb = testSynthesizer.latestSoundCheckCrestDb,
-                        studioSampleRateHz = StudioHiResSpecs.SAMPLE_RATE_HZ,
-                        oversampledEqActive = testSynthesizer.isOversampledEqActive,
-                        harmonicSheenThdPct = testSynthesizer.latestHarmonicSheenThdPct,
-                        noiseFloorGateMuted = testSynthesizer.isNoiseFloorGateMuted
-                    )
-                    synthFrame
-                } else {
-                    sysFrame
-                }
-            }.collect { frame ->
+                testSource to (if (testSource != TestAudioSource.OFF) synthFrame else sysFrame)
+            }.collect { (testSource, frame) ->
                 _visualizerFrame.value = frame
+                if (testSource != TestAudioSource.OFF) {
+                    val nowMs = System.currentTimeMillis()
+                    if (nowMs - lastSynthTelemetryMs >= 80L) {
+                        lastSynthTelemetryMs = nowMs
+                        _audioLabTelemetry.update {
+                            it.copy(
+                                inputLufs = testSynthesizer.latestInputLufs,
+                                soundCheckTrimDb = testSynthesizer.latestSoundCheckTrimDb,
+                                voiceGateAttenuationDb = testSynthesizer.latestVoiceGateDb,
+                                accommodationsGrDb = testSynthesizer.latestAccommodationsGrDb,
+                                loudnessRmsGrDb = testSynthesizer.latestLoudnessRmsGrDb,
+                                loudnessBrickwallGrDb = testSynthesizer.latestLoudnessBrickwallGrDb,
+                                loudnessAntiClipActive = testSynthesizer.isLoudnessAntiClipActive,
+                                siliconExcursionPct = testSynthesizer.latestSiliconExcursionPct,
+                                siliconSvfCutoffHz = testSynthesizer.latestSiliconSvfCutoffHz,
+                                siliconCoilTempC = testSynthesizer.latestSiliconCoilTempC,
+                                siliconClassHRailV = testSynthesizer.latestSiliconClassHRailV,
+                                siliconTruePeakGrDb = testSynthesizer.latestSiliconTruePeakGrDb,
+                                trebleGainStagedCapActive = testSynthesizer.isTrebleCapActive,
+                                trebleCappedBoostDb = testSynthesizer.latestTrebleCappedBoostDb,
+                                resolvedOrientationLandscape = testSynthesizer.latestResolvedOrientationLandscape,
+                                volumeContourStatus = testSynthesizer.latestVolumeContourStatus,
+                                highVolumeDeHarshActive = testSynthesizer.isHighVolumeDeHarshActive,
+                                multibandLowGrDb = testSynthesizer.latestMultibandLowGrDb,
+                                multibandMidGrDb = testSynthesizer.latestMultibandMidGrDb,
+                                multibandHighGrDb = testSynthesizer.latestMultibandHighGrDb,
+                                phaseAlignmentActive = testSynthesizer.isPhaseAlignmentActive,
+                                soundCheckCrestDb = testSynthesizer.latestSoundCheckCrestDb,
+                                studioSampleRateHz = StudioHiResSpecs.SAMPLE_RATE_HZ,
+                                oversampledEqActive = testSynthesizer.isOversampledEqActive,
+                                harmonicSheenThdPct = testSynthesizer.latestHarmonicSheenThdPct,
+                                noiseFloorGateMuted = testSynthesizer.isNoiseFloorGateMuted
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -598,6 +652,11 @@ class EqualizerAudioEngine(private val context: Context) {
     }
 
     fun reconcileAttachedSessions() {
+        pendingReconcile.set(true)
+        dpWakeChannel.trySend(Unit)
+    }
+
+    private fun reconcileAttachedSessionsInternal() {
         val targetSessions = buildSet {
             addAll(AudioSessionRegistry.activeSessions.value.keys)
             if (_globalMixFallbackEnabled.value) {
@@ -617,8 +676,6 @@ class EqualizerAudioEngine(private val context: Context) {
                 }
             }
         }
-
-        applyToAllSessions()
     }
 
     private fun createEffectForSession(sessionId: Int): SessionEffect? {
@@ -627,13 +684,13 @@ class EqualizerAudioEngine(private val context: Context) {
                 val builder = DynamicsProcessing.Config.Builder(
                     DynamicsProcessing.VARIANT_FAVOR_FREQUENCY_RESOLUTION,
                     2,
-                    true, 10,
-                    true, 1,
+                    true, PRE_EQ_BAND_COUNT,
+                    true, MBC_BAND_COUNT,
                     true, speakerPostEqCutoffsHz.size,
                     true
                 )
-                val preEq = DynamicsProcessing.Eq(true, true, 10)
-                for (i in 0 until 10) {
+                val preEq = DynamicsProcessing.Eq(true, true, PRE_EQ_BAND_COUNT)
+                for (i in 0 until PRE_EQ_BAND_COUNT) {
                     preEq.setBand(i, DynamicsProcessing.EqBand(true, bandUpperCutoffsHz[i], 0f))
                 }
                 builder.setPreEqAllChannelsTo(preEq)
@@ -644,12 +701,8 @@ class EqualizerAudioEngine(private val context: Context) {
                 }
                 builder.setPostEqAllChannelsTo(postEq)
 
-                val mbc = DynamicsProcessing.Mbc(true, false, 3)
-                val mbcCutoffs = floatArrayOf(
-                    AdaptiveMultibandPhaseSpecs.LOW_CROSSOVER_HZ.toFloat(),
-                    AdaptiveMultibandPhaseSpecs.HIGH_CROSSOVER_HZ.toFloat(),
-                    22000f
-                )
+                val mbc = DynamicsProcessing.Mbc(true, false, MBC_BAND_COUNT)
+                val mbcCutoffs = MBC_UPPER_CUTOFFS_HZ
                 for (b in mbcCutoffs.indices) {
                     mbc.setBand(
                         b,
@@ -877,28 +930,17 @@ class EqualizerAudioEngine(private val context: Context) {
             listeningMode = currentListeningMode,
             ambientPassThroughPercent = currentAmbientPassThroughPercent
         )
-        applyToAllSessions()
+        updateImmediateStatusAndTelemetry()
+        dpWakeChannel.trySend(Unit)
     }
 
-    private fun applyToAllSessions() {
-        var anyDpActive = false
-        var anyLegacyActive = false
+    private fun updateImmediateStatusAndTelemetry() {
         val isAbHeld = _abCompareHeld.value
         val effectiveActive = !currentBypassed && !isAbHeld
         val siliconActive = effectiveActive && currentSiliconDspEnabled
         val isSpeakerDspActive = effectiveActive && (currentTarget == OutputTarget.SPEAKER) && currentSpeakerDspEnabled
         val isSpatialActive = effectiveActive && currentSpatialMode != SpatialMode.OFF
         val useThreeBand = currentThreeBandEnabled && !currentTenBandEnabled
-        val useTenBand = !useThreeBand
-        val threeBandActive = useThreeBand &&
-            (kotlin.math.abs(currentThreeBandBassDb) > 0.01f ||
-                kotlin.math.abs(currentThreeBandMidsDb) > 0.01f ||
-                kotlin.math.abs(currentThreeBandTrebleDb) > 0.01f)
-        val duckDb = if (currentDuckGainLinear < 0.99f) {
-            (20.0 * log10(currentDuckGainLinear.toDouble().coerceAtLeast(0.15))).toFloat()
-        } else {
-            0f
-        }
         val trebleBudget = TrebleGainStagingBudget.allocate(
             accommodationsActive = effectiveActive && currentAccommodationsEnabled && currentAccommodationsApplyToMedia,
             accommodationsProfile = currentAccommodationsToneProfile,
@@ -927,19 +969,67 @@ class EqualizerAudioEngine(private val context: Context) {
                 currentListeningMode == ListeningMode.ADAPTIVE ||
                 currentConversationAwarenessEnabled)
 
-        _audioLabTelemetry.value = _audioLabTelemetry.value.copy(
-            trebleGainStagedCapActive = effectiveActive && trebleBudget.isCapEngaged,
-            trebleCappedBoostDb = if (effectiveActive) trebleBudget.cappedCombinedHfDb else 0f,
-            resolvedOrientationLandscape = resolvedLandscape,
-            volumeContourStatus = volumeContourStatus,
-            highVolumeDeHarshActive = highVolDeHarshActive,
-            phaseAlignmentActive = isSpeakerDspActive && currentSpeakerPhaseAlignmentEnabled,
-            studioSampleRateHz = StudioHiResSpecs.SAMPLE_RATE_HZ,
-            oversampledEqActive = effectiveActive && currentOversampledEqEnabled,
-            feedbackProtectionActive = feedbackProtectionActive,
-            listeningPassThroughGain = if (currentTarget == OutputTarget.SPEAKER || !effectiveActive) 0f else _audioLabTelemetry.value.listeningPassThroughGain,
-            liveMicPassThroughRunning = _audioLabTelemetry.value.liveMicPassThroughRunning && currentTarget != OutputTarget.SPEAKER && effectiveActive
+        _audioLabTelemetry.update {
+            it.copy(
+                trebleGainStagedCapActive = effectiveActive && trebleBudget.isCapEngaged,
+                trebleCappedBoostDb = if (effectiveActive) trebleBudget.cappedCombinedHfDb else 0f,
+                resolvedOrientationLandscape = resolvedLandscape,
+                volumeContourStatus = volumeContourStatus,
+                highVolumeDeHarshActive = highVolDeHarshActive,
+                phaseAlignmentActive = isSpeakerDspActive && currentSpeakerPhaseAlignmentEnabled,
+                studioSampleRateHz = StudioHiResSpecs.SAMPLE_RATE_HZ,
+                oversampledEqActive = effectiveActive && currentOversampledEqEnabled,
+                feedbackProtectionActive = feedbackProtectionActive,
+                listeningPassThroughGain = if (currentTarget == OutputTarget.SPEAKER || !effectiveActive) 0f else it.listeningPassThroughGain,
+                liveMicPassThroughRunning = it.liveMicPassThroughRunning && currentTarget != OutputTarget.SPEAKER && effectiveActive
+            )
+        }
+
+        updateDspStatusLabel(
+            effectiveActive = effectiveActive,
+            isAbHeld = isAbHeld,
+            siliconActive = siliconActive,
+            isSpeakerDspActive = isSpeakerDspActive,
+            isSpatialActive = isSpatialActive,
+            useThreeBand = useThreeBand,
+            resolvedLandscape = resolvedLandscape,
+            anyDpActive = lastAnyDpActive,
+            anyLegacyActive = lastAnyLegacyActive
         )
+    }
+
+    private fun applyToAllSessionsInternal() {
+        var anyDpActive = false
+        var anyLegacyActive = false
+        val isAbHeld = _abCompareHeld.value
+        val effectiveActive = !currentBypassed && !isAbHeld
+        val siliconActive = effectiveActive && currentSiliconDspEnabled
+        val isSpeakerDspActive = effectiveActive && (currentTarget == OutputTarget.SPEAKER) && currentSpeakerDspEnabled
+        val isSpatialActive = effectiveActive && currentSpatialMode != SpatialMode.OFF
+        val useThreeBand = currentThreeBandEnabled && !currentTenBandEnabled
+        val useTenBand = !useThreeBand
+        val threeBandActive = useThreeBand &&
+            (abs(currentThreeBandBassDb) > 0.01f ||
+                abs(currentThreeBandMidsDb) > 0.01f ||
+                abs(currentThreeBandTrebleDb) > 0.01f)
+        val duckDb = if (currentDuckGainLinear < 0.99f) {
+            (20.0 * log10(currentDuckGainLinear.toDouble().coerceAtLeast(0.15))).toFloat()
+        } else {
+            0f
+        }
+        val trebleBudget = TrebleGainStagingBudget.allocate(
+            accommodationsActive = effectiveActive && currentAccommodationsEnabled && currentAccommodationsApplyToMedia,
+            accommodationsProfile = currentAccommodationsToneProfile,
+            accommodationsIntensity = currentAccommodationsSoftIntensity,
+            spatialActive = isSpatialActive,
+            spatialHeightPresence = currentHeightPresence,
+            siliconDspActive = siliconActive
+        )
+        val resolvedLandscape = when (currentPhoneOrientationMode) {
+            PhoneOrientationMode.AUTO_DETECT -> currentDeviceIsLandscape
+            PhoneOrientationMode.PORTRAIT -> false
+            PhoneOrientationMode.LANDSCAPE -> true
+        }
 
         for (bundle in sessionEffects.values) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && bundle.dynamicsProcessing != null) {
@@ -1114,12 +1204,8 @@ class EqualizerAudioEngine(private val context: Context) {
                         // combined with Late Night / Boost Soft Sounds / Loudness / Excursion when active
                         val strongGlobalComp = currentLateNightEnabled || accommodationsMediaActive || loudnessMaxActive || isSpeakerDspActive
                         val compEnabled = strongGlobalComp || currentAdaptiveMultibandEnabled
-                        val mbc = DynamicsProcessing.Mbc(true, compEnabled, 3)
-                        val mbcCutoffs = floatArrayOf(
-                            AdaptiveMultibandPhaseSpecs.LOW_CROSSOVER_HZ.toFloat(),
-                            AdaptiveMultibandPhaseSpecs.HIGH_CROSSOVER_HZ.toFloat(),
-                            22000f
-                        )
+                        val mbc = DynamicsProcessing.Mbc(true, compEnabled, MBC_BAND_COUNT)
+                        val mbcCutoffs = MBC_UPPER_CUTOFFS_HZ
                         val multibandThresholds = floatArrayOf(
                             AdaptiveMultibandPhaseSpecs.LOW_THRESHOLD_DB,
                             AdaptiveMultibandPhaseSpecs.MID_THRESHOLD_DB,
@@ -1278,6 +1364,32 @@ class EqualizerAudioEngine(private val context: Context) {
             }
         }
 
+        lastAnyDpActive = anyDpActive
+        lastAnyLegacyActive = anyLegacyActive
+        updateDspStatusLabel(
+            effectiveActive = effectiveActive,
+            isAbHeld = isAbHeld,
+            siliconActive = siliconActive,
+            isSpeakerDspActive = isSpeakerDspActive,
+            isSpatialActive = isSpatialActive,
+            useThreeBand = useThreeBand,
+            resolvedLandscape = resolvedLandscape,
+            anyDpActive = anyDpActive,
+            anyLegacyActive = anyLegacyActive
+        )
+    }
+
+    private fun updateDspStatusLabel(
+        effectiveActive: Boolean,
+        isAbHeld: Boolean,
+        siliconActive: Boolean,
+        isSpeakerDspActive: Boolean,
+        isSpatialActive: Boolean,
+        useThreeBand: Boolean,
+        resolvedLandscape: Boolean,
+        anyDpActive: Boolean,
+        anyLegacyActive: Boolean
+    ) {
         val sessionCount = AudioSessionRegistry.activeSessions.value.size
         val accMediaActive = effectiveActive && currentAccommodationsEnabled && currentAccommodationsApplyToMedia
         val loudnessMaxActive = effectiveActive && currentLoudnessMaximizerEnabled
@@ -1340,6 +1452,11 @@ class EqualizerAudioEngine(private val context: Context) {
     }
 
     fun refreshSystemVisualizer() {
+        pendingVisualizerRefresh.set(true)
+        dpWakeChannel.trySend(Unit)
+    }
+
+    private fun refreshSystemVisualizerInternal() {
         releaseSystemVisualizer()
         if (!checkAudioPermission()) {
             _systemVisualizerFrame.value = VisualizerFrame()
@@ -1494,43 +1611,51 @@ class EqualizerAudioEngine(private val context: Context) {
                             }
                             val estCrestDb = if (live) (peakDb - rmsDb).coerceIn(0f, 24f) else 0f
 
-                            _audioLabTelemetry.value = _audioLabTelemetry.value.copy(
-                                inputLufs = (peakDb - 3f).coerceIn(-60f, 0f),
-                                soundCheckTrimDb = systemSoundCheckTrimDb,
-                                soundCheckCrestDb = estCrestDb,
-                                voiceGateAttenuationDb = if (live || !currentVoiceIsolationEnabled) 0f else -24f,
-                                loudnessRmsGrDb = loudnessRmsGr,
-                                loudnessBrickwallGrDb = loudnessBrickwallGr,
-                                loudnessAntiClipActive = loudnessAntiClip,
-                                siliconExcursionPct = estExcursionPct,
-                                siliconSvfCutoffHz = estSvfHz,
-                                siliconCoilTempC = smoothedTemp,
-                                siliconClassHRailV = estRailV,
-                                siliconTruePeakGrDb = estTpGr,
-                                multibandLowGrDb = estLowGr,
-                                multibandMidGrDb = estMidGr,
-                                multibandHighGrDb = estHighGr,
-                                phaseAlignmentActive = !currentBypassed && !_abCompareHeld.value &&
-                                    currentTarget == OutputTarget.SPEAKER &&
-                                    currentSpeakerDspEnabled &&
-                                    currentSpeakerPhaseAlignmentEnabled,
-                                studioSampleRateHz = StudioHiResSpecs.SAMPLE_RATE_HZ,
-                                oversampledEqActive = !currentBypassed && !_abCompareHeld.value && currentOversampledEqEnabled,
-                                harmonicSheenThdPct = if (live && !currentBypassed && !_abCompareHeld.value) {
-                                    (currentHarmonicSheenPercent * 0.28f).coerceAtMost(StudioHiResSpecs.HARMONIC_SHEEN_MAX_THD_PCT)
-                                } else {
-                                    0f
-                                },
-                                noiseFloorGateMuted = !live && currentNoiseFloorGateEnabled && !currentBypassed && !_abCompareHeld.value
-                            )
+                            val nowMs = System.currentTimeMillis()
+                            if (nowMs - lastVisTelemetryMs >= 80L) {
+                                lastVisTelemetryMs = nowMs
+                                _audioLabTelemetry.update {
+                                    it.copy(
+                                        inputLufs = (peakDb - 3f).coerceIn(-60f, 0f),
+                                        soundCheckTrimDb = systemSoundCheckTrimDb,
+                                        soundCheckCrestDb = estCrestDb,
+                                        voiceGateAttenuationDb = if (live || !currentVoiceIsolationEnabled) 0f else -24f,
+                                        loudnessRmsGrDb = loudnessRmsGr,
+                                        loudnessBrickwallGrDb = loudnessBrickwallGr,
+                                        loudnessAntiClipActive = loudnessAntiClip,
+                                        siliconExcursionPct = estExcursionPct,
+                                        siliconSvfCutoffHz = estSvfHz,
+                                        siliconCoilTempC = smoothedTemp,
+                                        siliconClassHRailV = estRailV,
+                                        siliconTruePeakGrDb = estTpGr,
+                                        multibandLowGrDb = estLowGr,
+                                        multibandMidGrDb = estMidGr,
+                                        multibandHighGrDb = estHighGr,
+                                        phaseAlignmentActive = !currentBypassed && !_abCompareHeld.value &&
+                                            currentTarget == OutputTarget.SPEAKER &&
+                                            currentSpeakerDspEnabled &&
+                                            currentSpeakerPhaseAlignmentEnabled,
+                                        studioSampleRateHz = StudioHiResSpecs.SAMPLE_RATE_HZ,
+                                        oversampledEqActive = !currentBypassed && !_abCompareHeld.value && currentOversampledEqEnabled,
+                                        harmonicSheenThdPct = if (live && !currentBypassed && !_abCompareHeld.value) {
+                                            (currentHarmonicSheenPercent * 0.28f).coerceAtMost(StudioHiResSpecs.HARMONIC_SHEEN_MAX_THD_PCT)
+                                        } else {
+                                            0f
+                                        },
+                                        noiseFloorGateMuted = !live && currentNoiseFloorGateEnabled && !currentBypassed && !_abCompareHeld.value
+                                    )
+                                }
+                            }
                         }
 
-                        _systemVisualizerFrame.value = _systemVisualizerFrame.value.copy(
-                            waveformSamples = samples,
-                            peakDb = peakDb,
-                            gainReductionDb = minOf(lateNightGr, speakerLimiterGr, loudnessRmsGr, loudnessBrickwallGr),
-                            isSignalLive = live
-                        )
+                        _systemVisualizerFrame.update {
+                            it.copy(
+                                waveformSamples = samples,
+                                peakDb = peakDb,
+                                gainReductionDb = minOf(lateNightGr, speakerLimiterGr, loudnessRmsGr, loudnessBrickwallGr),
+                                isSignalLive = live
+                            )
+                        }
                     }
 
                     override fun onFftDataCapture(
@@ -1568,10 +1693,12 @@ class EqualizerAudioEngine(private val context: Context) {
                             bars[b] = norm
                         }
 
-                        _systemVisualizerFrame.value = _systemVisualizerFrame.value.copy(
-                            spectrumBins = bars,
-                            isSignalLive = anySignal || _systemVisualizerFrame.value.isSignalLive
-                        )
+                        _systemVisualizerFrame.update {
+                            it.copy(
+                                spectrumBins = bars,
+                                isSignalLive = anySignal || it.isSignalLive
+                            )
+                        }
                     }
                 },
                 Visualizer.getMaxCaptureRate().coerceAtMost(20000),
@@ -1668,8 +1795,20 @@ class EqualizerAudioEngine(private val context: Context) {
         standaloneBackgroundPlayer.stop()
         audiogramEngine.stopTone()
         customAudioSetupEngine.stopAuditionLoop()
-        releaseSystemVisualizer()
         testSynthesizer.stop()
-        releaseAllSessions()
+        dpScope.launch {
+            releaseSystemVisualizer()
+            releaseAllSessions()
+        }
+    }
+
+    companion object {
+        const val PRE_EQ_BAND_COUNT = 10
+        const val MBC_BAND_COUNT = 3
+        val MBC_UPPER_CUTOFFS_HZ = floatArrayOf(
+            AdaptiveMultibandPhaseSpecs.LOW_CROSSOVER_HZ.toFloat(),
+            AdaptiveMultibandPhaseSpecs.HIGH_CROSSOVER_HZ.toFloat(),
+            20000f
+        )
     }
 }

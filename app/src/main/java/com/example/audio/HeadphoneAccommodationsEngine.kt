@@ -14,8 +14,11 @@ import com.example.model.SoftSoundIntensity
 import com.example.model.StudioHiResSpecs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -442,78 +445,149 @@ class CustomAudioSetupAuditionEngine {
  * HeadphoneAccommodationsProcessor instance when "Apply to Voice/Mic Input" is enabled,
  * reporting real-time conditioned voice level telemetry without speaker feedback.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class VoiceMicAccommodationsMonitor(
     private val onTelemetry: (active: Boolean, levelDb: Float) -> Unit
 ) {
-    private var processorSampleRate = StudioHiResSpecs.SAMPLE_RATE_HZ
+    private val hwScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
+    private val streamScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val reconcileSignal = Channel<Unit>(Channel.CONFLATED)
+
     @Volatile
-    private var processor = HeadphoneAccommodationsProcessor(processorSampleRate)
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var monitorJob: Job? = null
 
-    @SuppressLint("MissingPermission")
+    @Volatile
+    private var activeCapture: UnprocessedMicFactory.OpenMicCapture? = null
+
+    @Volatile
+    private var desiredEnabled: Boolean = false
+
+    @Volatile
+    private var desiredProfile: AccommodationToneProfile = AccommodationToneProfile.BALANCED_TONE
+
+    @Volatile
+    private var desiredIntensity: SoftSoundIntensity = SoftSoundIntensity.MODERATE
+
+    @Volatile
+    private var hasRecordPermission: Boolean = false
+
+    @Volatile
+    private var wasActiveTelemetry: Boolean = false
+
+    init {
+        hwScope.launch {
+            for (signal in reconcileSignal) {
+                reconcileHardware()
+            }
+        }
+    }
+
     fun configure(
         enabled: Boolean,
         profile: AccommodationToneProfile,
         intensity: SoftSoundIntensity,
         hasRecordPermission: Boolean
     ) {
-        processor.configure(isEnabled = enabled, profile = profile, intensity = intensity)
-        if (!enabled || !hasRecordPermission) {
-            stop()
+        this.desiredEnabled = enabled
+        this.desiredProfile = profile
+        this.desiredIntensity = intensity
+        this.hasRecordPermission = hasRecordPermission
+        if ((!enabled || !hasRecordPermission) && wasActiveTelemetry) {
+            wasActiveTelemetry = false
+            onTelemetry(false, -60f)
+        }
+        reconcileSignal.trySend(Unit)
+    }
+
+    @SuppressLint("MissingPermission")
+    private suspend fun reconcileHardware() {
+        val shouldRun = desiredEnabled && hasRecordPermission
+        if (!shouldRun) {
+            stopBlocking()
             return
         }
-        if (monitorJob != null) return
+        if (monitorJob?.isActive == true) return
+
+        stopBlocking()
+        if (!desiredEnabled || !hasRecordPermission) return
 
         val capture = UnprocessedMicFactory.openRawMicCapture()
         if (capture == null) {
+            wasActiveTelemetry = false
             onTelemetry(false, -60f)
             return
         }
+        activeCapture = capture
         val record = capture.audioRecord
-        if (capture.sampleRate != processorSampleRate) {
-            processorSampleRate = capture.sampleRate
-            processor = HeadphoneAccommodationsProcessor(processorSampleRate).apply {
-                configure(isEnabled = enabled, profile = profile, intensity = intensity)
-            }
+        val localProcessor = HeadphoneAccommodationsProcessor(capture.sampleRate).apply {
+            configure(isEnabled = desiredEnabled, profile = desiredProfile, intensity = desiredIntensity)
         }
 
-        monitorJob = scope.launch {
+        monitorJob = streamScope.launch {
             val frameSamples = (capture.sampleRate * 0.04).toInt().coerceAtLeast(640)
             val buf = ShortArray(frameSamples)
+            var lastReportMs = 0L
             try {
                 record.startRecording()
                 while (isActive) {
                     val read = record.read(buf, 0, buf.size)
                     if (read > 0) {
+                        localProcessor.configure(
+                            isEnabled = desiredEnabled,
+                            profile = desiredProfile,
+                            intensity = desiredIntensity
+                        )
                         var sumSq = 0.0
                         for (i in 0 until read) {
                             val s = buf[i] / 32768.0
-                            val (procL, _) = processor.processStereoSample(s, s)
+                            val (procL, _) = localProcessor.processStereoSample(s, s)
                             sumSq += procL * procL
                         }
                         val rms = sqrt(sumSq / read).coerceAtLeast(1e-6)
                         val levelDb = (20.0 * log10(rms)).toFloat().coerceIn(-60f, 0f)
-                        onTelemetry(true, levelDb)
+                        val nowMs = System.currentTimeMillis()
+                        if (nowMs - lastReportMs >= 80L) {
+                            lastReportMs = nowMs
+                            wasActiveTelemetry = true
+                            onTelemetry(true, levelDb)
+                        }
                     }
                 }
             } catch (_: Throwable) {
             } finally {
-                try {
-                    record.stop()
-                } catch (_: Throwable) {
+                capture.release()
+                if (activeCapture === capture) {
+                    activeCapture = null
                 }
-                try {
-                    record.release()
-                } catch (_: Throwable) {
+                if (wasActiveTelemetry) {
+                    wasActiveTelemetry = false
+                    onTelemetry(false, -60f)
                 }
             }
         }
     }
 
-    fun stop() {
-        monitorJob?.cancel()
+    private suspend fun stopBlocking() {
+        val job = monitorJob
         monitorJob = null
-        onTelemetry(false, -60f)
+        try {
+            activeCapture?.audioRecord?.stop()
+        } catch (_: Throwable) {
+        }
+        try {
+            job?.cancelAndJoin()
+        } catch (_: Throwable) {
+        }
+        activeCapture?.release()
+        activeCapture = null
+    }
+
+    fun stop() {
+        desiredEnabled = false
+        if (wasActiveTelemetry) {
+            wasActiveTelemetry = false
+            onTelemetry(false, -60f)
+        }
+        reconcileSignal.trySend(Unit)
     }
 }

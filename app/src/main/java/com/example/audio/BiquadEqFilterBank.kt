@@ -25,8 +25,11 @@ import com.example.model.TrebleGainStagingSpecs
 import com.example.model.VisualizerFrame
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -1556,14 +1559,23 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
  * Speaker DSP, Silicon DSP Core, Headphones, Bluetooth EQ tuning, Spatial Atmos,
  * Late Night compression, Sound Check, Voice Isolation & Background Sounds immediately.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class TestAudioSynthesizer {
     private val sampleRate = com.example.model.StudioHiResSpecs.SAMPLE_RATE_HZ
     private val filterBank = BiquadEqFilterBank(sampleRate)
     private val backgroundSynth = BackgroundSoundsSynthesizer(sampleRate)
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val hwScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
+    private val synthScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val reconcileSignal = Channel<Unit>(Channel.CONFLATED)
 
+    @Volatile
     private var playJob: Job? = null
+
+    @Volatile
     private var audioTrack: AudioTrack? = null
+
+    @Volatile
+    private var desiredSource: TestAudioSource = TestAudioSource.OFF
 
     private val _currentSource = MutableStateFlow(TestAudioSource.OFF)
     val currentSource: StateFlow<TestAudioSource> = _currentSource.asStateFlow()
@@ -1574,6 +1586,14 @@ class TestAudioSynthesizer {
     @Volatile
     var audioSessionId: Int = 0
         private set
+
+    init {
+        hwScope.launch {
+            for (signal in reconcileSignal) {
+                reconcilePlayback()
+            }
+        }
+    }
 
     @Volatile
     private var backgroundPreset: BackgroundSoundPreset = BackgroundSoundPreset.OFF
@@ -1761,27 +1781,46 @@ class TestAudioSynthesizer {
     }
 
     fun setSource(source: TestAudioSource) {
-        if (_currentSource.value == source) return
-        stop()
+        if (desiredSource == source && _currentSource.value == source) return
+        desiredSource = source
         _currentSource.value = source
-        if (source != TestAudioSource.OFF) {
-            startPlayback(source)
-        } else {
+        if (source == TestAudioSource.OFF) {
             _visualizerFrame.value = VisualizerFrame()
         }
+        reconcileSignal.trySend(Unit)
     }
 
     fun stop() {
-        playJob?.cancel()
-        playJob = null
-        try {
-            audioTrack?.pause()
-            audioTrack?.flush()
-            audioTrack?.release()
-        } catch (_: Throwable) {
+        desiredSource = TestAudioSource.OFF
+        _currentSource.value = TestAudioSource.OFF
+        _visualizerFrame.value = VisualizerFrame()
+        reconcileSignal.trySend(Unit)
+    }
+
+    private suspend fun reconcilePlayback() {
+        stopBlocking()
+        val targetSource = desiredSource
+        if (targetSource != TestAudioSource.OFF) {
+            startPlayback(targetSource)
         }
+    }
+
+    private suspend fun stopBlocking() {
+        val job = playJob
+        playJob = null
+        val track = audioTrack
         audioTrack = null
         audioSessionId = 0
+        try {
+            track?.pause()
+            track?.flush()
+            track?.release()
+        } catch (_: Throwable) {
+        }
+        try {
+            job?.cancelAndJoin()
+        } catch (_: Throwable) {
+        }
     }
 
     private fun startPlayback(source: TestAudioSource) {
@@ -1816,6 +1855,15 @@ class TestAudioSynthesizer {
                 .build()
         } catch (_: Throwable) {
             _currentSource.value = TestAudioSource.OFF
+            desiredSource = TestAudioSource.OFF
+            return
+        }
+
+        if (desiredSource != source) {
+            try {
+                track.release()
+            } catch (_: Throwable) {
+            }
             return
         }
 
@@ -1824,12 +1872,18 @@ class TestAudioSynthesizer {
         try {
             track.play()
         } catch (_: Throwable) {
-            stop()
+            try {
+                track.release()
+            } catch (_: Throwable) {
+            }
+            audioTrack = null
+            audioSessionId = 0
             _currentSource.value = TestAudioSource.OFF
+            desiredSource = TestAudioSource.OFF
             return
         }
 
-        playJob = scope.launch {
+        playJob = synthScope.launch {
             // 48,000 Hz / 768 samples = 62.5 fps telemetry & audio cadence (exact 16ms blocks)
             val frameCount = 768
             val pcmBuffer = ShortArray(frameCount * 2)

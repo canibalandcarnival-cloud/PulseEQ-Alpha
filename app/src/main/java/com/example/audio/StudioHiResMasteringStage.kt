@@ -5,6 +5,7 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.AudioEffect
 import android.media.audiofx.AutomaticGainControl
 import android.media.audiofx.NoiseSuppressor
 import android.os.Build
@@ -27,8 +28,26 @@ object UnprocessedMicFactory {
     data class OpenMicCapture(
         val audioRecord: AudioRecord,
         val sampleRate: Int,
-        val autoProcessingDisabled: Boolean
-    )
+        val autoProcessingDisabled: Boolean,
+        val effectsToRelease: List<AudioEffect> = emptyList()
+    ) {
+        fun release() {
+            try {
+                audioRecord.stop()
+            } catch (_: Throwable) {
+            }
+            try {
+                audioRecord.release()
+            } catch (_: Throwable) {
+            }
+            for (effect in effectsToRelease) {
+                try {
+                    effect.release()
+                } catch (_: Throwable) {
+                }
+            }
+        }
+    }
 
     @SuppressLint("MissingPermission")
     fun openRawMicCapture(
@@ -64,11 +83,12 @@ object UnprocessedMicFactory {
                     null
                 }
                 if (record != null && record.state == AudioRecord.STATE_INITIALIZED) {
-                    val effectsDisabled = disableHardwareAutoProcessing(record.audioSessionId)
+                    val (effectsDisabled, effects) = disableHardwareAutoProcessing(record.audioSessionId)
                     return OpenMicCapture(
                         audioRecord = record,
                         sampleRate = sr,
-                        autoProcessingDisabled = effectsDisabled || src == MediaRecorder.AudioSource.UNPROCESSED
+                        autoProcessingDisabled = effectsDisabled || src == MediaRecorder.AudioSource.UNPROCESSED,
+                        effectsToRelease = effects
                     )
                 }
                 try {
@@ -80,12 +100,16 @@ object UnprocessedMicFactory {
         return null
     }
 
-    private fun disableHardwareAutoProcessing(audioSessionId: Int): Boolean {
+    private fun disableHardwareAutoProcessing(audioSessionId: Int): Pair<Boolean, List<AudioEffect>> {
         var clean = true
+        val createdEffects = mutableListOf<AudioEffect>()
         try {
             if (AcousticEchoCanceler.isAvailable()) {
                 val aec = AcousticEchoCanceler.create(audioSessionId)
-                aec?.enabled = false
+                if (aec != null) {
+                    aec.enabled = false
+                    createdEffects.add(aec)
+                }
             }
         } catch (_: Throwable) {
             clean = false
@@ -93,7 +117,10 @@ object UnprocessedMicFactory {
         try {
             if (NoiseSuppressor.isAvailable()) {
                 val ns = NoiseSuppressor.create(audioSessionId)
-                ns?.enabled = false
+                if (ns != null) {
+                    ns.enabled = false
+                    createdEffects.add(ns)
+                }
             }
         } catch (_: Throwable) {
             clean = false
@@ -101,12 +128,15 @@ object UnprocessedMicFactory {
         try {
             if (AutomaticGainControl.isAvailable()) {
                 val agc = AutomaticGainControl.create(audioSessionId)
-                agc?.enabled = false
+                if (agc != null) {
+                    agc.enabled = false
+                    createdEffects.add(agc)
+                }
             }
         } catch (_: Throwable) {
             clean = false
         }
-        return clean
+        return clean to createdEffects
     }
 }
 

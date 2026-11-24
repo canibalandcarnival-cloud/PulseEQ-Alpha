@@ -11,8 +11,11 @@ import com.example.model.OutputTarget
 import com.example.model.StudioHiResSpecs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -430,6 +433,7 @@ class ListeningModeProcessor(private val sampleRate: Int = StudioHiResSpecs.SAMP
  * - Automatically unlocks low-latency AudioTrack pass-through when OutputTarget.HEADPHONES or OutputTarget.BLUETOOTH
  *   is active.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class LiveAmbientPassThroughMonitor(
     private val onTelemetryUpdate: (
         passThroughGain: Float,
@@ -440,8 +444,20 @@ class LiveAmbientPassThroughMonitor(
     ) -> Unit,
     private val onConversationDuckUpdate: (speechDetected: Boolean, duckGainLinear: Float) -> Unit
 ) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val hwDispatcher = Dispatchers.IO.limitedParallelism(1)
+    private val hwScope = CoroutineScope(SupervisorJob() + hwDispatcher)
+    private val streamScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val reconcileSignal = Channel<Unit>(Channel.CONFLATED)
+
+    @Volatile
     private var monitorJob: Job? = null
+
+    @Volatile
+    private var activeCapture: UnprocessedMicFactory.OpenMicCapture? = null
+
+    @Volatile
+    private var activeSampleRate: Int = StudioHiResSpecs.SAMPLE_RATE_HZ
+
     private var audioTrack: AudioTrack? = null
 
     @Volatile
@@ -460,21 +476,28 @@ class LiveAmbientPassThroughMonitor(
     private var conversationAwarenessEnabled: Boolean = false
 
     @Volatile
+    private var hasRecordPermission: Boolean = false
+
+    @Volatile
     private var speechDetected: Boolean = false
 
     @Volatile
     private var currentDuckGain: Float = 1f
 
     @Volatile
-    private var dspProcessor = ListeningModeProcessor(StudioHiResSpecs.SAMPLE_RATE_HZ)
-
-    private val speechLowCut = StereoBiquad().apply { setHighPass(StudioHiResSpecs.SAMPLE_RATE_HZ, 300.0, 0.707) }
-    private val speechHighCut = StereoBiquad().apply { setLowPass(StudioHiResSpecs.SAMPLE_RATE_HZ, 3000.0, 0.707) }
+    private var shouldHandleConversationMic: Boolean = false
 
     val handlesConversationMic: Boolean
-        get() = monitorJob != null
+        get() = shouldHandleConversationMic
 
-    @SuppressLint("MissingPermission")
+    init {
+        hwScope.launch {
+            for (signal in reconcileSignal) {
+                reconcileHardwareState()
+            }
+        }
+    }
+
     fun configure(
         mode: ListeningMode,
         outputTarget: OutputTarget,
@@ -488,14 +511,13 @@ class LiveAmbientPassThroughMonitor(
         this.isBypassed = isBypassed
         this.ambientPassThroughPercent = ambientPassThroughPercent.coerceIn(0f, 1f)
         this.conversationAwarenessEnabled = conversationAwarenessEnabled
+        this.hasRecordPermission = hasRecordPermission
 
-        dspProcessor.configure(
-            mode = mode,
-            outputTarget = outputTarget,
-            isBypassed = isBypassed,
-            ambientPassThroughPercent = this.ambientPassThroughPercent,
-            conversationSpeechActive = conversationAwarenessEnabled && speechDetected
-        )
+        val needsUnifiedMic = hasRecordPermission && !isBypassed &&
+            (mode == ListeningMode.TRANSPARENCY ||
+                mode == ListeningMode.ADAPTIVE ||
+                (conversationAwarenessEnabled && outputTarget != OutputTarget.SPEAKER))
+        shouldHandleConversationMic = needsUnifiedMic && conversationAwarenessEnabled
 
         if (!conversationAwarenessEnabled) {
             speechDetected = false
@@ -505,40 +527,44 @@ class LiveAmbientPassThroughMonitor(
             }
         }
 
-        // Start unified hardware mic engine if Listening Mode uses mic (Transparency / Adaptive) on any route
-        // (Adaptive monitors ambient noise safely even while Speaker mutes pass-through playback; Transparency
-        // only streams live AudioTrack when outputTarget != SPEAKER).
+        reconcileSignal.trySend(Unit)
+    }
+
+    @SuppressLint("MissingPermission")
+    private suspend fun reconcileHardwareState() {
         val needsUnifiedMic = hasRecordPermission && !isBypassed &&
             (mode == ListeningMode.TRANSPARENCY ||
                 mode == ListeningMode.ADAPTIVE ||
                 (conversationAwarenessEnabled && outputTarget != OutputTarget.SPEAKER))
 
         if (!needsUnifiedMic) {
-            stop()
+            stopBlocking(emitZeroTelemetry = true)
             return
         }
 
-        if (monitorJob == null) {
-            start()
+        val currentJob = monitorJob
+        if (currentJob == null || !currentJob.isActive) {
+            stopBlocking(emitZeroTelemetry = false)
+            startCaptureLoop()
         } else {
-            // Re-evaluate whether low-latency AudioTrack should play or remain strictly muted on Speaker
-            reconcilePlaybackTrack(dspProcessorSampleRate())
+            reconcilePlaybackTrack(activeSampleRate)
         }
     }
 
-    private fun dspProcessorSampleRate(): Int = StudioHiResSpecs.SAMPLE_RATE_HZ
-
     @SuppressLint("MissingPermission")
-    private fun start() {
+    private fun startCaptureLoop() {
         val capture = UnprocessedMicFactory.openRawMicCapture()
         if (capture == null) {
             onTelemetryUpdate(0f, -60f, -60f, false, false)
             return
         }
 
+        activeCapture = capture
         val record = capture.audioRecord
         val sr = capture.sampleRate
-        dspProcessor = ListeningModeProcessor(sr).apply {
+        activeSampleRate = sr
+
+        val localProcessor = ListeningModeProcessor(sr).apply {
             configure(
                 mode = mode,
                 outputTarget = outputTarget,
@@ -547,18 +573,20 @@ class LiveAmbientPassThroughMonitor(
                 conversationSpeechActive = conversationAwarenessEnabled && speechDetected
             )
         }
-        speechLowCut.setHighPass(sr, 300.0, 0.707)
-        speechHighCut.setLowPass(sr, 3000.0, 0.707)
+        val speechLowCut = StereoBiquad().apply { setHighPass(sr, 300.0, 0.707) }
+        val speechHighCut = StereoBiquad().apply { setLowPass(sr, 3000.0, 0.707) }
 
         reconcilePlaybackTrack(sr)
 
-        monitorJob = scope.launch {
+        monitorJob = streamScope.launch {
             val frameSamples = (sr * 0.012).toInt().coerceAtLeast(256) // 12ms low-latency audio blocks
             val micBuf = ShortArray(frameSamples)
             val stereoOutBuf = ShortArray(frameSamples * 2)
             var lastVoiceTimestampMs = 0L
             var localSpeechActive = false
             var gain = 1f
+            var lastReportedSpeech = false
+            var lastReportedGain = 1f
             var lastTelemetryReportMs = 0L
 
             try {
@@ -566,12 +594,18 @@ class LiveAmbientPassThroughMonitor(
                 while (isActive) {
                     val read = record.read(micBuf, 0, micBuf.size)
                     if (read > 0) {
+                        val cfgMode = mode
+                        val cfgTarget = outputTarget
+                        val cfgBypass = isBypassed
+                        val cfgPercent = ambientPassThroughPercent
+                        val cfgConv = conversationAwarenessEnabled
+
                         var sumSpeechSq = 0.0
-                        val allowAudioOut = outputTarget != OutputTarget.SPEAKER &&
-                            !isBypassed &&
-                            (mode == ListeningMode.TRANSPARENCY ||
-                                mode == ListeningMode.ADAPTIVE ||
-                                (conversationAwarenessEnabled && localSpeechActive))
+                        val allowAudioOut = cfgTarget != OutputTarget.SPEAKER &&
+                            !cfgBypass &&
+                            (cfgMode == ListeningMode.TRANSPARENCY ||
+                                cfgMode == ListeningMode.ADAPTIVE ||
+                                (cfgConv && localSpeechActive))
 
                         if (allowAudioOut && audioTrack == null) {
                             reconcilePlaybackTrack(sr, localSpeechActive)
@@ -579,22 +613,22 @@ class LiveAmbientPassThroughMonitor(
                             releasePlaybackTrack()
                         }
 
-                        dspProcessor.configure(
-                            mode = mode,
-                            outputTarget = outputTarget,
-                            isBypassed = isBypassed,
-                            ambientPassThroughPercent = ambientPassThroughPercent,
-                            conversationSpeechActive = conversationAwarenessEnabled && localSpeechActive
+                        localProcessor.configure(
+                            mode = cfgMode,
+                            outputTarget = cfgTarget,
+                            isBypassed = cfgBypass,
+                            ambientPassThroughPercent = cfgPercent,
+                            conversationSpeechActive = cfgConv && localSpeechActive
                         )
 
                         for (i in 0 until read) {
                             val norm = micBuf[i] / 32768.0
-                            if (conversationAwarenessEnabled) {
+                            if (cfgConv) {
                                 val (hp, _) = speechLowCut.processStereo(norm, 0.0)
                                 val (bp, _) = speechHighCut.processStereo(hp, 0.0)
                                 sumSpeechSq += bp * bp
                             }
-                            val outSample = dspProcessor.processAmbientMicSample(norm)
+                            val outSample = localProcessor.processAmbientMicSample(norm)
                             val pcm = if (allowAudioOut) {
                                 (outSample.coerceIn(-0.98, 0.98) * 32767.0).toInt().toShort()
                             } else {
@@ -605,14 +639,17 @@ class LiveAmbientPassThroughMonitor(
                         }
 
                         if (allowAudioOut) {
-                            try {
-                                audioTrack?.write(stereoOutBuf, 0, read * 2)
-                            } catch (_: Throwable) {
-                                releasePlaybackTrack()
+                            val track = audioTrack
+                            if (track != null) {
+                                try {
+                                    track.write(stereoOutBuf, 0, read * 2)
+                                } catch (_: Throwable) {
+                                    releasePlaybackTrack()
+                                }
                             }
                         }
 
-                        if (conversationAwarenessEnabled) {
+                        if (cfgConv) {
                             val speechRms = sqrt(sumSpeechSq / read)
                             val speechDb = if (speechRms > 1e-6) 20.0 * log10(speechRms) else -90.0
                             val now = System.currentTimeMillis()
@@ -633,17 +670,25 @@ class LiveAmbientPassThroughMonitor(
 
                             speechDetected = localSpeechActive
                             currentDuckGain = gain
-                            onConversationDuckUpdate(localSpeechActive, gain)
+
+                            val speechFlipped = localSpeechActive != lastReportedSpeech
+                            val gainMovedEnough = abs(gain - lastReportedGain) >= 0.02f ||
+                                (gain == targetDuck && gain != lastReportedGain)
+                            if (speechFlipped || gainMovedEnough) {
+                                lastReportedSpeech = localSpeechActive
+                                lastReportedGain = gain
+                                onConversationDuckUpdate(localSpeechActive, gain)
+                            }
                         }
 
                         val nowMs = System.currentTimeMillis()
-                        if (nowMs - lastTelemetryReportMs >= 50L) {
+                        if (nowMs - lastTelemetryReportMs >= 60L) {
                             lastTelemetryReportMs = nowMs
                             onTelemetryUpdate(
-                                dspProcessor.latestPassThroughGain,
-                                dspProcessor.latestAmbientRmsDb,
-                                dspProcessor.latestRumbleRmsDb,
-                                dspProcessor.isAdaptiveRumbleDuckActive,
+                                localProcessor.latestPassThroughGain,
+                                localProcessor.latestAmbientRmsDb,
+                                localProcessor.latestRumbleRmsDb,
+                                localProcessor.isAdaptiveRumbleDuckActive,
                                 true
                             )
                         }
@@ -654,13 +699,9 @@ class LiveAmbientPassThroughMonitor(
             } catch (_: Throwable) {
             } finally {
                 releasePlaybackTrack()
-                try {
-                    record.stop()
-                } catch (_: Throwable) {
-                }
-                try {
-                    record.release()
-                } catch (_: Throwable) {
+                capture.release()
+                if (activeCapture === capture) {
+                    activeCapture = null
                 }
                 onTelemetryUpdate(0f, -60f, -60f, false, false)
             }
@@ -736,11 +777,34 @@ class LiveAmbientPassThroughMonitor(
         }
     }
 
-    fun stop() {
-        monitorJob?.cancel()
+    private suspend fun stopBlocking(emitZeroTelemetry: Boolean) {
+        val job = monitorJob
         monitorJob = null
+        try {
+            activeCapture?.audioRecord?.stop()
+        } catch (_: Throwable) {
+        }
+        try {
+            job?.cancelAndJoin()
+        } catch (_: Throwable) {
+        }
         releasePlaybackTrack()
-        dspProcessor.reset()
-        onTelemetryUpdate(0f, -60f, -60f, false, false)
+        activeCapture?.release()
+        activeCapture = null
+        if (emitZeroTelemetry) {
+            onTelemetryUpdate(0f, -60f, -60f, false, false)
+        }
+    }
+
+    fun stop() {
+        mode = ListeningMode.OFF
+        conversationAwarenessEnabled = false
+        shouldHandleConversationMic = false
+        speechDetected = false
+        if (currentDuckGain != 1f) {
+            currentDuckGain = 1f
+            onConversationDuckUpdate(false, 1f)
+        }
+        reconcileSignal.trySend(Unit)
     }
 }

@@ -17,8 +17,11 @@ import com.example.model.SpatialMode
 import com.example.model.StudioHiResSpecs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -320,12 +323,18 @@ class BackgroundSoundsSynthesizer(private val sampleRate: Int = 44100) {
  * Standalone Background Sounds AudioTrack runner used when the built-in Test Audio Synthesizer is OFF,
  * allowing Apple's ambient sounds to play underneath Spotify, YouTube, or Podcasts.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class StandaloneBackgroundAudioPlayer {
     private val sampleRate = StudioHiResSpecs.SAMPLE_RATE_HZ
     private val synth = BackgroundSoundsSynthesizer(sampleRate)
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val hwScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
+    private val streamScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val reconcileSignal = Channel<Unit>(Channel.CONFLATED)
 
+    @Volatile
     private var playJob: Job? = null
+
+    @Volatile
     private var audioTrack: AudioTrack? = null
 
     @Volatile
@@ -334,19 +343,38 @@ class StandaloneBackgroundAudioPlayer {
     @Volatile
     private var activeVolume: Float = 0.28f
 
-    fun update(preset: BackgroundSoundPreset, volume: Float, suppressBecauseSynthPlaying: Boolean) {
-        activePreset = preset
-        activeVolume = volume
+    @Volatile
+    private var desiredShouldRun: Boolean = false
 
-        val shouldRun = preset != BackgroundSoundPreset.OFF && volume > 0.005f && !suppressBecauseSynthPlaying
-        if (shouldRun && playJob == null) {
-            start()
-        } else if (!shouldRun && playJob != null) {
-            stop()
+    init {
+        hwScope.launch {
+            for (signal in reconcileSignal) {
+                reconcileHardware()
+            }
         }
     }
 
-    private fun start() {
+    fun update(preset: BackgroundSoundPreset, volume: Float, suppressBecauseSynthPlaying: Boolean) {
+        activePreset = preset
+        activeVolume = volume
+        desiredShouldRun = preset != BackgroundSoundPreset.OFF && volume > 0.005f && !suppressBecauseSynthPlaying
+        reconcileSignal.trySend(Unit)
+    }
+
+    private suspend fun reconcileHardware() {
+        val shouldRun = desiredShouldRun
+        val running = playJob?.isActive == true
+        if (shouldRun && !running) {
+            stopBlocking()
+            if (desiredShouldRun) {
+                startPlayback()
+            }
+        } else if (!shouldRun && (running || audioTrack != null)) {
+            stopBlocking()
+        }
+    }
+
+    private fun startPlayback() {
         val minBuf = AudioTrack.getMinBufferSize(
             sampleRate,
             AudioFormat.CHANNEL_OUT_STEREO,
@@ -384,11 +412,15 @@ class StandaloneBackgroundAudioPlayer {
         try {
             track.play()
         } catch (_: Throwable) {
-            stop()
+            try {
+                track.release()
+            } catch (_: Throwable) {
+            }
+            audioTrack = null
             return
         }
 
-        playJob = scope.launch {
+        playJob = streamScope.launch {
             val frames = 1024
             val pcm = ShortArray(frames * 2)
             while (isActive) {
@@ -408,16 +440,26 @@ class StandaloneBackgroundAudioPlayer {
         }
     }
 
-    fun stop() {
-        playJob?.cancel()
+    private suspend fun stopBlocking() {
+        val job = playJob
         playJob = null
+        val track = audioTrack
+        audioTrack = null
         try {
-            audioTrack?.pause()
-            audioTrack?.flush()
-            audioTrack?.release()
+            track?.pause()
+            track?.flush()
+            track?.release()
         } catch (_: Throwable) {
         }
-        audioTrack = null
+        try {
+            job?.cancelAndJoin()
+        } catch (_: Throwable) {
+        }
+    }
+
+    fun stop() {
+        desiredShouldRun = false
+        reconcileSignal.trySend(Unit)
     }
 }
 
@@ -426,14 +468,25 @@ class StandaloneBackgroundAudioPlayer {
  * Monitors microphone audio via 300Hz-3kHz speech bandpass, smoothly ducks music by 75% (to 0.25x)
  * when speech is detected, and restores full volume 2 seconds after speaking stops.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class ConversationAwarenessMonitor(
     private val onDuckStateChanged: (speechDetected: Boolean, duckGainLinear: Float) -> Unit
 ) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val hwScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
+    private val streamScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val reconcileSignal = Channel<Unit>(Channel.CONFLATED)
+
+    @Volatile
     private var monitorJob: Job? = null
 
-    private val speechLowCut = StereoBiquad().apply { setHighPass(StudioHiResSpecs.SAMPLE_RATE_HZ, 300.0, 0.707) }
-    private val speechHighCut = StereoBiquad().apply { setLowPass(StudioHiResSpecs.SAMPLE_RATE_HZ, 3000.0, 0.707) }
+    @Volatile
+    private var activeCapture: UnprocessedMicFactory.OpenMicCapture? = null
+
+    @Volatile
+    private var desiredEnabled: Boolean = false
+
+    @Volatile
+    private var hasRecordPermission: Boolean = false
 
     @Volatile
     var isSpeechDetected: Boolean = false
@@ -443,25 +496,52 @@ class ConversationAwarenessMonitor(
     var currentDuckGain: Float = 1f
         private set
 
-    @SuppressLint("MissingPermission")
+    init {
+        hwScope.launch {
+            for (signal in reconcileSignal) {
+                reconcileHardware()
+            }
+        }
+    }
+
     fun setEnabled(enabled: Boolean, hasRecordPermission: Boolean) {
-        if (!enabled || !hasRecordPermission) {
-            stop()
+        val prevEnabled = this.desiredEnabled
+        this.desiredEnabled = enabled
+        this.hasRecordPermission = hasRecordPermission
+        if ((!enabled || !hasRecordPermission) && (prevEnabled || isSpeechDetected || currentDuckGain != 1f)) {
+            isSpeechDetected = false
+            currentDuckGain = 1f
+            onDuckStateChanged(false, 1f)
+        }
+        reconcileSignal.trySend(Unit)
+    }
+
+    @SuppressLint("MissingPermission")
+    private suspend fun reconcileHardware() {
+        val shouldRun = desiredEnabled && hasRecordPermission
+        if (!shouldRun) {
+            stopBlocking()
             return
         }
-        if (monitorJob != null) return
+        if (monitorJob?.isActive == true) return
+
+        stopBlocking()
+        if (!desiredEnabled || !hasRecordPermission) return
 
         val capture = UnprocessedMicFactory.openRawMicCapture() ?: return
+        activeCapture = capture
         val record = capture.audioRecord
-        speechLowCut.setHighPass(capture.sampleRate, 300.0, 0.707)
-        speechHighCut.setLowPass(capture.sampleRate, 3000.0, 0.707)
+        val speechLowCut = StereoBiquad().apply { setHighPass(capture.sampleRate, 300.0, 0.707) }
+        val speechHighCut = StereoBiquad().apply { setLowPass(capture.sampleRate, 3000.0, 0.707) }
 
-        monitorJob = scope.launch {
+        monitorJob = streamScope.launch {
             val frameSamples = (capture.sampleRate * 0.04).toInt().coerceAtLeast(640)
             val buf = ShortArray(frameSamples) // 40ms frames at raw mic rate
             var lastVoiceTimestampMs = 0L
             var speechActive = false
             var gain = 1f
+            var lastReportedSpeech = false
+            var lastReportedGain = 1f
 
             try {
                 record.startRecording()
@@ -494,31 +574,52 @@ class ConversationAwarenessMonitor(
 
                         isSpeechDetected = speechActive
                         currentDuckGain = gain
-                        onDuckStateChanged(speechActive, gain)
+
+                        val speechFlipped = speechActive != lastReportedSpeech
+                        val gainMoved = abs(gain - lastReportedGain) >= 0.02f ||
+                            (gain == targetGain && gain != lastReportedGain)
+                        if (speechFlipped || gainMoved) {
+                            lastReportedSpeech = speechActive
+                            lastReportedGain = gain
+                            onDuckStateChanged(speechActive, gain)
+                        }
                     } else {
                         delay(30)
                     }
                 }
             } catch (_: Throwable) {
             } finally {
-                try {
-                    record.stop()
-                } catch (_: Throwable) {
-                }
-                try {
-                    record.release()
-                } catch (_: Throwable) {
+                capture.release()
+                if (activeCapture === capture) {
+                    activeCapture = null
                 }
             }
         }
     }
 
-    fun stop() {
-        monitorJob?.cancel()
+    private suspend fun stopBlocking() {
+        val job = monitorJob
         monitorJob = null
-        isSpeechDetected = false
-        currentDuckGain = 1f
-        onDuckStateChanged(false, 1f)
+        try {
+            activeCapture?.audioRecord?.stop()
+        } catch (_: Throwable) {
+        }
+        try {
+            job?.cancelAndJoin()
+        } catch (_: Throwable) {
+        }
+        activeCapture?.release()
+        activeCapture = null
+    }
+
+    fun stop() {
+        desiredEnabled = false
+        if (isSpeechDetected || currentDuckGain != 1f) {
+            isSpeechDetected = false
+            currentDuckGain = 1f
+            onDuckStateChanged(false, 1f)
+        }
+        reconcileSignal.trySend(Unit)
     }
 }
 
