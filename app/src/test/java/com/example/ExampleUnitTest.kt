@@ -260,10 +260,10 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun spatial_studio_micro_ambience_ir_is_strictly_25ms_and_rapidly_decays() {
-        val sampleRate = 44100
+    fun spatial_studio_early_reflection_ir_is_strictly_18ms_and_rapidly_decays() {
+        val sampleRate = 48000
         val (irL, irR) = com.example.audio.AppleStudioMicroAmbienceConvolver.generateStudioMicroAmbienceIr(sampleRate)
-        val expectedSamples = (sampleRate * 0.025).roundToInt()
+        val expectedSamples = (sampleRate * 0.018).roundToInt()
         assertEquals(expectedSamples, irL.size)
         assertEquals(expectedSamples, irR.size)
 
@@ -275,34 +275,30 @@ class ExampleUnitTest {
         for (i in (irL.size * 3 / 4) until irL.size) {
             tailPeak = maxOf(tailPeak, abs(irL[i]), abs(irR[i]))
         }
-        assertTrue("Early studio IR must have non-zero micro-reflections", earlyPeak > 0.01f)
-        assertTrue("25ms IR tail should decay rapidly for zero echo", tailPeak < earlyPeak * 0.15f)
+        assertTrue("Early 18ms studio IR must have non-zero early reflections", earlyPeak > 0.01f)
+        assertTrue("18ms IR tail should decay rapidly for zero bathroom reverb", tailPeak < earlyPeak * 0.16f)
     }
 
     @Test
-    fun spatial_engine_routes_712_hrtf_on_headphones_and_switches_to_xtc_on_speaker() {
-        val sampleRate = 44100
+    fun spatial_asar_locks_dry_sub_bass_and_vocal_center_and_engages_714_hrtf_or_2nd_order_xtc() {
+        val sampleRate = 48000
         val engine = com.example.audio.SpatialAudioEngine(sampleRate)
 
         // 1. OFF mode is bit-transparent
         engine.configure(
             mode = com.example.model.SpatialMode.OFF,
             target = com.example.model.OutputTarget.HEADPHONES,
-            spatialDepth = 0.8f,
-            heightPresence = 0.8f,
-            vocalAnchor = true
+            vocalFocus = 0.8f
         )
         val (offL, offR) = engine.processStereoSample(0.4, -0.2)
         assertEquals(0.4, offL, 1e-6)
         assertEquals(-0.2, offR, 1e-6)
 
-        // 2. Pure mono <120Hz bass stays symmetric/mono in Center Front (0°, 0°)
+        // 2. Dry Center Sub-Bass (<150Hz) and Center Vocal Formant (1–3.5kHz) stay strictly mono with zero reverb
         engine.configure(
             mode = com.example.model.SpatialMode.ATMOS_MUSIC,
             target = com.example.model.OutputTarget.HEADPHONES,
-            spatialDepth = 0.8f,
-            heightPresence = 0.8f,
-            vocalAnchor = true
+            vocalFocus = 1.0f
         )
         var maxStereoDiffAt80Hz = 0.0
         for (i in 0 until 2000) {
@@ -312,25 +308,59 @@ class ExampleUnitTest {
                 maxStereoDiffAt80Hz = maxOf(maxStereoDiffAt80Hz, abs(l - r))
             }
         }
-        assertTrue("Mono 80Hz sub-bass should remain locked to center", maxStereoDiffAt80Hz < 0.02)
+        assertTrue("Mono 80Hz sub-bass should remain strictly dry & centered", maxStereoDiffAt80Hz < 1e-4)
 
-        // 3. Stereo 3.2kHz signal on Headphones HRTF vs Phone Speaker 0.18ms XTC produces distinct outputs
+        var maxStereoDiffAt2k = 0.0
+        for (i in 0 until 2000) {
+            val s = 0.3 * kotlin.math.sin(2.0 * Math.PI * 2000.0 * i / sampleRate)
+            val (l, r) = engine.processStereoSample(s, s)
+            if (i > 1000) {
+                maxStereoDiffAt2k = maxOf(maxStereoDiffAt2k, abs(l - r))
+            }
+        }
+        assertTrue("Mono 2kHz center vocal formant must remain strictly dry & centered", maxStereoDiffAt2k < 1e-3)
+
+        // 3. Higher Vocal Focus increases dry center 2kHz intimacy
+        val lowFocusEngine = com.example.audio.SpatialAudioEngine(sampleRate).apply {
+            configure(
+                mode = com.example.model.SpatialMode.ATMOS_MUSIC,
+                target = com.example.model.OutputTarget.HEADPHONES,
+                vocalFocus = 0.0f
+            )
+        }
+        val highFocusEngine = com.example.audio.SpatialAudioEngine(sampleRate).apply {
+            configure(
+                mode = com.example.model.SpatialMode.ATMOS_MUSIC,
+                target = com.example.model.OutputTarget.HEADPHONES,
+                vocalFocus = 1.0f
+            )
+        }
+        var lowFocusRms = 0.0
+        var highFocusRms = 0.0
+        for (i in 0 until 2000) {
+            val v = 0.3 * kotlin.math.sin(2.0 * Math.PI * 1900.0 * i / sampleRate)
+            val (ll, _) = lowFocusEngine.processStereoSample(v, v)
+            val (hl, _) = highFocusEngine.processStereoSample(v, v)
+            if (i > 1000) {
+                lowFocusRms += ll * ll
+                highFocusRms += hl * hl
+            }
+        }
+        assertTrue("100% Vocal Focus should elevate intimate center vocal clarity over 0%", highFocusRms > lowFocusRms * 1.15)
+
+        // 4. Built-In Speaker 2nd-Order XTC (-26% @ 0.17ms 4.5kHz LPF + +12% @ 0.34ms) vs Headphone 7.1.4 HRTF
         val hrtfEngine = com.example.audio.SpatialAudioEngine(sampleRate).apply {
             configure(
                 mode = com.example.model.SpatialMode.ATMOS_CINEMA,
                 target = com.example.model.OutputTarget.HEADPHONES,
-                spatialDepth = 0.9f,
-                heightPresence = 0.9f,
-                vocalAnchor = true
+                vocalFocus = 0.7f
             )
         }
         val xtcEngine = com.example.audio.SpatialAudioEngine(sampleRate).apply {
             configure(
                 mode = com.example.model.SpatialMode.ATMOS_CINEMA,
                 target = com.example.model.OutputTarget.SPEAKER,
-                spatialDepth = 0.9f,
-                heightPresence = 0.9f,
-                vocalAnchor = true
+                vocalFocus = 0.7f
             )
         }
         var diffHrtfVsXtc = 0.0
@@ -345,8 +375,20 @@ class ExampleUnitTest {
                 stereoWidthXtc += abs(xL - xR)
             }
         }
-        assertTrue("Phone Speaker XTC should differ distinctly from Headphone HRTF", diffHrtfVsXtc > 10.0)
-        assertTrue("Phone Speaker XTC should project wide L/R separation", stereoWidthXtc > 50.0)
+        assertTrue("Speaker 2nd-Order XTC should differ distinctly from Headphone 7.1.4 HRTF", diffHrtfVsXtc > 10.0)
+        assertTrue("Speaker 2nd-Order XTC should project wide L/R separation", stereoWidthXtc > 50.0)
+
+        // 5. Verify 2nd-order XTC impulse timing: primary LPF'd -26% crossfeed around 0.17ms (~8-14 samples) and +12% bounce at 0.34ms (~16 samples)
+        val xtc = com.example.audio.AcousticCrosstalkCanceller(sampleRate)
+        val xtcImp = DoubleArray(32)
+        for (n in 0 until 32) {
+            val (l, _) = xtc.processSideChannel(if (n == 0) 1.0 else 0.0, intensityScale = 1.0)
+            xtcImp[n] = l
+        }
+        val primaryArea = (7..15).sumOf { xtcImp[it] }
+        val secondarySample = xtcImp[16]
+        assertTrue("2nd-order XTC must emit ~26% LPF-smoothed crossfeed around 0.17ms (area=$primaryArea)", primaryArea in 0.18..0.30)
+        assertTrue("2nd-order XTC must emit +12% secondary bounce at 0.34ms (got $secondarySample)", secondarySample > 0.04)
     }
 
     @Test
@@ -1503,90 +1545,5 @@ class ExampleUnitTest {
         assertEquals(0.0, lastL, 0.0)
         assertEquals(0.0, lastR, 0.0)
         assertEquals(0.toShort(), lastPcm)
-    }
-
-    @Test
-    fun listening_mode_defaults_to_adaptive_for_headphones_and_bluetooth_and_off_for_speaker() {
-        val speakerProfile = com.example.model.OutputEqProfile(target = com.example.model.OutputTarget.SPEAKER)
-        val hpProfile = com.example.model.OutputEqProfile(target = com.example.model.OutputTarget.HEADPHONES)
-        val btProfile = com.example.model.OutputEqProfile(target = com.example.model.OutputTarget.BLUETOOTH)
-
-        assertEquals(com.example.model.ListeningMode.OFF, speakerProfile.listeningMode)
-        assertEquals(com.example.model.ListeningMode.ADAPTIVE, hpProfile.listeningMode)
-        assertEquals(com.example.model.ListeningMode.ADAPTIVE, btProfile.listeningMode)
-    }
-
-    @Test
-    fun listening_mode_processor_shapes_transparency_adaptive_anc_and_bypasses_speaker() {
-        val sampleRate = 48000
-        val proc = com.example.audio.ListeningModeProcessor(sampleRate)
-
-        // 1. Disengages cleanly on SPEAKER even if ANC requested
-        proc.configure(
-            isEnabled = true,
-            mode = com.example.model.ListeningMode.NOISE_CANCELLATION,
-            outputTarget = com.example.model.OutputTarget.SPEAKER
-        )
-        assertEquals(false, proc.isEngaged)
-        assertEquals(com.example.model.ListeningMode.OFF, proc.activeMode)
-        val (spkOutL, spkOutR) = proc.processStereoSample(0.25, -0.15)
-        assertEquals(0.25, spkOutL, 1e-9)
-        assertEquals(-0.15, spkOutR, 1e-9)
-
-        // 2. NOISE_CANCELLATION on HEADPHONES attenuates 75Hz cabin hum & reports -28 dB ANC isolation
-        proc.configure(
-            isEnabled = true,
-            mode = com.example.model.ListeningMode.NOISE_CANCELLATION,
-            outputTarget = com.example.model.OutputTarget.HEADPHONES
-        )
-        assertEquals(true, proc.isEngaged)
-        assertEquals(-28.0f, proc.latestIsolationDb, 0.01f)
-        var humRmsSq = 0.0
-        for (i in 0 until 4800) {
-            val hum = 0.2 * kotlin.math.sin(2.0 * Math.PI * 75.0 * i / sampleRate)
-            val (oL, _) = proc.processStereoSample(hum, hum)
-            if (i > 2400) humRmsSq += oL * oL
-        }
-        val humOutRms = kotlin.math.sqrt(humRmsSq / 2400.0)
-        val humInRms = 0.2 / kotlin.math.sqrt(2.0)
-        assertTrue("ANC should strongly attenuate 75Hz hum ($humOutRms < $humInRms)", humOutRms < humInRms * 0.72)
-
-        // 3. TRANSPARENCY on BLUETOOTH gives open 2.2kHz presence (+1.6 dB) and +8% side air
-        proc.configure(
-            isEnabled = true,
-            mode = com.example.model.ListeningMode.TRANSPARENCY,
-            outputTarget = com.example.model.OutputTarget.BLUETOOTH
-        )
-        assertEquals(true, proc.isEngaged)
-        assertEquals(1.6f, proc.latestIsolationDb, 0.05f)
-        var openRmsSq = 0.0
-        for (i in 0 until 4800) {
-            val pres = 0.1 * kotlin.math.sin(2.0 * Math.PI * 2200.0 * i / sampleRate)
-            val (oL, _) = proc.processStereoSample(pres, pres)
-            if (i > 2400) openRmsSq += oL * oL
-        }
-        val openOutRms = kotlin.math.sqrt(openRmsSq / 2400.0)
-        val openInRms = 0.1 / kotlin.math.sqrt(2.0)
-        assertTrue("Transparency should lift 2.2kHz natural openness ($openOutRms > $openInRms)", openOutRms > openInRms * 1.12)
-
-        // 4. ADAPTIVE dynamically reacts to hot 4.2kHz transient clutter while preserving speech
-        val bank = BiquadEqFilterBank(sampleRate).apply {
-            updateParameters(
-                gainsDb = List(10) { 0f },
-                preampDb = 0f,
-                isBypassed = false,
-                outputTarget = com.example.model.OutputTarget.BLUETOOTH,
-                listeningMode = com.example.model.ListeningMode.ADAPTIVE
-            )
-        }
-        assertEquals(com.example.model.ListeningMode.ADAPTIVE, bank.activeListeningMode)
-        for (i in 0 until 4800) {
-            val clutter = 0.35 * kotlin.math.sin(2.0 * Math.PI * 4200.0 * i / sampleRate)
-            bank.processStereoSample(clutter, clutter)
-        }
-        assertTrue(
-            "Adaptive isolation telemetry should show active dynamic blend (${bank.latestListeningModeIsolationDb} dB)",
-            bank.latestListeningModeIsolationDb <= -10.0f
-        )
     }
 }

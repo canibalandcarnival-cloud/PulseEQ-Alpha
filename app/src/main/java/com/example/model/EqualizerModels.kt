@@ -93,15 +93,15 @@ enum class SpatialMode(
     ),
     ATMOS_MUSIC(
         label = "Atmos Music",
-        subtitle = "Balanced Studio",
+        subtitle = "Intimate Vocal + Wide Stage",
         defaultDepth = 0.65f,
         defaultHeight = 0.58f
     ),
     ATMOS_CINEMA(
         label = "Atmos Cinema",
-        subtitle = "Wide 3D & Height",
+        subtitle = "Maximum 3D Height & Surround",
         defaultDepth = 0.92f,
-        defaultHeight = 0.88f
+        defaultHeight = 0.90f
     )
 }
 
@@ -204,38 +204,6 @@ enum class PhoneOrientationMode(
     LANDSCAPE("landscape", "Landscape")
 }
 
-enum class ListeningMode(
-    val id: String,
-    val label: String,
-    val badge: String,
-    val subtitle: String
-) {
-    OFF(
-        id = "off",
-        label = "Off",
-        badge = "Direct",
-        subtitle = "Passive isolation only"
-    ),
-    TRANSPARENCY(
-        id = "transparency",
-        label = "Transparency",
-        badge = "Ambient Open",
-        subtitle = "Natural external presence & open-ear air contour"
-    ),
-    ADAPTIVE(
-        id = "adaptive",
-        label = "Adaptive",
-        badge = "Dynamic Blend",
-        subtitle = "Real-time ambient control & speech-preserving balance"
-    ),
-    NOISE_CANCELLATION(
-        id = "noise_cancellation",
-        label = "Noise Cancellation",
-        badge = "Active ANC",
-        subtitle = "Sub-rumble hum suppression & isolated studio focus"
-    )
-}
-
 enum class SoftSoundIntensity(
     val id: String,
     val label: String,
@@ -323,9 +291,7 @@ data class AudioLabTelemetry(
     val studioSampleRateHz: Int = 48000,
     val oversampledEqActive: Boolean = true,
     val harmonicSheenThdPct: Float = 0f,
-    val noiseFloorGateMuted: Boolean = false,
-    val activeListeningMode: ListeningMode = ListeningMode.OFF,
-    val listeningModeIsolationDb: Float = 0f
+    val noiseFloorGateMuted: Boolean = false
 )
 
 @Immutable
@@ -358,6 +324,7 @@ data class OutputEqProfile(
     val spatialDepth: Float = SpatialMode.ATMOS_MUSIC.defaultDepth,
     val heightPresence: Float = SpatialMode.ATMOS_MUSIC.defaultHeight,
     val vocalAnchor: Boolean = true,
+    val vocalFocus: Float = 0.70f,
     val soundCheckEnabled: Boolean = false,
     val conversationAwarenessEnabled: Boolean = false,
     val backgroundSoundPreset: BackgroundSoundPreset = BackgroundSoundPreset.OFF,
@@ -386,16 +353,9 @@ data class OutputEqProfile(
     val speakerPhaseAlignmentEnabled: Boolean = (target == OutputTarget.SPEAKER),
     val oversampledEqEnabled: Boolean = true,
     val harmonicSheenPercent: Float = 0.25f,
-    val noiseFloorGateEnabled: Boolean = true,
-    val listeningMode: ListeningMode = defaultListeningModeForTarget(target)
+    val noiseFloorGateEnabled: Boolean = true
 ) {
     companion object {
-        fun defaultListeningModeForTarget(target: OutputTarget): ListeningMode = when (target) {
-            OutputTarget.SPEAKER -> ListeningMode.OFF
-            OutputTarget.HEADPHONES,
-            OutputTarget.BLUETOOTH -> ListeningMode.ADAPTIVE
-        }
-
         fun defaultTrebleSmoothnessForTarget(target: OutputTarget): Float = when (target) {
             OutputTarget.SPEAKER -> 0.35f
             OutputTarget.HEADPHONES,
@@ -623,6 +583,36 @@ object StudioHiResSpecs {
     const val TPDF_DITHER_24BIT_LSB = 1.0 / 8388608.0 // +/-1 LSB @ 24-bit mastering resolution
 }
 
+object AtmosAsarSpecs {
+    const val DRY_SUB_BASS_CUTOFF_HZ = 150.0
+    const val DRY_VOCAL_LOW_HZ = 1000.0
+    const val DRY_VOCAL_HIGH_HZ = 3500.0
+
+    // iPhone 18 Pro Max Built-In Speaker 2nd-Order Transaural XTC
+    const val XTC_PRIMARY_DELAY_SEC = 0.00017     // 0.17 ms
+    const val XTC_PRIMARY_GAIN = 0.26             // -26% phase-inverted crossfeed
+    const val XTC_PRIMARY_LPF_HZ = 4500.0         // physical head-shadowing LPF
+    const val XTC_SECONDARY_DELAY_SEC = 0.00034   // 0.34 ms
+    const val XTC_SECONDARY_GAIN = 0.12           // +12% secondary bounce
+
+    // Headphone 7.1.4 Binaural Elevation (Diffuse-Field HRTF)
+    const val SURROUND_AZIMUTH_DEG = 110f
+    const val SURROUND_ELEVATION_DEG = 0f
+    const val HEIGHT_AZIMUTH_DEG = 60f
+    const val HEIGHT_ELEVATION_DEG = 50f
+    const val HEIGHT_HPF_HZ = 2800.0
+    const val PINNA_NOTCH_HZ = 6800.0
+    const val PINNA_NOTCH_Q = 3.2
+    const val PINNA_NOTCH_DB = -3.0
+    const val PINNA_AIR_HZ = 11800.0
+    const val PINNA_AIR_DB = 2.5f
+
+    // Procedural 18ms Studio Early-Reflection Impulse (diffuse component only)
+    const val STUDIO_IR_SEC = 0.018
+    const val STUDIO_IR_LPF_HZ = 3200.0
+    const val STUDIO_IR_WET_MIX = 0.08
+}
+
 @Immutable
 data class TrebleBudgetAllocation(
     val accHfScale: Float,
@@ -659,7 +649,7 @@ object TrebleGainStagingBudget {
             }
         }
         val spatialRawDb = if (spatialActive) {
-            (2.4f * (0.65f + 0.35f * spatialHeightPresence.coerceIn(0f, 1f))).coerceIn(1.5f, 3.0f)
+            (AtmosAsarSpecs.PINNA_AIR_DB * (0.72f + 0.28f * spatialHeightPresence.coerceIn(0f, 1f))).coerceIn(1.5f, AtmosAsarSpecs.PINNA_AIR_DB)
         } else {
             0f
         }
@@ -671,7 +661,7 @@ object TrebleGainStagingBudget {
 
         return TrebleBudgetAllocation(
             accHfScale = scale,
-            spatialPinnaShelfDb = if (spatialActive) (3.0f * scale) else 0f,
+            spatialPinnaShelfDb = if (spatialActive) (AtmosAsarSpecs.PINNA_AIR_DB * scale) else 0f,
             cirrusAirShelfDb = if (siliconDspActive) (SiliconDspSpecs.MICRO_AIR_GAIN_DB.toFloat() * scale) else 0f,
             rawCombinedHfDb = rawSum,
             cappedCombinedHfDb = minOf(rawSum, cap)

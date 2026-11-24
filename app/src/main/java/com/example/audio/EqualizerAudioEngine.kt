@@ -22,7 +22,6 @@ import com.example.model.CustomAudioSetupUiState
 import com.example.model.EqPresetsCatalog
 import com.example.model.FlagshipSpeakerSpecs
 import com.example.model.HearingCheckUiState
-import com.example.model.ListeningMode
 import com.example.model.LoudnessMaximizerSpecs
 import com.example.model.NightIntensity
 import com.example.model.OutputTarget
@@ -191,6 +190,10 @@ class EqualizerAudioEngine(private val context: Context) {
         private set
 
     @Volatile
+    var currentVocalFocus: Float = 0.70f
+        private set
+
+    @Volatile
     var currentSoundCheckEnabled: Boolean = false
         private set
 
@@ -307,10 +310,6 @@ class EqualizerAudioEngine(private val context: Context) {
         private set
 
     @Volatile
-    var currentListeningMode: ListeningMode = ListeningMode.OFF
-        private set
-
-    @Volatile
     private var systemSoundCheckTrimDb: Float = 0f
 
     @Volatile
@@ -399,9 +398,7 @@ class EqualizerAudioEngine(private val context: Context) {
                         studioSampleRateHz = StudioHiResSpecs.SAMPLE_RATE_HZ,
                         oversampledEqActive = testSynthesizer.isOversampledEqActive,
                         harmonicSheenThdPct = testSynthesizer.latestHarmonicSheenThdPct,
-                        noiseFloorGateMuted = testSynthesizer.isNoiseFloorGateMuted,
-                        activeListeningMode = testSynthesizer.activeListeningMode,
-                        listeningModeIsolationDb = testSynthesizer.latestListeningModeIsolationDb
+                        noiseFloorGateMuted = testSynthesizer.isNoiseFloorGateMuted
                     )
                     synthFrame
                 } else {
@@ -451,6 +448,7 @@ class EqualizerAudioEngine(private val context: Context) {
             spatialDepth = currentSpatialDepth,
             heightPresence = currentHeightPresence,
             vocalAnchor = currentVocalAnchor,
+            vocalFocus = currentVocalFocus,
             soundCheckEnabled = currentSoundCheckEnabled,
             conversationAwarenessEnabled = currentConversationAwarenessEnabled,
             bgSoundPreset = currentBgSoundPreset,
@@ -659,6 +657,7 @@ class EqualizerAudioEngine(private val context: Context) {
         spatialDepth: Float = currentSpatialDepth,
         heightPresence: Float = currentHeightPresence,
         vocalAnchor: Boolean = currentVocalAnchor,
+        vocalFocus: Float = currentVocalFocus,
         soundCheckEnabled: Boolean = currentSoundCheckEnabled,
         conversationAwarenessEnabled: Boolean = currentConversationAwarenessEnabled,
         bgSoundPreset: BackgroundSoundPreset = currentBgSoundPreset,
@@ -687,8 +686,7 @@ class EqualizerAudioEngine(private val context: Context) {
         speakerPhaseAlignmentEnabled: Boolean = currentSpeakerPhaseAlignmentEnabled,
         oversampledEqEnabled: Boolean = currentOversampledEqEnabled,
         harmonicSheenPercent: Float = currentHarmonicSheenPercent,
-        noiseFloorGateEnabled: Boolean = currentNoiseFloorGateEnabled,
-        listeningMode: ListeningMode = currentListeningMode
+        noiseFloorGateEnabled: Boolean = currentNoiseFloorGateEnabled
     ) {
         val normalizedThreeBand = threeBandEnabled && !tenBandEnabled
         val normalizedTenBand = !normalizedThreeBand
@@ -708,6 +706,7 @@ class EqualizerAudioEngine(private val context: Context) {
         currentSpatialDepth = spatialDepth
         currentHeightPresence = heightPresence
         currentVocalAnchor = vocalAnchor
+        currentVocalFocus = vocalFocus.coerceIn(0f, 1f)
         currentSoundCheckEnabled = soundCheckEnabled
         currentConversationAwarenessEnabled = conversationAwarenessEnabled
         currentBgSoundPreset = bgSoundPreset
@@ -740,7 +739,6 @@ class EqualizerAudioEngine(private val context: Context) {
         currentOversampledEqEnabled = oversampledEqEnabled
         currentHarmonicSheenPercent = harmonicSheenPercent.coerceIn(0f, 1f)
         currentNoiseFloorGateEnabled = noiseFloorGateEnabled
-        currentListeningMode = listeningMode
 
         val isSpeakerDspActive = (target == OutputTarget.SPEAKER) && speakerDspEnabled
         val isAbHeld = _abCompareHeld.value
@@ -775,6 +773,7 @@ class EqualizerAudioEngine(private val context: Context) {
             spatialDepth = spatialDepth,
             heightPresence = heightPresence,
             vocalAnchor = vocalAnchor,
+            vocalFocus = currentVocalFocus,
             soundCheckEnabled = soundCheckEnabled,
             voiceIsolationEnabled = voiceIsolationEnabled,
             abCompareHeld = isAbHeld,
@@ -802,8 +801,7 @@ class EqualizerAudioEngine(private val context: Context) {
             speakerPhaseAlignmentEnabled = speakerPhaseAlignmentEnabled,
             oversampledEqEnabled = oversampledEqEnabled,
             harmonicSheenPercent = currentHarmonicSheenPercent,
-            noiseFloorGateEnabled = noiseFloorGateEnabled,
-            listeningMode = listeningMode
+            noiseFloorGateEnabled = noiseFloorGateEnabled
         )
         applyToAllSessions()
     }
@@ -849,21 +847,6 @@ class EqualizerAudioEngine(private val context: Context) {
         val highVolDeHarshActive = effectiveActive &&
             currentMasterVolumePercent > ProMaxHardwareRefinementSpecs.HIGH_VOL_THRESHOLD
 
-        val resolvedListeningMode = if (
-            effectiveActive &&
-            (currentTarget == OutputTarget.HEADPHONES || currentTarget == OutputTarget.BLUETOOTH)
-        ) {
-            currentListeningMode
-        } else {
-            ListeningMode.OFF
-        }
-        val resolvedListeningIsolationDb = when (resolvedListeningMode) {
-            ListeningMode.OFF -> 0f
-            ListeningMode.TRANSPARENCY -> 1.6f
-            ListeningMode.ADAPTIVE -> -10.0f
-            ListeningMode.NOISE_CANCELLATION -> -28.0f
-        }
-
         _audioLabTelemetry.value = _audioLabTelemetry.value.copy(
             trebleGainStagedCapActive = effectiveActive && trebleBudget.isCapEngaged,
             trebleCappedBoostDb = if (effectiveActive) trebleBudget.cappedCombinedHfDb else 0f,
@@ -872,9 +855,7 @@ class EqualizerAudioEngine(private val context: Context) {
             highVolumeDeHarshActive = highVolDeHarshActive,
             phaseAlignmentActive = isSpeakerDspActive && currentSpeakerPhaseAlignmentEnabled,
             studioSampleRateHz = StudioHiResSpecs.SAMPLE_RATE_HZ,
-            oversampledEqActive = effectiveActive && currentOversampledEqEnabled,
-            activeListeningMode = resolvedListeningMode,
-            listeningModeIsolationDb = resolvedListeningIsolationDb
+            oversampledEqActive = effectiveActive && currentOversampledEqEnabled
         )
 
         for (bundle in sessionEffects.values) {
@@ -977,12 +958,7 @@ class EqualizerAudioEngine(private val context: Context) {
                                 freqHz = EqPresetsCatalog.BANDS[i].frequencyHz.toDouble(),
                                 volumePercent = currentMasterVolumePercent
                             )
-                            val listeningModeOffset = ListeningModeProcessor.computeContourResponseDbAt(
-                                freqHz = EqPresetsCatalog.BANDS[i].frequencyHz.toDouble(),
-                                mode = resolvedListeningMode,
-                                target = currentTarget
-                            )
-                            val combinedGain = (tenBandGain + toneOffset + accommodationsOffset + trebleSmoothnessOffset + loudnessPresenceOffset + audioMixOffset + volumeContourOffset + listeningModeOffset)
+                            val combinedGain = (tenBandGain + toneOffset + accommodationsOffset + trebleSmoothnessOffset + loudnessPresenceOffset + audioMixOffset + volumeContourOffset)
                                 .coerceIn(-15f, 15f)
                             dp.setPreEqBandAllChannelsTo(
                                 i,
@@ -990,12 +966,13 @@ class EqualizerAudioEngine(private val context: Context) {
                             )
                         }
 
-                        // PostEq stage: Voice Isolation / iPhone 18 Pro Max Speaker DSP / Gain-Staged Height Atmos contour
+                        // PostEq stage: Voice Isolation / iPhone 18 Pro Max Speaker DSP / ASAR 7.1.4 Pinna & Dry Vocal Focus
                         val heightScale = currentHeightPresence.coerceIn(0f, 1f)
-                        val cinemaBoost = if (currentSpatialMode == SpatialMode.ATMOS_CINEMA) 1.25f else 1.0f
+                        val cinemaBoost = if (currentSpatialMode == SpatialMode.ATMOS_CINEMA) 1.20f else 1.0f
                         val cappedSpatialShelfDb = trebleBudget.spatialPinnaShelfDb
                         val bodyWarmthDb = if (isSpeakerDspActive && currentProMaxBodyWarmthEnabled) 2.5f else 0f
                         val portraitVocalBoostDb = if (isSpeakerDspActive && currentLandscapeStereoStage && !resolvedLandscape) 1.2f else 0f
+                        val asarVocalFocusDb = if (isSpatialActive) (currentVocalFocus * 1.6f) else 0f
                         val postEqEnabled = isSpeakerDspActive || isSpatialActive || currentVoiceIsolationEnabled
                         val postEqGains = when {
                             currentVoiceIsolationEnabled -> floatArrayOf(
@@ -1012,7 +989,7 @@ class EqualizerAudioEngine(private val context: Context) {
                                 -10.0f, // 55-88Hz steep 24dB/oct HPF shoulder
                                 (if (currentVirtualBassEnabled) 3.5f else 1.5f) + bodyWarmthDb, // 135Hz punch + optional 125Hz Body Warmth (+2.5dB)
                                 -3.5f,  // 340Hz lower-mid scoop (-3.5dB)
-                                (if (isSpatialActive && currentVocalAnchor) 2.4f else 2.0f) + portraitVocalBoostDb, // 3.0kHz presence + Portrait vocal center focus
+                                2.0f + asarVocalFocusDb * 0.7f + portraitVocalBoostDb, // 1–3.5kHz Dry Vocal Focus + Portrait center focus
                                 -3.2f,  // 4.5kHz -3.0dB harshness + 7.0kHz -3.5dB de-esser cut
                                 if (isSpatialActive) (1.0f + cappedSpatialShelfDb * 0.5f * heightScale).coerceAtMost(3.0f) else 1.0f // 12kHz gain-staged air (+1.0dB)
                             )
@@ -1021,18 +998,18 @@ class EqualizerAudioEngine(private val context: Context) {
                                 -11.0f, // 100Hz dialogue HPF protection
                                 1.5f + bodyWarmthDb,   // 150Hz warm body + optional 125Hz Body Warmth
                                 -2.0f,  // 340Hz anti-boxiness
-                                3.2f + portraitVocalBoostDb,   // 1.8kHz–3kHz warm spoken dialogue focus
+                                3.2f + asarVocalFocusDb * 0.5f + portraitVocalBoostDb,   // 1.8kHz–3kHz warm spoken dialogue focus
                                 -3.5f,  // 4.5k-7.0kHz sibilance tame
                                 0.5f    // gentle top air
                             )
                             isSpatialActive -> floatArrayOf(
-                                0.4f, // Tight <55Hz center mono punch
-                                0.2f, // 55-88Hz anchor
+                                0.3f, // Tight <150Hz dry center sub-bass lock
+                                0.1f,
                                 0.0f,
                                 0.0f,
-                                if (currentVocalAnchor) 1.4f else 0.0f, // Vocal Anchor lock
-                                (-1.8f * heightScale * cinemaBoost).coerceIn(-3.5f, 0f), // Pinna dip zone
-                                (cappedSpatialShelfDb * heightScale).coerceIn(0f, 3.0f)   // 12kHz gain-staged height air shelf
+                                asarVocalFocusDb, // Dry 1–3.5kHz Vocal Focus presence
+                                (-1.8f * heightScale * cinemaBoost).coerceIn(-3.0f, 0f), // Pinna 6.8kHz -3.0dB notch zone
+                                (cappedSpatialShelfDb * heightScale).coerceIn(0f, 2.5f) // Pinna 11.8kHz +2.5dB budget-capped lift
                             )
                             else -> FloatArray(speakerPostEqCutoffsHz.size) { 0f }
                         }
@@ -1219,20 +1196,15 @@ class EqualizerAudioEngine(private val context: Context) {
         val audioMixActive = effectiveActive && currentAudioMixMode != AudioMixMode.STANDARD
         val activeEqPrefix = if (useThreeBand) "3-Band" else "10-Band"
         val siliconTag = if (siliconActive) " • Silicon Core" else ""
-        val listeningTag = if (resolvedListeningMode != ListeningMode.OFF) {
-            " • ${resolvedListeningMode.label}"
-        } else {
-            ""
-        }
         _dspStatusLabel.value = when {
             isAbHeld -> "A/B Compare: Original"
             currentBypassed -> "DSP Bypassed"
-            currentVoiceIsolationEnabled -> "Voice Isolation$siliconTag$listeningTag"
-            loudnessMaxActive -> "Loudness Maximizer +${(currentLoudnessBoostPercent * LoudnessMaximizerSpecs.MAX_MAKEUP_BOOST_DB).toInt()}dB$siliconTag$listeningTag"
-            audioMixActive -> "Audio Mix • ${currentAudioMixMode.label}$siliconTag$listeningTag"
+            currentVoiceIsolationEnabled -> "Voice Isolation$siliconTag"
+            loudnessMaxActive -> "Loudness Maximizer +${(currentLoudnessBoostPercent * LoudnessMaximizerSpecs.MAX_MAKEUP_BOOST_DB).toInt()}dB$siliconTag"
+            audioMixActive -> "Audio Mix • ${currentAudioMixMode.label}$siliconTag"
             isSpatialActive && currentTarget == OutputTarget.SPEAKER -> "Speaker XTC Spatial$siliconTag"
-            isSpatialActive -> "Spatial ${currentSpatialMode.label}$siliconTag$listeningTag"
-            accMediaActive -> "Accommodations • ${currentAccommodationsToneProfile.label}$siliconTag$listeningTag"
+            isSpatialActive -> "Spatial ${currentSpatialMode.label}$siliconTag"
+            accMediaActive -> "Accommodations • ${currentAccommodationsToneProfile.label}$siliconTag"
             isSpeakerDspActive && currentLateNightEnabled -> "iPhone 18 DSP + Late Night$siliconTag"
             isSpeakerDspActive -> if (currentSpeakerTuningProfile == SpeakerTuningProfile.PRO_WARM_DIALOGUE) {
                 "18 Pro • Dialogue DSP$siliconTag"
@@ -1244,15 +1216,15 @@ class EqualizerAudioEngine(private val context: Context) {
                 "18 Pro Max Speaker DSP$siliconTag"
             }
             anyDpActive && sessionCount > 0 -> {
-                if (currentLateNightEnabled) "App DSP + Late Night ($sessionCount)$siliconTag$listeningTag" else "$activeEqPrefix App DSP ($sessionCount)$siliconTag$listeningTag"
+                if (currentLateNightEnabled) "App DSP + Late Night ($sessionCount)$siliconTag" else "$activeEqPrefix App DSP ($sessionCount)$siliconTag"
             }
             anyDpActive -> {
-                if (currentLateNightEnabled) "Global DSP + Late Night$siliconTag$listeningTag" else "$activeEqPrefix Global DSP$siliconTag$listeningTag"
+                if (currentLateNightEnabled) "Global DSP + Late Night$siliconTag" else "$activeEqPrefix Global DSP$siliconTag"
             }
-            anyLegacyActive -> "System EQ Active$siliconTag$listeningTag"
+            anyLegacyActive -> "System EQ Active$siliconTag"
             !_globalMixFallbackEnabled.value && sessionCount == 0 -> "Waiting for Media App"
-            siliconActive -> "Silicon Core • $activeEqPrefix DSP$listeningTag"
-            else -> if (currentLateNightEnabled) "Studio DSP + Late Night$listeningTag" else "$activeEqPrefix Studio DSP$listeningTag"
+            siliconActive -> "Silicon Core • $activeEqPrefix DSP"
+            else -> if (currentLateNightEnabled) "Studio DSP + Late Night" else "$activeEqPrefix Studio DSP"
         }
     }
 
@@ -1456,17 +1428,7 @@ class EqualizerAudioEngine(private val context: Context) {
                                 } else {
                                     0f
                                 },
-                                noiseFloorGateMuted = !live && currentNoiseFloorGateEnabled && !currentBypassed && !_abCompareHeld.value,
-                                activeListeningMode = if (!currentBypassed && !_abCompareHeld.value &&
-                                    (currentTarget == OutputTarget.HEADPHONES || currentTarget == OutputTarget.BLUETOOTH)
-                                ) currentListeningMode else ListeningMode.OFF,
-                                listeningModeIsolationDb = when {
-                                    currentBypassed || _abCompareHeld.value || currentTarget == OutputTarget.SPEAKER -> 0f
-                                    currentListeningMode == ListeningMode.TRANSPARENCY -> 1.6f
-                                    currentListeningMode == ListeningMode.ADAPTIVE -> -10.0f
-                                    currentListeningMode == ListeningMode.NOISE_CANCELLATION -> -28.0f
-                                    else -> 0f
-                                }
+                                noiseFloorGateMuted = !live && currentNoiseFloorGateEnabled && !currentBypassed && !_abCompareHeld.value
                             )
                         }
 
@@ -1554,6 +1516,7 @@ class EqualizerAudioEngine(private val context: Context) {
             spatialDepth = currentSpatialDepth,
             heightPresence = currentHeightPresence,
             vocalAnchor = currentVocalAnchor,
+            vocalFocus = currentVocalFocus,
             soundCheckEnabled = currentSoundCheckEnabled,
             voiceIsolationEnabled = currentVoiceIsolationEnabled,
             abCompareHeld = _abCompareHeld.value,
@@ -1581,8 +1544,7 @@ class EqualizerAudioEngine(private val context: Context) {
             speakerPhaseAlignmentEnabled = currentSpeakerPhaseAlignmentEnabled,
             oversampledEqEnabled = currentOversampledEqEnabled,
             harmonicSheenPercent = currentHarmonicSheenPercent,
-            noiseFloorGateEnabled = currentNoiseFloorGateEnabled,
-            listeningMode = currentListeningMode
+            noiseFloorGateEnabled = currentNoiseFloorGateEnabled
         )
     }
 

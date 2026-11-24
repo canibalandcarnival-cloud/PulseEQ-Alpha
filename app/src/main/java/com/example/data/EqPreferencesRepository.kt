@@ -9,7 +9,6 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.model.EqPresetsCatalog
-import com.example.model.ListeningMode
 import com.example.model.NightIntensity
 import com.example.model.OutputEqProfile
 import com.example.model.OutputTarget
@@ -50,6 +49,7 @@ class EqPreferencesRepository(private val context: Context) {
         fun spatialDepthKey(target: OutputTarget) = floatPreferencesKey("spatial_depth_${target.id}")
         fun heightPresenceKey(target: OutputTarget) = floatPreferencesKey("height_presence_${target.id}")
         fun vocalAnchorKey(target: OutputTarget) = booleanPreferencesKey("vocal_anchor_${target.id}")
+        fun vocalFocusKey(target: OutputTarget) = floatPreferencesKey("vocal_focus_${target.id}")
         fun soundCheckKey(target: OutputTarget) = booleanPreferencesKey("sound_check_${target.id}")
         fun conversationAwarenessKey(target: OutputTarget) = booleanPreferencesKey("conv_awareness_${target.id}")
         fun bgSoundPresetKey(target: OutputTarget) = stringPreferencesKey("bg_sound_preset_${target.id}")
@@ -79,7 +79,6 @@ class EqPreferencesRepository(private val context: Context) {
         fun oversampledEqKey(target: OutputTarget) = booleanPreferencesKey("oversampled_eq_${target.id}")
         fun harmonicSheenKey(target: OutputTarget) = floatPreferencesKey("harmonic_sheen_${target.id}")
         fun noiseFloorGateKey(target: OutputTarget) = booleanPreferencesKey("noise_floor_gate_${target.id}")
-        fun listeningModeKey(target: OutputTarget) = stringPreferencesKey("listening_mode_${target.id}")
     }
 
     val preferencesFlow: Flow<StoredEqPreferences> = context.eqDataStore.data.map { prefs ->
@@ -166,6 +165,7 @@ class EqPreferencesRepository(private val context: Context) {
                 heightPresence = (prefs[Keys.heightPresenceKey(target)] ?: com.example.model.SpatialMode.ATMOS_MUSIC.defaultHeight)
                     .coerceIn(0f, 1f),
                 vocalAnchor = prefs[Keys.vocalAnchorKey(target)] ?: true,
+                vocalFocus = (prefs[Keys.vocalFocusKey(target)] ?: 0.70f).coerceIn(0f, 1f),
                 soundCheckEnabled = prefs[Keys.soundCheckKey(target)] ?: false,
                 conversationAwarenessEnabled = prefs[Keys.conversationAwarenessKey(target)] ?: false,
                 backgroundSoundPreset = bgPreset,
@@ -205,10 +205,7 @@ class EqPreferencesRepository(private val context: Context) {
                 speakerPhaseAlignmentEnabled = prefs[Keys.speakerPhaseAlignKey(target)] ?: (target == OutputTarget.SPEAKER),
                 oversampledEqEnabled = prefs[Keys.oversampledEqKey(target)] ?: true,
                 harmonicSheenPercent = (prefs[Keys.harmonicSheenKey(target)] ?: 0.25f).coerceIn(0f, 1f),
-                noiseFloorGateEnabled = prefs[Keys.noiseFloorGateKey(target)] ?: true,
-                listeningMode = ListeningMode.entries.firstOrNull {
-                    it.name == prefs[Keys.listeningModeKey(target)]
-                } ?: OutputEqProfile.defaultListeningModeForTarget(target)
+                noiseFloorGateEnabled = prefs[Keys.noiseFloorGateKey(target)] ?: true
             )
         }
 
@@ -262,6 +259,7 @@ class EqPreferencesRepository(private val context: Context) {
             prefs[Keys.spatialDepthKey(profile.target)] = profile.spatialDepth
             prefs[Keys.heightPresenceKey(profile.target)] = profile.heightPresence
             prefs[Keys.vocalAnchorKey(profile.target)] = profile.vocalAnchor
+            prefs[Keys.vocalFocusKey(profile.target)] = profile.vocalFocus.coerceIn(0f, 1f)
             prefs[Keys.soundCheckKey(profile.target)] = profile.soundCheckEnabled
             prefs[Keys.conversationAwarenessKey(profile.target)] = profile.conversationAwarenessEnabled
             prefs[Keys.bgSoundPresetKey(profile.target)] = profile.backgroundSoundPreset.name
@@ -302,7 +300,6 @@ class EqPreferencesRepository(private val context: Context) {
             prefs[Keys.oversampledEqKey(profile.target)] = profile.oversampledEqEnabled
             prefs[Keys.harmonicSheenKey(profile.target)] = profile.harmonicSheenPercent.coerceIn(0f, 1f)
             prefs[Keys.noiseFloorGateKey(profile.target)] = profile.noiseFloorGateEnabled
-            prefs[Keys.listeningModeKey(profile.target)] = profile.listeningMode.name
         }
     }
 }

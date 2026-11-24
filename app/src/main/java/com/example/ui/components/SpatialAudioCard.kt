@@ -27,8 +27,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
@@ -43,6 +41,7 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -75,14 +74,10 @@ import kotlin.math.sin
 fun SpatialAudioCard(
     spatialMode: SpatialMode,
     outputTarget: OutputTarget,
-    spatialDepth: Float,
-    heightPresence: Float,
-    vocalAnchor: Boolean,
+    vocalFocus: Float,
     isBypassed: Boolean,
     onSelectMode: (SpatialMode) -> Unit,
-    onDepthChange: (Float) -> Unit,
-    onHeightChange: (Float) -> Unit,
-    onToggleVocalAnchor: () -> Unit,
+    onVocalFocusChange: (Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val active = spatialMode != SpatialMode.OFF && !isBypassed
@@ -138,7 +133,7 @@ fun SpatialAudioCard(
                 ) {
                     Icon(
                         imageVector = if (active) Icons.Rounded.SurroundSound else Icons.Rounded.SpatialAudioOff,
-                        contentDescription = "Spatial Audio Atmos",
+                        contentDescription = "Apple Spatial Audio Renderer Atmos",
                         tint = accentColor,
                         modifier = Modifier.size(18.dp)
                     )
@@ -146,7 +141,7 @@ fun SpatialAudioCard(
 
                 Column {
                     Text(
-                        text = "Spatial Audio • Atmos",
+                        text = "Spatial Audio • Atmos ASAR",
                         style = MaterialTheme.typography.titleMedium.copy(fontSize = 14.sp),
                         color = TextPrimary,
                         maxLines = 1,
@@ -154,10 +149,10 @@ fun SpatialAudioCard(
                     )
                     Text(
                         text = when {
-                            !active -> "7.1.2 HRTF binaural & speaker XTC standby"
-                            isSpeakerXtc -> "Speaker Mode: 0.18ms Acoustic Crosstalk Cancel"
-                            spatialMode == SpatialMode.ATMOS_CINEMA -> "7.1.2 Wide HRTF • +45° Height • 25ms Studio IR"
-                            else -> "7.1.2 Studio HRTF • Pinna Curve • 25ms IR"
+                            !active -> "7.1.4 diffuse HRTF & 2nd-order speaker XTC standby"
+                            isSpeakerXtc -> "18 Pro Max • 2nd-Order XTC + Dry Center Lock"
+                            spatialMode == SpatialMode.ATMOS_CINEMA -> "7.1.4 HRTF • ±60°/+50° Height • 18ms Studio IR"
+                            else -> "7.1.4 HRTF • Intimate Dry Vocal + Wide Stage"
                         },
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.5.sp),
                         color = if (active) accentColor else TextMuted,
@@ -179,7 +174,7 @@ fun SpatialAudioCard(
                     .padding(horizontal = 9.dp, vertical = 4.dp)
             ) {
                 Text(
-                    text = if (isSpeakerXtc && active) "XTC 0.18ms" else spatialMode.label.uppercase(),
+                    text = if (isSpeakerXtc && active) "XTC 2ND-ORDER" else spatialMode.label.uppercase(),
                     style = MaterialTheme.typography.labelSmall.copy(
                         fontSize = 9.sp,
                         fontWeight = FontWeight.Bold
@@ -189,7 +184,8 @@ fun SpatialAudioCard(
             }
         }
 
-        // Apple Music Style 3-Way Mode Selector: Off | Atmos Music | Atmos Cinema
+        // Apple Music / Apple TV Authentic 3-Profile Atmos Selector:
+        // Off | Atmos Music (Intimate Vocal + Wide Stage) | Atmos Cinema (Maximum 3D Height & Surround)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -233,133 +229,78 @@ fun SpatialAudioCard(
                             ),
                             color = if (selected) pillAccent else TextSecondary,
                             maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Center
                         )
                         Text(
                             text = mode.subtitle,
-                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.5.sp),
-                            color = if (selected) pillAccent.copy(alpha = 0.85f) else TextMuted,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp, lineHeight = 10.sp),
+                            color = if (selected) pillAccent.copy(alpha = 0.88f) else TextMuted,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Center
                         )
                     }
                 }
             }
         }
 
-        // 7.1.2 Virtual Speaker Array / Speaker XTC Radar & Controls when active (or previewed)
+        // ASAR Soundstage Radar, Vocal Focus Slider & Architecture Telemetry
         AnimatedVisibility(visible = spatialMode != SpatialMode.OFF) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 SpatialSoundstageRadar(
                     spatialMode = spatialMode,
                     isSpeakerXtc = isSpeakerXtc,
                     isBypassed = isBypassed,
-                    spatialDepth = spatialDepth,
-                    heightPresence = heightPresence,
-                    vocalAnchor = vocalAnchor
+                    vocalFocus = vocalFocus
                 )
 
-                // Spatial Depth Slider (0-100%)
-                SpatialPercentSlider(
-                    title = if (isSpeakerXtc) "XTC Soundstage Width" else "Spatial Depth",
-                    percent = (spatialDepth * 100f).roundToInt(),
-                    value = spatialDepth,
-                    accentColor = accentColor,
+                // Vocal Focus Slider (0% - 100%)
+                VocalFocusSliderRow(
+                    vocalFocus = vocalFocus,
+                    accentColor = WarmAmber,
                     enabled = !isBypassed,
-                    onValueChange = onDepthChange,
-                    testTag = "spatial_depth_slider"
+                    onValueChange = onVocalFocusChange
                 )
 
-                // Height Presence Slider (0-100%)
-                SpatialPercentSlider(
-                    title = "Height Presence (2.5kHz+ / Pinna)",
-                    percent = (heightPresence * 100f).roundToInt(),
-                    value = heightPresence,
-                    accentColor = if (isSpeakerXtc) RouteEmerald else AnalyzerCyan,
-                    enabled = !isBypassed,
-                    onValueChange = onHeightChange,
-                    testTag = "height_presence_slider"
-                )
-
-                // Vocal Anchor Toggle Row
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(StudioBackground)
-                        .border(
-                            width = 1.dp,
-                            color = if (active && vocalAnchor) WarmAmber.copy(alpha = 0.55f) else StudioBorder,
-                            shape = RoundedCornerShape(10.dp)
-                        )
-                        .clickable(onClick = onToggleVocalAnchor)
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.CenterFocusStrong,
-                            contentDescription = "Vocal Anchor",
-                            tint = if (active && vocalAnchor) WarmAmber else TextMuted,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Column {
-                            Text(
-                                text = "Vocal Anchor",
-                                style = MaterialTheme.typography.labelLarge.copy(fontSize = 12.sp),
-                                color = TextPrimary
-                            )
-                            Text(
-                                text = "Locks Center (0°) vocals at 100% clarity while surround expands",
-                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
-                                color = TextMuted
-                            )
-                        }
-                    }
-
-                    Switch(
-                        checked = vocalAnchor,
-                        onCheckedChange = { onToggleVocalAnchor() },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = StudioBackground,
-                            checkedTrackColor = WarmAmber,
-                            uncheckedThumbColor = TextSecondary,
-                            uncheckedTrackColor = StudioSurfaceElevated
-                        ),
-                        modifier = Modifier.testTag("vocal_anchor_toggle")
-                    )
-                }
-
-                // Engine Telemetry Chips
+                // ASAR Hardware Telemetry Chips
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     SpatialStageChip(
-                        text = if (isSpeakerXtc) "0.18ms Crosstalk Cancel" else "7.1.2 HRTF Array",
-                        isActive = active,
-                        color = accentColor
-                    )
-                    SpatialStageChip(
-                        text = "<120Hz Mono Bass Lock",
+                        text = "<150Hz & 1–3.5kHz 100% Dry Lock",
                         isActive = active,
                         color = WarmAmber
                     )
-                    SpatialStageChip(
-                        text = "Pinna 7.2kHz -3.5dB • 12kHz +3dB",
-                        isActive = active && !isSpeakerXtc,
-                        color = AnalyzerCyan
-                    )
-                    SpatialStageChip(
-                        text = "25ms Studio IR (3.5kHz LPF • 10%)",
-                        isActive = active,
-                        color = RouteEmerald
-                    )
+                    if (isSpeakerXtc) {
+                        SpatialStageChip(
+                            text = "2nd-Order XTC (-26% @ 0.17ms • +12% @ 0.34ms)",
+                            isActive = active,
+                            color = RouteEmerald
+                        )
+                        SpatialStageChip(
+                            text = "4.5kHz Head-Shadow LPF",
+                            isActive = active,
+                            color = AnalyzerCyan
+                        )
+                    } else {
+                        SpatialStageChip(
+                            text = "7.1.4 HRTF (±110° 0° • ±60° +50° >2.8kHz)",
+                            isActive = active,
+                            color = accentColor
+                        )
+                        SpatialStageChip(
+                            text = "Pinna 6.8kHz -3dB • 11.8kHz +2.5dB",
+                            isActive = active,
+                            color = AnalyzerCyan
+                        )
+                        SpatialStageChip(
+                            text = "18ms Studio IR (3.2kHz LPF • 8%)",
+                            isActive = active,
+                            color = RouteEmerald
+                        )
+                    }
                 }
             }
         }
@@ -371,20 +312,25 @@ private fun SpatialSoundstageRadar(
     spatialMode: SpatialMode,
     isSpeakerXtc: Boolean,
     isBypassed: Boolean,
-    spatialDepth: Float,
-    heightPresence: Float,
-    vocalAnchor: Boolean
+    vocalFocus: Float
 ) {
     val active = spatialMode != SpatialMode.OFF && !isBypassed
+    val targetDepth = spatialMode.defaultDepth
+    val targetHeight = spatialMode.defaultHeight
     val animDepth by animateFloatAsState(
-        targetValue = if (active) spatialDepth else 0f,
+        targetValue = if (active) targetDepth else 0f,
         animationSpec = tween(240),
         label = "radarDepth"
     )
     val animHeight by animateFloatAsState(
-        targetValue = if (active) heightPresence else 0f,
+        targetValue = if (active) targetHeight else 0f,
         animationSpec = tween(240),
         label = "radarHeight"
+    )
+    val animVocal by animateFloatAsState(
+        targetValue = if (active) vocalFocus.coerceIn(0f, 1f) else 0f,
+        animationSpec = tween(200),
+        label = "radarVocal"
     )
 
     val surroundColor = if (isSpeakerXtc) RouteEmerald else AnalyzerCyan
@@ -401,14 +347,14 @@ private fun SpatialSoundstageRadar(
         Canvas(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(104.dp)
+                .height(108.dp)
                 .testTag("spatial_soundstage_radar")
         ) {
             val cx = size.width * 0.5f
-            val cy = size.height * 0.54f
+            val cy = size.height * 0.56f
             val maxR = minOf(size.width * 0.42f, size.height * 0.44f)
 
-            // Concentric studio field rings
+            // Concentric diffuse studio soundfield rings
             drawCircle(
                 color = StudioBorder.copy(alpha = 0.7f),
                 radius = maxR,
@@ -422,7 +368,7 @@ private fun SpatialSoundstageRadar(
                 style = Stroke(width = 1.dp.toPx())
             )
 
-            // Ambient 25ms Studio halo
+            // Ambient 18ms Studio early-reflection / XTC field halo
             if (active) {
                 drawCircle(
                     brush = Brush.radialGradient(
@@ -431,7 +377,7 @@ private fun SpatialSoundstageRadar(
                             Color.Transparent
                         ),
                         center = Offset(cx, cy),
-                        radius = maxR * (0.75f + 0.4f * animDepth)
+                        radius = maxR * (0.78f + 0.36f * animDepth)
                     ),
                     radius = maxR * 1.1f,
                     center = Offset(cx, cy)
@@ -451,31 +397,37 @@ private fun SpatialSoundstageRadar(
                 style = Stroke(width = 1.5.dp.toPx())
             )
 
-            // Center Front (0°, 0°) Vocal + Mono Bass Anchor
-            val centerColor = if (active && vocalAnchor) WarmAmber else TextSecondary
+            // Center Front (0°, 0°) Dry Vocal (1-3.5kHz) & Sub-Bass (<150Hz) Anchor
+            val centerColor = if (active) WarmAmber else TextSecondary
             val cPos = Offset(cx, cy - maxR * 0.78f)
             drawLine(
-                color = centerColor.copy(alpha = 0.45f),
+                color = centerColor.copy(alpha = 0.42f + 0.42f * animVocal),
                 start = Offset(cx, cy),
                 end = cPos,
-                strokeWidth = 1.5.dp.toPx()
+                strokeWidth = (1.5f + 1.2f * animVocal).dp.toPx()
             )
-            drawCircle(color = centerColor.copy(alpha = 0.25f), radius = 10.dp.toPx(), center = cPos)
-            drawCircle(color = centerColor, radius = 4.5.dp.toPx(), center = cPos)
+            drawCircle(
+                color = centerColor.copy(alpha = 0.18f + 0.28f * animVocal),
+                radius = (8f + 6f * animVocal).dp.toPx(),
+                center = cPos
+            )
+            drawCircle(color = centerColor, radius = 4.8.dp.toPx(), center = cPos)
 
             if (isSpeakerXtc) {
-                // Acoustic Crosstalk Cancellation expanding arcs left & right
-                val spread = maxR * (0.48f + 0.55f * animDepth)
+                // 2nd-Order Transaural XTC Primary (-26% @ 0.17ms) + Bounce (+12% @ 0.34ms)
+                val primarySpread = maxR * (0.50f + 0.42f * animDepth)
+                val bounceSpread = maxR * (0.72f + 0.45f * animDepth)
                 listOf(-1f, 1f).forEach { dir ->
-                    val spkPos = Offset(cx + dir * spread, cy - maxR * 0.12f)
+                    val spkPos = Offset(cx + dir * primarySpread, cy - maxR * 0.12f)
+                    val bouncePos = Offset(cx + dir * bounceSpread, cy - maxR * 0.18f)
                     drawLine(
-                        color = RouteEmerald.copy(alpha = 0.5f),
+                        color = RouteEmerald.copy(alpha = 0.55f),
                         start = Offset(cx, cy),
                         end = spkPos,
-                        strokeWidth = 1.5.dp.toPx()
+                        strokeWidth = 1.6.dp.toPx()
                     )
                     drawCircle(
-                        color = RouteEmerald.copy(alpha = 0.22f),
+                        color = RouteEmerald.copy(alpha = 0.24f),
                         radius = 12.dp.toPx(),
                         center = spkPos
                     )
@@ -484,19 +436,25 @@ private fun SpatialSoundstageRadar(
                         radius = 5.dp.toPx(),
                         center = spkPos
                     )
+                    drawCircle(
+                        color = if (active) AnalyzerCyan.copy(alpha = 0.75f) else TextMuted,
+                        radius = 3.5.dp.toPx(),
+                        center = bouncePos,
+                        style = Stroke(width = 1.5.dp.toPx())
+                    )
                 }
             } else {
-                // Ls & Rs (±105° azimuth, 0° elevation)
+                // 7.1.4 Surround L / R (±110° azimuth, 0° elevation)
                 val surrRadius = maxR * (0.68f + 0.30f * animDepth)
-                listOf(-105.0, 105.0).forEach { azDeg ->
+                listOf(-110.0, 110.0).forEach { azDeg ->
                     val rad = Math.toRadians(azDeg)
                     val px = cx + (sin(rad) * surrRadius).toFloat()
                     val py = cy - (cos(rad) * surrRadius).toFloat()
                     drawLine(
-                        color = surroundColor.copy(alpha = 0.38f + 0.3f * animDepth),
+                        color = surroundColor.copy(alpha = 0.38f + 0.32f * animDepth),
                         start = Offset(cx, cy),
                         end = Offset(px, py),
-                        strokeWidth = 1.4.dp.toPx()
+                        strokeWidth = 1.5.dp.toPx()
                     )
                     drawCircle(
                         color = surroundColor.copy(alpha = 0.22f * animDepth),
@@ -505,25 +463,25 @@ private fun SpatialSoundstageRadar(
                     )
                     drawCircle(
                         color = if (active) surroundColor else TextMuted,
-                        radius = 4.5.dp.toPx(),
+                        radius = 4.6.dp.toPx(),
                         center = Offset(px, py)
                     )
                 }
 
-                // Ltf & Rtf (±65° azimuth, +45° elevation)
+                // 7.1.4 Top Height L / R (±60° azimuth, +50° elevation, 2.8kHz HPF)
                 val heightRadius = maxR * (0.50f + 0.28f * animHeight)
-                listOf(-65.0, 65.0).forEach { azDeg ->
+                listOf(-60.0, 60.0).forEach { azDeg ->
                     val rad = Math.toRadians(azDeg)
                     val px = cx + (sin(rad) * heightRadius).toFloat()
                     val py = cy - (cos(rad) * heightRadius).toFloat()
                     drawCircle(
-                        color = heightColor.copy(alpha = 0.20f + 0.25f * animHeight),
+                        color = heightColor.copy(alpha = 0.20f + 0.28f * animHeight),
                         radius = (7f + 7f * animHeight).dp.toPx(),
                         center = Offset(px, py)
                     )
                     drawCircle(
                         color = if (active) heightColor else TextMuted,
-                        radius = 4.dp.toPx(),
+                        radius = 4.2.dp.toPx(),
                         center = Offset(px, py),
                         style = Stroke(width = 2.dp.toPx())
                     )
@@ -533,13 +491,13 @@ private fun SpatialSoundstageRadar(
 
         // Corner legend labels inside radar box
         Text(
-            text = if (isSpeakerXtc) "XTC WIDE" else "C 0° • Ls/Rs ±105°",
+            text = if (isSpeakerXtc) "XTC SIDE CHANNEL" else "C 0° • Ls/Rs ±110°",
             style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.5.sp),
             color = TextMuted,
             modifier = Modifier.align(Alignment.TopStart)
         )
         Text(
-            text = if (isSpeakerXtc) "0.18ms INV" else "Ltf/Rtf ±65° +45°",
+            text = if (isSpeakerXtc) "0.17ms -26% • 0.34ms +12%" else "Ltf/Rtf ±60° +50°",
             style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.5.sp),
             color = if (active) accentTextColor(isSpeakerXtc, spatialMode) else TextMuted,
             modifier = Modifier.align(Alignment.TopEnd)
@@ -554,34 +512,66 @@ private fun accentTextColor(isSpeakerXtc: Boolean, spatialMode: SpatialMode): Co
 }
 
 @Composable
-private fun SpatialPercentSlider(
-    title: String,
-    percent: Int,
-    value: Float,
+private fun VocalFocusSliderRow(
+    vocalFocus: Float,
     accentColor: Color,
     enabled: Boolean,
-    onValueChange: (Float) -> Unit,
-    testTag: String
+    onValueChange: (Float) -> Unit
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    val percent = (vocalFocus.coerceIn(0f, 1f) * 100f).roundToInt()
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(StudioBackground)
+            .border(
+                width = 1.dp,
+                color = if (enabled && percent > 0) accentColor.copy(alpha = 0.45f) else StudioBorder,
+                shape = RoundedCornerShape(12.dp)
+            )
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.labelLarge.copy(fontSize = 12.sp),
-                color = TextPrimary
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.CenterFocusStrong,
+                    contentDescription = "Dry Center Vocal Focus",
+                    tint = if (enabled) accentColor else TextMuted,
+                    modifier = Modifier.size(16.dp)
+                )
+                Column {
+                    Text(
+                        text = "Vocal Focus",
+                        style = MaterialTheme.typography.labelLarge.copy(fontSize = 12.sp),
+                        color = TextPrimary
+                    )
+                    Text(
+                        text = "Locks 1–3.5kHz center vocals & <150Hz bass 100% dry",
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                        color = TextMuted
+                    )
+                }
+            }
             Text(
                 text = "$percent%",
-                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                style = MaterialTheme.typography.labelLarge.copy(
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                ),
                 color = if (enabled) accentColor else TextMuted
             )
         }
         Slider(
-            value = value.coerceIn(0f, 1f),
+            value = vocalFocus.coerceIn(0f, 1f),
             onValueChange = onValueChange,
             valueRange = 0f..1f,
             colors = SliderDefaults.colors(
@@ -591,8 +581,8 @@ private fun SpatialPercentSlider(
             ),
             modifier = Modifier
                 .fillMaxWidth()
-                .height(30.dp)
-                .testTag(testTag)
+                .minimumInteractiveComponentSize()
+                .testTag("vocal_focus_slider")
         )
     }
 }

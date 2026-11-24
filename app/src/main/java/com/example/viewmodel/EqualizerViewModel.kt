@@ -16,7 +16,6 @@ import com.example.model.CustomAudioSetupUiState
 import com.example.model.EqPreset
 import com.example.model.EqPresetsCatalog
 import com.example.model.HearingCheckUiState
-import com.example.model.ListeningMode
 import com.example.model.NightIntensity
 import com.example.model.OutputEqProfile
 import com.example.model.OutputTarget
@@ -493,6 +492,22 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
         commitProfile(updated)
     }
 
+    fun updateVocalFocus(focus: Float) {
+        val current = currentProfile()
+        val clamped = ((focus * 100f).roundToInt() / 100f).coerceIn(0f, 1f)
+        val updated = current.copy(
+            vocalFocus = clamped,
+            vocalAnchor = clamped > 0.05f,
+            spatialMode = if (current.spatialMode == SpatialMode.OFF && clamped > 0f) {
+                SpatialMode.ATMOS_MUSIC
+            } else {
+                current.spatialMode
+            },
+            isBypassed = if (current.spatialMode == SpatialMode.OFF && clamped > 0f) false else current.isBypassed
+        )
+        commitProfile(updated)
+    }
+
     fun toggleSoundCheck() {
         val current = currentProfile()
         val updated = current.copy(soundCheckEnabled = !current.soundCheckEnabled)
@@ -728,16 +743,6 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
         commitProfile(updated)
     }
 
-    fun setListeningMode(mode: ListeningMode) {
-        val current = currentProfile()
-        if (current.target != OutputTarget.HEADPHONES && current.target != OutputTarget.BLUETOOTH) return
-        val updated = current.copy(
-            listeningMode = mode,
-            isBypassed = if (mode != ListeningMode.OFF && current.isBypassed) false else current.isBypassed
-        )
-        commitProfile(updated)
-    }
-
     fun openCustomAudioSetup() {
         audioEngine.customAudioSetupEngine.open(currentProfile().accommodationsSoftIntensity)
     }
@@ -876,6 +881,7 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             spatialDepth = profile.spatialDepth,
             heightPresence = profile.heightPresence,
             vocalAnchor = profile.vocalAnchor,
+            vocalFocus = profile.vocalFocus,
             soundCheckEnabled = profile.soundCheckEnabled,
             conversationAwarenessEnabled = profile.conversationAwarenessEnabled,
             bgSoundPreset = profile.backgroundSoundPreset,
@@ -904,8 +910,7 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             speakerPhaseAlignmentEnabled = profile.speakerPhaseAlignmentEnabled,
             oversampledEqEnabled = profile.oversampledEqEnabled,
             harmonicSheenPercent = profile.harmonicSheenPercent,
-            noiseFloorGateEnabled = profile.noiseFloorGateEnabled,
-            listeningMode = profile.listeningMode
+            noiseFloorGateEnabled = profile.noiseFloorGateEnabled
         )
     }
 

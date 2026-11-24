@@ -9,7 +9,6 @@ import com.example.model.AudioMixMode
 import com.example.model.BackgroundSoundPreset
 import com.example.model.EqPresetsCatalog
 import com.example.model.FlagshipSpeakerSpecs
-import com.example.model.ListeningMode
 import com.example.model.NightIntensity
 import com.example.model.OutputTarget
 import com.example.model.PhoneOrientationMode
@@ -1146,7 +1145,6 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
     private val voiceIsolationProcessor = VoiceIsolationProcessor(sampleRate)
     private val adaptiveMultibandBalancer = AdaptiveMultibandToneBalancer(sampleRate)
     private val speakerPhaseAlignmentFilter = SpeakerPhaseAlignmentFilter(sampleRate)
-    private val listeningModeProcessor = ListeningModeProcessor(sampleRate)
     private val noiseFloorGate = ZeroNoiseFloorGateAndDitherer(sampleRate)
 
     @Volatile
@@ -1260,12 +1258,6 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
     val isNoiseFloorGateMuted: Boolean
         get() = !bypassed && !abCompareHeld && noiseFloorGate.isAutoMuted
 
-    val activeListeningMode: ListeningMode
-        get() = if (bypassed || abCompareHeld) ListeningMode.OFF else listeningModeProcessor.activeMode
-
-    val latestListeningModeIsolationDb: Float
-        get() = if (bypassed || abCompareHeld) 0f else listeningModeProcessor.latestIsolationDb
-
     fun quantize16BitPcm(sample: Double, isLeft: Boolean): Short {
         return noiseFloorGate.quantize16BitPcm(sample, isLeft)
     }
@@ -1284,6 +1276,7 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             spatialDepth = SpatialMode.ATMOS_MUSIC.defaultDepth,
             heightPresence = SpatialMode.ATMOS_MUSIC.defaultHeight,
             vocalAnchor = true,
+            vocalFocus = 0.70f,
             soundCheckEnabled = false,
             voiceIsolationEnabled = false,
             abCompareHeld = false,
@@ -1317,6 +1310,7 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         spatialDepth: Float = SpatialMode.ATMOS_MUSIC.defaultDepth,
         heightPresence: Float = SpatialMode.ATMOS_MUSIC.defaultHeight,
         vocalAnchor: Boolean = true,
+        vocalFocus: Float = 0.70f,
         soundCheckEnabled: Boolean = false,
         voiceIsolationEnabled: Boolean = false,
         abCompareHeld: Boolean = false,
@@ -1343,8 +1337,7 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         speakerPhaseAlignmentEnabled: Boolean = false,
         oversampledEqEnabled: Boolean = false,
         harmonicSheenPercent: Float = 0f,
-        noiseFloorGateEnabled: Boolean = false,
-        listeningMode: ListeningMode = ListeningMode.OFF
+        noiseFloorGateEnabled: Boolean = false
     ) {
         bypassed = isBypassed
         this.abCompareHeld = abCompareHeld
@@ -1430,7 +1423,8 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             spatialDepth = spatialDepth,
             heightPresence = heightPresence,
             vocalAnchor = vocalAnchor,
-            pinnaAirGainDb = trebleBudget.spatialPinnaShelfDb.toDouble()
+            pinnaAirGainDb = trebleBudget.spatialPinnaShelfDb.toDouble(),
+            vocalFocus = vocalFocus
         )
         loudnessMaximizerChain.configure(
             isEnabled = loudnessMaximizerEnabled && effectiveProcessing,
@@ -1449,11 +1443,6 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             isEnabled = speakerPhaseAlignmentEnabled && effectiveProcessing,
             outputTarget = outputTarget,
             speakerDspEnabled = speakerDspEnabled
-        )
-        listeningModeProcessor.configure(
-            isEnabled = effectiveProcessing,
-            mode = listeningMode,
-            outputTarget = outputTarget
         )
 
         val activeBandGains = if (activeTenBand) gainsDb else List(10) { 0f }
@@ -1531,8 +1520,7 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         val (compL, compR) = lateNightCompressor.processStereoSample(isoL, isoR)
         val (spatL, spatR) = spatialAudioEngine.processStereoSample(compL, compR)
         val (spkL, spkR) = speakerDspChain.processStereoSample(spatL, spatR)
-        val (listenL, listenR) = listeningModeProcessor.processStereoSample(spkL, spkR)
-        val (phaseL, phaseR) = speakerPhaseAlignmentFilter.processStereoSample(listenL, listenR)
+        val (phaseL, phaseR) = speakerPhaseAlignmentFilter.processStereoSample(spkL, spkR)
         val (maxL, maxR) = loudnessMaximizerChain.processStereoSample(phaseL, phaseR)
         val (mbL, mbR) = adaptiveMultibandBalancer.processStereoSample(maxL, maxR)
         val (silL, silR) = siliconDspCore.processStereoSample(mbL, mbR)
@@ -1653,12 +1641,6 @@ class TestAudioSynthesizer {
     val isNoiseFloorGateMuted: Boolean
         get() = filterBank.isNoiseFloorGateMuted
 
-    val activeListeningMode: ListeningMode
-        get() = filterBank.activeListeningMode
-
-    val latestListeningModeIsolationDb: Float
-        get() = filterBank.latestListeningModeIsolationDb
-
     fun setConversationDuckGain(duckGainLinear: Float) {
         filterBank.conversationDuckLinear = duckGainLinear.toDouble()
     }
@@ -1679,6 +1661,7 @@ class TestAudioSynthesizer {
         spatialDepth: Float,
         heightPresence: Float,
         vocalAnchor: Boolean,
+        vocalFocus: Float = 0.70f,
         soundCheckEnabled: Boolean = false,
         voiceIsolationEnabled: Boolean = false,
         abCompareHeld: Boolean = false,
@@ -1706,8 +1689,7 @@ class TestAudioSynthesizer {
         speakerPhaseAlignmentEnabled: Boolean = false,
         oversampledEqEnabled: Boolean = false,
         harmonicSheenPercent: Float = 0f,
-        noiseFloorGateEnabled: Boolean = false,
-        listeningMode: ListeningMode = ListeningMode.OFF
+        noiseFloorGateEnabled: Boolean = false
     ) {
         backgroundPreset = bgSoundPreset
         backgroundVolume = bgSoundVolume
@@ -1727,6 +1709,7 @@ class TestAudioSynthesizer {
             spatialDepth = spatialDepth,
             heightPresence = heightPresence,
             vocalAnchor = vocalAnchor,
+            vocalFocus = vocalFocus,
             soundCheckEnabled = soundCheckEnabled,
             voiceIsolationEnabled = voiceIsolationEnabled,
             abCompareHeld = abCompareHeld,
@@ -1753,8 +1736,7 @@ class TestAudioSynthesizer {
             speakerPhaseAlignmentEnabled = speakerPhaseAlignmentEnabled,
             oversampledEqEnabled = oversampledEqEnabled,
             harmonicSheenPercent = harmonicSheenPercent,
-            noiseFloorGateEnabled = noiseFloorGateEnabled,
-            listeningMode = listeningMode
+            noiseFloorGateEnabled = noiseFloorGateEnabled
         )
     }
 

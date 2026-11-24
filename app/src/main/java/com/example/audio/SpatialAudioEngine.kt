@@ -1,5 +1,6 @@
 package com.example.audio
 
+import com.example.model.AtmosAsarSpecs
 import com.example.model.OutputTarget
 import com.example.model.SpatialMode
 import kotlin.math.PI
@@ -12,15 +13,15 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * True 3D HRTF Virtual Speaker Panner modeling Woodworth spherical-head Interaural Time Difference (ITD),
- * Brown-Duda frequency-dependent acoustic head-shadowing ILD filters, and elevation pinna tilt.
+ * True 3D Diffuse-Field HRTF Virtual Speaker Panner modeling Woodworth spherical-head
+ * Interaural Time Difference (ITD) and Brown-Duda frequency-dependent acoustic head-shadowing ILD filters.
  */
 class HrtfSpeakerPanner(
     private val sampleRate: Int,
     azimuthDeg: Float,
     elevationDeg: Float
 ) {
-    private val bufferSize = 128 // >2.8ms at 44.1kHz (max human ITD ~0.68ms)
+    private val bufferSize = 128 // >2.6ms at 48kHz (max human ITD ~0.68ms)
     private val mask = bufferSize - 1
     private val delayLine = DoubleArray(bufferSize)
     private var writeIndex = 0
@@ -64,7 +65,7 @@ class HrtfSpeakerPanner(
             rightDelaySamples = itdSamples
         }
 
-        // Spherical-head ILD + elevation compensation
+        // Spherical-head ILD + elevation diffuse-field compensation
         val lateralWeight = sin(azRad) * cos(elRad) // -1 (far left) .. +1 (far right)
         val ipsiGain = 1.04
         val contraGain = (1.0 - 0.38 * abs(lateralWeight)).coerceIn(0.55, 1.0)
@@ -76,8 +77,6 @@ class HrtfSpeakerPanner(
             rightGain = contraGain
         }
 
-        // Brown-Duda contralateral head shadow 1-pole filter:
-        // H(z) = (b0 + b1*z^-1) / (1 + a1*z^-1)
         val lCoeffs = computeShadowCoeffs(angleIncidence = -lateralWeight)
         leftShadowB0 = lCoeffs[0]
         leftShadowB1 = lCoeffs[1]
@@ -90,9 +89,8 @@ class HrtfSpeakerPanner(
     }
 
     private fun computeShadowCoeffs(angleIncidence: Double): DoubleArray {
-        // angleIncidence: +1.0 = ipsilateral ear, -1.0 = contralateral shadowed ear
         val alphaMin = 0.14
-        val thetaNorm = ((1.0 - angleIncidence) * 0.5).coerceIn(0.0, 1.0) // 0 ipsi, 1 contra
+        val thetaNorm = ((1.0 - angleIncidence) * 0.5).coerceIn(0.0, 1.0)
         val alpha = 1.0 + alphaMin + (1.0 - alphaMin) * cos(thetaNorm * PI)
         val w0 = 2.0 * PI * 3200.0 / sampleRate
         val norm = 1.0 + 1.0 / w0
@@ -131,13 +129,14 @@ class HrtfSpeakerPanner(
 }
 
 /**
- * Procedural 25ms Zero-Echo Apple Studio Micro-Ambience Impulse Response Convolver.
- * Generates a 25ms exponentially decaying stereo impulse response damped via a 3.5kHz LPF
- * and renders at 10% wet mix for non-echoic studio spaciousness.
+ * Procedural 18ms Studio Early-Reflection Impulse Convolver:
+ * - Generates an exact 18ms exponentially decaying stereo early-reflection impulse
+ * - Low-pass damped above 3.2kHz and high-pass guarded above 150Hz
+ * - Mixed at 8% wet on the diffuse spatial component ONLY (never on dry <150Hz bass or 1–3.5kHz center vocals)
  */
-class AppleStudioMicroAmbienceConvolver(private val sampleRate: Int = 44100) {
+class AppleStudioMicroAmbienceConvolver(private val sampleRate: Int = 48000) {
 
-    val irLengthSamples: Int = (sampleRate * 0.025).roundToInt().coerceAtLeast(32)
+    val irLengthSamples: Int = (sampleRate * AtmosAsarSpecs.STUDIO_IR_SEC).roundToInt().coerceAtLeast(32)
     val irSamplesL: FloatArray
     val irSamplesR: FloatArray
 
@@ -152,22 +151,26 @@ class AppleStudioMicroAmbienceConvolver(private val sampleRate: Int = 44100) {
     private val histR = DoubleArray(histSize)
     private var writeIdx = 0
 
-    private val dampLpfL = StereoBiquad().apply { setLowPass(sampleRate, 3500.0, 0.7071) }
-    private val dampLpfR = StereoBiquad().apply { setLowPass(sampleRate, 3500.0, 0.7071) }
-    private val subBassCutL = StereoBiquad().apply { setHighPass(sampleRate, 120.0, 0.7071) }
-    private val subBassCutR = StereoBiquad().apply { setHighPass(sampleRate, 120.0, 0.7071) }
+    private val dampLpfL = StereoBiquad().apply { setLowPass(sampleRate, AtmosAsarSpecs.STUDIO_IR_LPF_HZ, 0.7071) }
+    private val dampLpfR = StereoBiquad().apply { setLowPass(sampleRate, AtmosAsarSpecs.STUDIO_IR_LPF_HZ, 0.7071) }
+    private val subBassCutL = StereoBiquad().apply { setHighPass(sampleRate, AtmosAsarSpecs.DRY_SUB_BASS_CUTOFF_HZ, 0.7071) }
+    private val subBassCutR = StereoBiquad().apply { setHighPass(sampleRate, AtmosAsarSpecs.DRY_SUB_BASS_CUTOFF_HZ, 0.7071) }
 
     init {
-        val (rawL, rawR, tOffL, tGainL, tOffR, tGainR) = buildMicroAmbienceIr(sampleRate, irLengthSamples)
-        irSamplesL = rawL
-        irSamplesR = rawR
-        tapOffsetsL = tOffL
-        tapGainsL = tGainL
-        tapOffsetsR = tOffR
-        tapGainsR = tGainR
+        val bundle = buildEarlyReflectionIr(sampleRate, irLengthSamples)
+        irSamplesL = bundle.irL
+        irSamplesR = bundle.irR
+        tapOffsetsL = bundle.offL
+        tapGainsL = bundle.gainL
+        tapOffsetsR = bundle.offR
+        tapGainsR = bundle.gainR
     }
 
-    fun processStereo(inL: Double, inR: Double, wetMix: Double = 0.10): Pair<Double, Double> {
+    fun processStereo(
+        inL: Double,
+        inR: Double,
+        wetMix: Double = AtmosAsarSpecs.STUDIO_IR_WET_MIX
+    ): Pair<Double, Double> {
         histL[writeIdx] = inL
         histR[writeIdx] = inR
 
@@ -185,14 +188,13 @@ class AppleStudioMicroAmbienceConvolver(private val sampleRate: Int = 44100) {
 
         writeIdx = (writeIdx + 1) and histMask
 
-        // Smooth 3.5kHz damping & 120Hz mono-bass protection on wet studio ambience return
+        // Damped above 3.2kHz and <150Hz sub-bass clean
         val (dampedL, _) = dampLpfL.processStereo(convL, 0.0)
         val (_, dampedR) = dampLpfR.processStereo(0.0, convR)
         val (cleanWetL, _) = subBassCutL.processStereo(dampedL, 0.0)
         val (_, cleanWetR) = subBassCutR.processStereo(0.0, dampedR)
 
-        val dry = 1.0 - (wetMix * 0.25)
-        return (inL * dry + cleanWetL * wetMix) to (inR * dry + cleanWetR * wetMix)
+        return (inL + cleanWetL * wetMix) to (inR + cleanWetR * wetMix)
     }
 
     private data class IrBundle(
@@ -206,26 +208,26 @@ class AppleStudioMicroAmbienceConvolver(private val sampleRate: Int = 44100) {
 
     companion object {
         /**
-         * Builds a strictly 25ms stereo impulse response with rapid exponential decay (tau = 4.9ms)
-         * and 3.5kHz low-pass damping for clean zero-echo Apple Studio Micro-Ambience.
+         * Builds a strictly 18ms stereo early-reflection impulse response with rapid decay
+         * and 3.2kHz low-pass damping for natural studio room depth with zero bathroom reverb.
          */
-        fun generateStudioMicroAmbienceIr(sampleRate: Int = 44100): Pair<FloatArray, FloatArray> {
-            val len = (sampleRate * 0.025).roundToInt().coerceAtLeast(32)
-            val bundle = buildMicroAmbienceIr(sampleRate, len)
+        fun generateStudioMicroAmbienceIr(sampleRate: Int = 48000): Pair<FloatArray, FloatArray> {
+            val len = (sampleRate * AtmosAsarSpecs.STUDIO_IR_SEC).roundToInt().coerceAtLeast(32)
+            val bundle = buildEarlyReflectionIr(sampleRate, len)
             return bundle.irL to bundle.irR
         }
 
-        private fun buildMicroAmbienceIr(sampleRate: Int, lengthSamples: Int): IrBundle {
+        private fun buildEarlyReflectionIr(sampleRate: Int, lengthSamples: Int): IrBundle {
             val rawL = DoubleArray(lengthSamples)
             val rawR = DoubleArray(lengthSamples)
 
-            val tapCount = 72
+            val tapCount = 64
             val offsetsL = IntArray(tapCount)
             val offsetsR = IntArray(tapCount)
             val gainsL = DoubleArray(tapCount)
             val gainsR = DoubleArray(tapCount)
 
-            val tauSec = 0.0049 // Rapid decay: -44dB at 25ms -> zero audible echo
+            val tauSec = 0.0036 // Decays smoothly to ~-43 dB by 18ms -> zero bathroom reverb
             var seed = 0x5A17C0DE
 
             fun nextRandSigned(): Double {
@@ -234,16 +236,16 @@ class AppleStudioMicroAmbienceConvolver(private val sampleRate: Int = 44100) {
                 return u * 2.0 - 1.0
             }
 
-            // Velvet-noise distributed early micro-reflections spanning 0.5ms .. 25ms
-            val minStart = (sampleRate * 0.0005).toInt().coerceAtLeast(1)
+            // Velvet-noise distributed studio early reflections spanning 0.4ms .. 18ms
+            val minStart = (sampleRate * 0.0004).toInt().coerceAtLeast(1)
             val span = (lengthSamples - 1 - minStart).coerceAtLeast(tapCount)
             var energySum = 0.0
 
             for (i in 0 until tapCount) {
                 val frac = i.toDouble() / tapCount
-                val baseIdx = minStart + (frac.pow(1.15) * span).toInt()
-                val jitterL = (abs(nextRandSigned()) * 4.0).toInt()
-                val jitterR = (abs(nextRandSigned()) * 4.0).toInt()
+                val baseIdx = minStart + (frac.pow(1.12) * span).toInt()
+                val jitterL = (abs(nextRandSigned()) * 3.0).toInt()
+                val jitterR = (abs(nextRandSigned()) * 3.0).toInt()
 
                 val idxL = (baseIdx + jitterL).coerceIn(1, lengthSamples - 1)
                 val idxR = (baseIdx + jitterR + 2).coerceIn(1, lengthSamples - 1)
@@ -272,8 +274,8 @@ class AppleStudioMicroAmbienceConvolver(private val sampleRate: Int = 44100) {
                 gainsR[i] *= norm
             }
 
-            // Bake 3.5kHz low-pass damping into the exported FloatArray IR as well
-            val lpf = StereoBiquad().apply { setLowPass(sampleRate, 3500.0, 0.7071) }
+            // Bake 3.2kHz low-pass damping into the exported FloatArray IR as well
+            val lpf = StereoBiquad().apply { setLowPass(sampleRate, AtmosAsarSpecs.STUDIO_IR_LPF_HZ, 0.7071) }
             val irOutL = FloatArray(lengthSamples)
             val irOutR = FloatArray(lengthSamples)
             for (n in 0 until lengthSamples) {
@@ -288,23 +290,30 @@ class AppleStudioMicroAmbienceConvolver(private val sampleRate: Int = 44100) {
 }
 
 /**
- * Acoustic Crosstalk Cancellation (XTC) for Phone Speaker Mode:
- * Inverts and delays cross-channel audio by 0.18ms (~8 samples @ 44.1kHz) so stereo content
- * projects wide outside tightly spaced physical micro-drivers while preserving mono bass & vocal center.
+ * iPhone 18 Pro Max Built-In Speaker 2nd-Order Transaural Acoustic Crosstalk Cancellation (XTC):
+ * Operates strictly on the Side channel (>150Hz):
+ * - Primary tap: -26% phase-inverted crossfeed delayed by 0.17ms, low-passed at 4.5kHz (head-shadowing)
+ * - Secondary tap: +12% secondary bounce delayed by 0.34ms
+ * Keeps center vocals (1–3.5kHz) and sub-bass (<150Hz) 100% dry with zero hollow phase cancellation.
  */
-class AcousticCrosstalkCanceller(private val sampleRate: Int = 44100) {
-    private val delaySamples: Double = 0.00018 * sampleRate // Strictly 0.18ms
-    private val bufSize = 64
+class AcousticCrosstalkCanceller(private val sampleRate: Int = 48000) {
+    private val primaryDelaySamples: Double = AtmosAsarSpecs.XTC_PRIMARY_DELAY_SEC * sampleRate
+    private val secondaryDelaySamples: Double = AtmosAsarSpecs.XTC_SECONDARY_DELAY_SEC * sampleRate
+
+    private val bufSize = 128
     private val mask = bufSize - 1
     private val ringL = DoubleArray(bufSize)
     private val ringR = DoubleArray(bufSize)
+    private val shadowRingL = DoubleArray(bufSize)
+    private val shadowRingR = DoubleArray(bufSize)
     private var writeIdx = 0
 
-    // Keep cancellation band-limited (above 160Hz so low bass never phase-cancels)
-    private val xtcHighPass = StereoBiquad().apply { setHighPass(sampleRate, 160.0, 0.7071) }
-    private val xtcLowPass = StereoBiquad().apply { setLowPass(sampleRate, 10500.0, 0.7071) }
+    // 4.5kHz physical head-shadowing low-pass on primary crossfeed path
+    private val headShadowLpf = StereoBiquad().apply {
+        setLowPass(sampleRate, AtmosAsarSpecs.XTC_PRIMARY_LPF_HZ, 0.7071)
+    }
 
-    private fun readDelayed(ring: DoubleArray): Double {
+    private fun readDelayed(ring: DoubleArray, delaySamples: Double): Double {
         val intD = delaySamples.toInt()
         val frac = delaySamples - intD
         val idx0 = (writeIdx - intD) and mask
@@ -312,84 +321,102 @@ class AcousticCrosstalkCanceller(private val sampleRate: Int = 44100) {
         return ring[idx0] * (1.0 - frac) + ring[idx1] * frac
     }
 
-    fun processStereo(
-        inL: Double,
-        inR: Double,
-        spatialDepth: Double,
-        vocalAnchor: Boolean
+    fun processSideChannel(
+        sideAbove150: Double,
+        intensityScale: Double = 1.0
     ): Pair<Double, Double> {
-        val (hpL, hpR) = xtcHighPass.processStereo(inL, inR)
-        val (bandL, bandR) = xtcLowPass.processStereo(hpL, hpR)
+        val sL = sideAbove150 * intensityScale
+        val sR = -sideAbove150 * intensityScale
 
-        ringL[writeIdx] = bandL
-        ringR[writeIdx] = bandR
+        val (shadowedL, shadowedR) = headShadowLpf.processStereo(sL, sR)
 
-        val delayedBandL = readDelayed(ringL)
-        val delayedBandR = readDelayed(ringR)
+        ringL[writeIdx] = sL
+        ringR[writeIdx] = sR
+        shadowRingL[writeIdx] = shadowedL
+        shadowRingR[writeIdx] = shadowedR
+
+        // 1st-order cancellation: -26% opposite ear delayed 0.17ms (low-passed @ 4.5kHz)
+        val cross1FromR = readDelayed(shadowRingR, primaryDelaySamples)
+        val cross1FromL = readDelayed(shadowRingL, primaryDelaySamples)
+
+        // 2nd-order bounce: +12% delayed 0.34ms
+        val bounce2L = readDelayed(ringL, secondaryDelaySamples)
+        val bounce2R = readDelayed(ringR, secondaryDelaySamples)
+
         writeIdx = (writeIdx + 1) and mask
 
-        // Crosstalk cancellation gain scaled by spatialDepth
-        val xtcGain = (0.22 + 0.36 * spatialDepth).coerceIn(0.0, 0.62)
+        val outSideL = sL -
+            AtmosAsarSpecs.XTC_PRIMARY_GAIN * cross1FromR +
+            AtmosAsarSpecs.XTC_SECONDARY_GAIN * bounce2L
+        val outSideR = sR -
+            AtmosAsarSpecs.XTC_PRIMARY_GAIN * cross1FromL +
+            AtmosAsarSpecs.XTC_SECONDARY_GAIN * bounce2R
 
-        // When Vocal Anchor is ON, lock Mid (center vocal) energy while full XTC widens stereo Side
-        val mid = 0.5 * (inL + inR)
-        val side = 0.5 * (inL - inR)
-
-        val cancL = inL - xtcGain * delayedBandR
-        val cancR = inR - xtcGain * delayedBandL
-
-        val outL: Double
-        val outR: Double
-        if (vocalAnchor) {
-            val cancMid = 0.5 * (cancL + cancR)
-            val cancSide = 0.5 * (cancL - cancR)
-            // Restore 100% locked Center vocal clarity + boosted wide Side projection
-            val lockedMid = mid * 0.72 + cancMid * 0.28
-            outL = lockedMid + cancSide * 1.15
-            outR = lockedMid - cancSide * 1.15
-        } else {
-            outL = cancL + side * 0.08
-            outR = cancR - side * 0.08
-        }
-
-        // Slight normalization to maintain neutral loudness
-        return (outL * 0.96) to (outR * 0.96)
+        return outSideL to outSideR
     }
 }
 
 /**
- * Apple-Style Spatial Audio / Dolby Atmos Binaural & Speaker XTC Engine:
- * 1. 7.1.2 Virtual Speaker Array (Center 0°/0° with <120Hz mono bass, Ls/Rs ±105°/0°, Ltf/Rtf ±65°/+45° @ 2.5kHz HPF)
- * 2. Pinna Height Psychoacoustic Curve (7.2kHz narrow notch -3.5dB + 12kHz high-shelf +3.0dB)
- * 3. Apple Studio Micro-Ambience (25ms Zero-Echo IR, 3.5kHz damping, 10% wet mix)
- * 4. Interactive Modes: Off | Atmos Music | Atmos Cinema, Depth, Height Presence, Vocal Anchor
- * 5. Automatic Phone Speaker Adaptation -> 0.18ms Acoustic Crosstalk Cancellation
+ * Apple Spatial Audio Renderer (ASAR) for iPhone 18 Pro Max (Speakers & Headphones):
+ * 1. Dry Center Vocal & Sub-Bass Lock (Zero Hollow Echo):
+ *    - Extracts Mid (L+R)*0.5 and keeps <150Hz sub-bass and 1–3.5kHz primary vocal formants 100% dry
+ *      (bypassing all spatial reverb and delay taps), modulated by Vocal Focus (0%–100%).
+ * 2. Built-In Speaker Atmos (2nd-Order Transaural XTC):
+ *    - Applies -26% @ 0.17ms (4.5kHz LPF) + +12% @ 0.34ms on Side (>150Hz) to project wide surround cues.
+ * 3. Headphone 7.1.4 Binaural Elevation (Diffuse-Field HRTF):
+ *    - Routes Side (>150Hz) into Surround L/R (±110°, 0°) + Top Height L/R (±60°, +50° @ 2.8kHz HPF)
+ *      with authentic Pinna elevation filter (6.8kHz notch -3.0dB + 11.8kHz air lift +2.5dB, gain-staged).
+ *    - Convolves ONLY the diffuse spatial component with a procedural 18ms Studio Early-Reflection IR
+ *      (3.2kHz LPF, 8% wet mix).
  */
-class SpatialAudioEngine(sampleRate: Int = 44100) {
+class SpatialAudioEngine(sampleRate: Int = 48000) {
 
-    // 7.1.2 Virtual Speaker HRTF Panners
-    private val centerFront = HrtfSpeakerPanner(sampleRate, azimuthDeg = 0f, elevationDeg = 0f)
-    private val leftSurround = HrtfSpeakerPanner(sampleRate, azimuthDeg = -105f, elevationDeg = 0f)
-    private val rightSurround = HrtfSpeakerPanner(sampleRate, azimuthDeg = 105f, elevationDeg = 0f)
-    private val leftTopHeight = HrtfSpeakerPanner(sampleRate, azimuthDeg = -65f, elevationDeg = 45f)
-    private val rightTopHeight = HrtfSpeakerPanner(sampleRate, azimuthDeg = 65f, elevationDeg = 45f)
+    // Headphone 7.1.4 Virtual Speaker Diffuse-Field HRTF Panners
+    private val leftSurround = HrtfSpeakerPanner(
+        sampleRate = sampleRate,
+        azimuthDeg = -AtmosAsarSpecs.SURROUND_AZIMUTH_DEG,
+        elevationDeg = AtmosAsarSpecs.SURROUND_ELEVATION_DEG
+    )
+    private val rightSurround = HrtfSpeakerPanner(
+        sampleRate = sampleRate,
+        azimuthDeg = AtmosAsarSpecs.SURROUND_AZIMUTH_DEG,
+        elevationDeg = AtmosAsarSpecs.SURROUND_ELEVATION_DEG
+    )
+    private val leftTopHeight = HrtfSpeakerPanner(
+        sampleRate = sampleRate,
+        azimuthDeg = -AtmosAsarSpecs.HEIGHT_AZIMUTH_DEG,
+        elevationDeg = AtmosAsarSpecs.HEIGHT_ELEVATION_DEG
+    )
+    private val rightTopHeight = HrtfSpeakerPanner(
+        sampleRate = sampleRate,
+        azimuthDeg = AtmosAsarSpecs.HEIGHT_AZIMUTH_DEG,
+        elevationDeg = AtmosAsarSpecs.HEIGHT_ELEVATION_DEG
+    )
 
-    // <120Hz strict mono bass lock filters
-    private val midLowPass120 = StereoBiquad().apply { setLowPass(sampleRate, 120.0, 0.7071) }
-    private val midHighPass120 = StereoBiquad().apply { setHighPass(sampleRate, 120.0, 0.7071) }
-    private val sideHighPass120 = StereoBiquad().apply { setHighPass(sampleRate, 120.0, 0.7071) }
+    // <150Hz strict dry mono sub-bass protection on Side channel (LR4 24dB/oct @ 150Hz)
+    private val sideHpf150A = StereoBiquad().apply { setHighPass(sampleRate, AtmosAsarSpecs.DRY_SUB_BASS_CUTOFF_HZ, 0.7071) }
+    private val sideHpf150B = StereoBiquad().apply { setHighPass(sampleRate, AtmosAsarSpecs.DRY_SUB_BASS_CUTOFF_HZ, 0.7071) }
 
-    // Top Height channels high-passed at 2.5kHz so air/sparkles float overhead
-    private val heightHighPass2500 = StereoBiquad().apply { setHighPass(sampleRate, 2500.0, 0.7071) }
+    // 1kHz–3.5kHz dry center vocal formant focus peaking filter (geometric center 1870Hz, Q=0.75, 100% dry)
+    private val dryVocalFocusEq = StereoBiquad().apply {
+        setPeaking(sampleRate, 1870.0, 0.75, 1.45)
+    }
 
-    // Pinna Height Psychoacoustic Curve on Height/Surround bus: 7.2kHz notch -3.5dB + 12kHz shelf +3.0dB
-    private val pinnaNotch7200 = StereoBiquad().apply { setPeaking(sampleRate, 7200.0, 5.5, -3.5) }
-    private val pinnaShelf12000 = StereoBiquad().apply { setHighShelf(sampleRate, 12000.0, 0.7071, 3.0) }
+    // Top Height channels high-passed at 2.8kHz
+    private val heightHighPass2800 = StereoBiquad().apply { setHighPass(sampleRate, AtmosAsarSpecs.HEIGHT_HPF_HZ, 0.7071) }
 
-    // Apple Studio Micro-Ambience (25ms Zero-Echo IR, 3.5kHz LPF, 10% wet mix)
+    // Pinna Elevation Filter on Top Height channels: 6.8kHz notch -3.0dB + 11.8kHz air lift +2.5dB (budget-capped)
+    private val pinnaNotch6800 = StereoBiquad().apply {
+        setPeaking(sampleRate, AtmosAsarSpecs.PINNA_NOTCH_HZ, AtmosAsarSpecs.PINNA_NOTCH_Q, AtmosAsarSpecs.PINNA_NOTCH_DB)
+    }
+    private val pinnaAirShelf11800 = StereoBiquad().apply {
+        setHighShelf(sampleRate, AtmosAsarSpecs.PINNA_AIR_HZ, 0.7071, AtmosAsarSpecs.PINNA_AIR_DB.toDouble())
+    }
+
+    // Procedural 18ms Studio Early-Reflection Impulse (3.2kHz LPF damped, 8% wet mix on diffuse component only)
     val studioConvolver = AppleStudioMicroAmbienceConvolver(sampleRate)
 
-    // Phone Speaker Adaptation: 0.18ms Acoustic Crosstalk Cancellation
+    // iPhone 18 Pro Max Built-In Speaker 2nd-Order Transaural XTC
     private val speakerCrosstalkCanceller = AcousticCrosstalkCanceller(sampleRate)
 
     @Volatile
@@ -412,22 +439,36 @@ class SpatialAudioEngine(sampleRate: Int = 44100) {
     var vocalAnchor: Boolean = true
         private set
 
+    @Volatile
+    var vocalFocus: Float = 0.70f
+        private set
+
     private val sampleRateRef: Int = sampleRate
 
     fun configure(
         mode: SpatialMode,
         target: OutputTarget,
-        spatialDepth: Float,
-        heightPresence: Float,
-        vocalAnchor: Boolean,
-        pinnaAirGainDb: Double = 3.0
+        spatialDepth: Float = mode.defaultDepth,
+        heightPresence: Float = mode.defaultHeight,
+        vocalAnchor: Boolean = true,
+        pinnaAirGainDb: Double = AtmosAsarSpecs.PINNA_AIR_DB.toDouble(),
+        vocalFocus: Float = 0.70f
     ) {
         this.mode = mode
         this.outputTarget = target
         this.spatialDepth = spatialDepth.coerceIn(0f, 1f)
         this.heightPresence = heightPresence.coerceIn(0f, 1f)
         this.vocalAnchor = vocalAnchor
-        pinnaShelf12000.setHighShelf(sampleRateRef, 12000.0, 0.7071, pinnaAirGainDb.coerceIn(0.0, 3.0))
+        val clampedFocus = vocalFocus.coerceIn(0f, 1f)
+        this.vocalFocus = clampedFocus
+        // Smoothly shapes dry 1–3.5kHz center vocal presence from -1.0 dB (0%) to +2.5 dB (100%)
+        dryVocalFocusEq.setPeaking(sampleRateRef, 1870.0, 0.75, -1.0 + 3.5 * clampedFocus)
+        pinnaAirShelf11800.setHighShelf(
+            sampleRateRef,
+            AtmosAsarSpecs.PINNA_AIR_HZ,
+            0.7071,
+            pinnaAirGainDb.coerceIn(0.0, AtmosAsarSpecs.PINNA_AIR_DB.toDouble())
+        )
     }
 
     fun processStereoSample(inL: Double, inR: Double): Pair<Double, Double> {
@@ -436,67 +477,63 @@ class SpatialAudioEngine(sampleRate: Int = 44100) {
             return inL to inR
         }
 
-        val depth = spatialDepth.toDouble()
-        val height = heightPresence.toDouble()
-        val cinemaScale = if (currentMode == SpatialMode.ATMOS_CINEMA) 1.32 else 1.0
+        val isCinema = currentMode == SpatialMode.ATMOS_CINEMA
+        val focus = vocalFocus.toDouble()
 
-        // Phone Speaker Mode Adaptation: automatically switch from Headphone HRTF to 0.18ms XTC
-        if (outputTarget == OutputTarget.SPEAKER) {
-            val effectiveDepth = (depth * if (currentMode == SpatialMode.ATMOS_CINEMA) 1.2 else 0.95).coerceIn(0.0, 1.0)
-            val (xtcL, xtcR) = speakerCrosstalkCanceller.processStereo(
-                inL = inL,
-                inR = inR,
-                spatialDepth = effectiveDepth,
-                vocalAnchor = vocalAnchor
-            )
-            // Subtle 6% studio micro-ambience even on speakers without echo
-            return studioConvolver.processStereo(xtcL, xtcR, wetMix = 0.06 * effectiveDepth)
-        }
-
-        // --- 7.1.2 Virtual Speaker Array (Headphones / Bluetooth HRTF Binaural) ---
+        // Stage 1: Dry Center Vocal (1–3.5kHz) & Sub-Bass (<150Hz) Lock (100% dry, zero reverb/delay)
         val mid = 0.5 * (inL + inR)
         val side = 0.5 * (inL - inR)
 
-        // Strictly mono low-end (<120Hz) routed to Center Front (0°, 0°)
-        val (monoBass, _) = midLowPass120.processStereo(mid, 0.0)
-        val (midAbove120, _) = midHighPass120.processStereo(mid, 0.0)
-        val (_, sideAbove120) = sideHighPass120.processStereo(0.0, side)
+        val (dryCenter, _) = dryVocalFocusEq.processStereo(mid, 0.0)
 
-        // Center Front feed: strictly mono sub-120Hz + anchored mid vocals
-        val centerVocalWeight = if (vocalAnchor) 1.08 else (0.94 - 0.12 * depth)
-        val centerFeed = monoBass + midAbove120 * centerVocalWeight
-        val (cL, cR) = centerFront.processMonoToBinaural(centerFeed)
+        // Strict >150Hz high-pass on Side so <150Hz bass stays strictly mono & dry
+        val (_, sideS1) = sideHpf150A.processStereo(0.0, side)
+        val (_, sideAbove150) = sideHpf150B.processStereo(0.0, sideS1)
 
-        // Left & Right Surround (±105°, 0°): wrap-around Side + subtle front spread scaled by Depth
-        val sideExpand = (0.45 + 0.95 * depth) * cinemaScale
-        val ambientSpread = if (vocalAnchor) 0.10 * depth else (0.18 + 0.14 * depth)
-        val lsFeed = sideAbove120 * sideExpand + midAbove120 * ambientSpread
-        val rsFeed = -sideAbove120 * sideExpand + midAbove120 * ambientSpread
+        // Stage 2: iPhone 18 Pro Max Built-In Speaker Atmos (2nd-Order Transaural XTC on Side channel)
+        if (outputTarget == OutputTarget.SPEAKER) {
+            val sideScale = (if (isCinema) 1.24 else 1.02) * (1.08 - 0.18 * focus)
+            val (xtcSideL, xtcSideR) = speakerCrosstalkCanceller.processSideChannel(
+                sideAbove150 = sideAbove150,
+                intensityScale = sideScale
+            )
+            return (dryCenter + xtcSideL) to (dryCenter + xtcSideR)
+        }
 
-        val (lsL, lsR) = leftSurround.processMonoToBinaural(lsFeed)
-        val (rsL, rsR) = rightSurround.processMonoToBinaural(rsFeed)
+        // Stage 3: Headphone 7.1.4 Binaural Elevation (Diffuse-Field HRTF on Side channel)
+        val surroundWidth = (if (isCinema) 1.22 else 0.94) * (1.10 - 0.20 * focus)
+        val heightGain = if (isCinema) 1.18 else 0.85
 
-        // Left & Right Top Height (±65°, +45°): high-passed at 2.5kHz so airy details float overhead
-        val heightInputL = sideAbove120 * 0.85 + midAbove120 * 0.28
-        val heightInputR = -sideAbove120 * 0.85 + midAbove120 * 0.28
-        val (h2500L, h2500R) = heightHighPass2500.processStereo(heightInputL, heightInputR)
+        // Surround L / R (±110° azimuth, 0° elevation) fed by Side >150Hz
+        val (lsL, lsR) = leftSurround.processMonoToBinaural(sideAbove150 * surroundWidth)
+        val (rsL, rsR) = rightSurround.processMonoToBinaural(-sideAbove150 * surroundWidth)
 
-        val heightGain = (0.25 + 0.90 * height) * cinemaScale
-        val (ltfL, ltfR) = leftTopHeight.processMonoToBinaural(h2500L * heightGain)
-        val (rtfL, rtfR) = rightTopHeight.processMonoToBinaural(h2500R * heightGain)
+        // Top Height L / R (±60° azimuth, +50° elevation, high-passed at 2.8kHz)
+        val (h2800L, h2800R) = heightHighPass2800.processStereo(
+            sideAbove150 * heightGain,
+            -sideAbove150 * heightGain
+        )
+        val (ltfL, ltfR) = leftTopHeight.processMonoToBinaural(h2800L)
+        val (rtfL, rtfR) = rightTopHeight.processMonoToBinaural(h2800R)
 
-        // Surround + Height bus -> apply Pinna Height Psychoacoustic Curve (7.2kHz -3.5dB notch + 12kHz +3dB shelf)
-        val busL = lsL + rsL + ltfL + rtfL
-        val busR = lsR + rsR + ltfR + rtfR
-        val (notchedL, notchedR) = pinnaNotch7200.processStereo(busL, busR)
-        val (pinnaL, pinnaR) = pinnaShelf12000.processStereo(notchedL, notchedR)
+        // Authentic Pinna Elevation Filter (6.8kHz notch -3.0dB + 11.8kHz air lift +2.5dB budget-capped)
+        val heightSumL = ltfL + rtfL
+        val heightSumR = ltfR + rtfR
+        val (pinnaNotchedL, pinnaNotchedR) = pinnaNotch6800.processStereo(heightSumL, heightSumR)
+        val (pinnaHeightL, pinnaHeightR) = pinnaAirShelf11800.processStereo(pinnaNotchedL, pinnaNotchedR)
 
-        // Combine anchored Center Front with elevated Surround/Height bus
-        val sumL = cL * 0.82 + pinnaL * 0.68
-        val sumR = cR * 0.82 + pinnaR * 0.68
+        // Diffuse spatial bus (Surround + Elevated Height)
+        val diffuseSpatialL = (lsL + rsL) * 0.54 + pinnaHeightL * 0.56
+        val diffuseSpatialR = (lsR + rsR) * 0.54 + pinnaHeightR * 0.56
 
-        // Apple Studio Micro-Ambience (strictly 25ms IR, 3.5kHz damping, 10% wet mix)
-        val studioWet = (0.07 + 0.03 * depth) * if (currentMode == SpatialMode.ATMOS_CINEMA) 1.05 else 1.0
-        return studioConvolver.processStereo(sumL, sumR, wetMix = studioWet.coerceIn(0.0, 0.12))
+        // Convolve ONLY the diffuse spatial component with 18ms Studio Early-Reflection Impulse (3.2kHz LPF, 8% wet)
+        val (diffusedL, diffusedR) = studioConvolver.processStereo(
+            inL = diffuseSpatialL,
+            inR = diffuseSpatialR,
+            wetMix = AtmosAsarSpecs.STUDIO_IR_WET_MIX
+        )
+
+        // Sum 100% dry center vocal & <150Hz sub-bass with diffuse 7.1.4 spatial field
+        return (dryCenter + diffusedL) to (dryCenter + diffusedR)
     }
 }
