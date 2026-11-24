@@ -110,7 +110,9 @@ class EqualizerService : Service() {
                     accommodationsApplyToVoice = audioEngine.currentAccommodationsApplyToVoice,
                     accommodationsOutputGainDb = audioEngine.currentAccommodationsOutputGainDb,
                     loudnessMaximizerEnabled = audioEngine.currentLoudnessMaximizerEnabled,
-                    loudnessBoostPercent = audioEngine.currentLoudnessBoostPercent
+                    loudnessBoostPercent = audioEngine.currentLoudnessBoostPercent,
+                    listeningMode = audioEngine.currentListeningMode,
+                    ambientPassThroughPercent = audioEngine.currentAmbientPassThroughPercent
                 )
             }
 

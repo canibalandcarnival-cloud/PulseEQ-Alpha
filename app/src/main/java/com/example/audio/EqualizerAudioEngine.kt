@@ -22,6 +22,7 @@ import com.example.model.CustomAudioSetupUiState
 import com.example.model.EqPresetsCatalog
 import com.example.model.FlagshipSpeakerSpecs
 import com.example.model.HearingCheckUiState
+import com.example.model.ListeningMode
 import com.example.model.LoudnessMaximizerSpecs
 import com.example.model.NightIntensity
 import com.example.model.OutputTarget
@@ -310,10 +311,39 @@ class EqualizerAudioEngine(private val context: Context) {
         private set
 
     @Volatile
+    var currentListeningMode: ListeningMode = ListeningMode.OFF
+        private set
+
+    @Volatile
+    var currentAmbientPassThroughPercent: Float = 0.65f
+        private set
+
+    @Volatile
+    private var currentAdaptiveWarmthRatio: Float = 0f
+
+    @Volatile
     private var systemSoundCheckTrimDb: Float = 0f
 
     @Volatile
     private var currentDuckGainLinear: Float = 1f
+
+    private fun handleConversationDuckChanged(speechDetected: Boolean, duckGain: Float) {
+        currentDuckGainLinear = duckGain
+        testSynthesizer.setConversationDuckGain(duckGain, speechDetected)
+        val feedbackProtected = currentTarget == OutputTarget.SPEAKER &&
+            !currentBypassed &&
+            (currentListeningMode == ListeningMode.TRANSPARENCY ||
+                currentListeningMode == ListeningMode.ADAPTIVE ||
+                currentConversationAwarenessEnabled)
+        _audioLabTelemetry.value = _audioLabTelemetry.value.copy(
+            speechDetected = speechDetected,
+            duckingGainLinear = duckGain,
+            feedbackProtectionActive = feedbackProtected
+        )
+        scope.launch {
+            applyToAllSessions()
+        }
+    }
 
     private val voiceMicMonitor = VoiceMicAccommodationsMonitor { active, levelDb ->
         _audioLabTelemetry.value = _audioLabTelemetry.value.copy(
@@ -322,16 +352,30 @@ class EqualizerAudioEngine(private val context: Context) {
         )
     }
 
-    private val conversationMonitor = ConversationAwarenessMonitor { speechDetected, duckGain ->
-        currentDuckGainLinear = duckGain
-        testSynthesizer.setConversationDuckGain(duckGain)
-        _audioLabTelemetry.value = _audioLabTelemetry.value.copy(
-            speechDetected = speechDetected,
-            duckingGainLinear = duckGain
-        )
-        scope.launch {
-            applyToAllSessions()
+    private val liveAmbientPassThroughMonitor = LiveAmbientPassThroughMonitor(
+        onTelemetryUpdate = { gain, ambDb, rumbleDb, rumbleDuckActive, running ->
+            val prevDuckActive = currentAdaptiveWarmthRatio > 0.5f
+            currentAdaptiveWarmthRatio = if (rumbleDuckActive) 1f else 0f
+            _audioLabTelemetry.value = _audioLabTelemetry.value.copy(
+                listeningPassThroughGain = if (currentTarget == OutputTarget.SPEAKER) 0f else gain,
+                ambientNoiseRmsDb = ambDb,
+                ambientRumbleRmsDb = rumbleDb,
+                adaptiveRumbleDuckActive = rumbleDuckActive,
+                liveMicPassThroughRunning = running && currentTarget != OutputTarget.SPEAKER
+            )
+            if (prevDuckActive != rumbleDuckActive) {
+                scope.launch {
+                    applyToAllSessions()
+                }
+            }
+        },
+        onConversationDuckUpdate = { speechDetected, duckGain ->
+            handleConversationDuckChanged(speechDetected, duckGain)
         }
+    )
+
+    private val conversationMonitor = ConversationAwarenessMonitor { speechDetected, duckGain ->
+        handleConversationDuckChanged(speechDetected, duckGain)
     }
 
     private val deviceCallback = object : AudioDeviceCallback() {
@@ -420,7 +464,18 @@ class EqualizerAudioEngine(private val context: Context) {
     fun onPermissionResult(granted: Boolean) {
         _hasAudioPermission.value = granted
         refreshSystemVisualizer()
-        conversationMonitor.setEnabled(currentConversationAwarenessEnabled, granted)
+        liveAmbientPassThroughMonitor.configure(
+            mode = currentListeningMode,
+            outputTarget = currentTarget,
+            isBypassed = currentBypassed,
+            ambientPassThroughPercent = currentAmbientPassThroughPercent,
+            conversationAwarenessEnabled = currentConversationAwarenessEnabled,
+            hasRecordPermission = granted
+        )
+        conversationMonitor.setEnabled(
+            enabled = currentConversationAwarenessEnabled && !liveAmbientPassThroughMonitor.handlesConversationMic,
+            hasRecordPermission = granted
+        )
         voiceMicMonitor.configure(
             enabled = currentAccommodationsEnabled && currentAccommodationsApplyToVoice && !currentBypassed,
             profile = currentAccommodationsToneProfile,
@@ -477,7 +532,9 @@ class EqualizerAudioEngine(private val context: Context) {
             speakerPhaseAlignmentEnabled = currentSpeakerPhaseAlignmentEnabled,
             oversampledEqEnabled = currentOversampledEqEnabled,
             harmonicSheenPercent = currentHarmonicSheenPercent,
-            noiseFloorGateEnabled = currentNoiseFloorGateEnabled
+            noiseFloorGateEnabled = currentNoiseFloorGateEnabled,
+            listeningMode = currentListeningMode,
+            ambientPassThroughPercent = currentAmbientPassThroughPercent
         )
     }
 
@@ -686,7 +743,9 @@ class EqualizerAudioEngine(private val context: Context) {
         speakerPhaseAlignmentEnabled: Boolean = currentSpeakerPhaseAlignmentEnabled,
         oversampledEqEnabled: Boolean = currentOversampledEqEnabled,
         harmonicSheenPercent: Float = currentHarmonicSheenPercent,
-        noiseFloorGateEnabled: Boolean = currentNoiseFloorGateEnabled
+        noiseFloorGateEnabled: Boolean = currentNoiseFloorGateEnabled,
+        listeningMode: ListeningMode = currentListeningMode,
+        ambientPassThroughPercent: Float = currentAmbientPassThroughPercent
     ) {
         val normalizedThreeBand = threeBandEnabled && !tenBandEnabled
         val normalizedTenBand = !normalizedThreeBand
@@ -739,12 +798,25 @@ class EqualizerAudioEngine(private val context: Context) {
         currentOversampledEqEnabled = oversampledEqEnabled
         currentHarmonicSheenPercent = harmonicSheenPercent.coerceIn(0f, 1f)
         currentNoiseFloorGateEnabled = noiseFloorGateEnabled
+        currentListeningMode = listeningMode
+        currentAmbientPassThroughPercent = ambientPassThroughPercent.coerceIn(0f, 1f)
 
         val isSpeakerDspActive = (target == OutputTarget.SPEAKER) && speakerDspEnabled
         val isAbHeld = _abCompareHeld.value
         val hasMicPerm = checkAudioPermission()
 
-        conversationMonitor.setEnabled(conversationAwarenessEnabled, hasMicPerm)
+        liveAmbientPassThroughMonitor.configure(
+            mode = listeningMode,
+            outputTarget = target,
+            isBypassed = isBypassed || isAbHeld,
+            ambientPassThroughPercent = currentAmbientPassThroughPercent,
+            conversationAwarenessEnabled = conversationAwarenessEnabled,
+            hasRecordPermission = hasMicPerm
+        )
+        conversationMonitor.setEnabled(
+            enabled = conversationAwarenessEnabled && !liveAmbientPassThroughMonitor.handlesConversationMic,
+            hasRecordPermission = hasMicPerm
+        )
         voiceMicMonitor.configure(
             enabled = accommodationsEnabled && accommodationsApplyToVoice && !isBypassed,
             profile = accommodationsToneProfile,
@@ -801,7 +873,9 @@ class EqualizerAudioEngine(private val context: Context) {
             speakerPhaseAlignmentEnabled = speakerPhaseAlignmentEnabled,
             oversampledEqEnabled = oversampledEqEnabled,
             harmonicSheenPercent = currentHarmonicSheenPercent,
-            noiseFloorGateEnabled = noiseFloorGateEnabled
+            noiseFloorGateEnabled = noiseFloorGateEnabled,
+            listeningMode = currentListeningMode,
+            ambientPassThroughPercent = currentAmbientPassThroughPercent
         )
         applyToAllSessions()
     }
@@ -847,6 +921,12 @@ class EqualizerAudioEngine(private val context: Context) {
         val highVolDeHarshActive = effectiveActive &&
             currentMasterVolumePercent > ProMaxHardwareRefinementSpecs.HIGH_VOL_THRESHOLD
 
+        val feedbackProtectionActive = currentTarget == OutputTarget.SPEAKER &&
+            effectiveActive &&
+            (currentListeningMode == ListeningMode.TRANSPARENCY ||
+                currentListeningMode == ListeningMode.ADAPTIVE ||
+                currentConversationAwarenessEnabled)
+
         _audioLabTelemetry.value = _audioLabTelemetry.value.copy(
             trebleGainStagedCapActive = effectiveActive && trebleBudget.isCapEngaged,
             trebleCappedBoostDb = if (effectiveActive) trebleBudget.cappedCombinedHfDb else 0f,
@@ -855,7 +935,10 @@ class EqualizerAudioEngine(private val context: Context) {
             highVolumeDeHarshActive = highVolDeHarshActive,
             phaseAlignmentActive = isSpeakerDspActive && currentSpeakerPhaseAlignmentEnabled,
             studioSampleRateHz = StudioHiResSpecs.SAMPLE_RATE_HZ,
-            oversampledEqActive = effectiveActive && currentOversampledEqEnabled
+            oversampledEqActive = effectiveActive && currentOversampledEqEnabled,
+            feedbackProtectionActive = feedbackProtectionActive,
+            listeningPassThroughGain = if (currentTarget == OutputTarget.SPEAKER || !effectiveActive) 0f else _audioLabTelemetry.value.listeningPassThroughGain,
+            liveMicPassThroughRunning = _audioLabTelemetry.value.liveMicPassThroughRunning && currentTarget != OutputTarget.SPEAKER && effectiveActive
         )
 
         for (bundle in sessionEffects.values) {
@@ -958,7 +1041,12 @@ class EqualizerAudioEngine(private val context: Context) {
                                 freqHz = EqPresetsCatalog.BANDS[i].frequencyHz.toDouble(),
                                 volumePercent = currentMasterVolumePercent
                             )
-                            val combinedGain = (tenBandGain + toneOffset + accommodationsOffset + trebleSmoothnessOffset + loudnessPresenceOffset + audioMixOffset + volumeContourOffset)
+                            val listeningModeOffset = ListeningModeProcessor.computeMusicResponseDbAt(
+                                freqHz = EqPresetsCatalog.BANDS[i].frequencyHz.toDouble(),
+                                mode = currentListeningMode,
+                                adaptiveWarmthRatio = currentAdaptiveWarmthRatio
+                            )
+                            val combinedGain = (tenBandGain + toneOffset + accommodationsOffset + trebleSmoothnessOffset + loudnessPresenceOffset + audioMixOffset + volumeContourOffset + listeningModeOffset)
                                 .coerceIn(-15f, 15f)
                             dp.setPreEqBandAllChannelsTo(
                                 i,
@@ -1199,6 +1287,11 @@ class EqualizerAudioEngine(private val context: Context) {
         _dspStatusLabel.value = when {
             isAbHeld -> "A/B Compare: Original"
             currentBypassed -> "DSP Bypassed"
+            currentListeningMode == ListeningMode.NOISE_CANCELLATION -> "Noise Cancellation • Isolation Focus$siliconTag"
+            currentListeningMode == ListeningMode.TRANSPARENCY && currentTarget == OutputTarget.SPEAKER -> "Transparency • Feedback Guard$siliconTag"
+            currentListeningMode == ListeningMode.TRANSPARENCY -> "Transparency Pass-Through$siliconTag"
+            currentListeningMode == ListeningMode.ADAPTIVE && currentTarget == OutputTarget.SPEAKER -> "Adaptive EQ • Feedback Guard$siliconTag"
+            currentListeningMode == ListeningMode.ADAPTIVE -> "Adaptive Smart Blend$siliconTag"
             currentVoiceIsolationEnabled -> "Voice Isolation$siliconTag"
             loudnessMaxActive -> "Loudness Maximizer +${(currentLoudnessBoostPercent * LoudnessMaximizerSpecs.MAX_MAKEUP_BOOST_DB).toInt()}dB$siliconTag"
             audioMixActive -> "Audio Mix • ${currentAudioMixMode.label}$siliconTag"
@@ -1544,7 +1637,9 @@ class EqualizerAudioEngine(private val context: Context) {
             speakerPhaseAlignmentEnabled = currentSpeakerPhaseAlignmentEnabled,
             oversampledEqEnabled = currentOversampledEqEnabled,
             harmonicSheenPercent = currentHarmonicSheenPercent,
-            noiseFloorGateEnabled = currentNoiseFloorGateEnabled
+            noiseFloorGateEnabled = currentNoiseFloorGateEnabled,
+            listeningMode = currentListeningMode,
+            ambientPassThroughPercent = currentAmbientPassThroughPercent
         )
     }
 
@@ -1567,6 +1662,7 @@ class EqualizerAudioEngine(private val context: Context) {
             audioManager.unregisterAudioDeviceCallback(deviceCallback)
         } catch (_: Throwable) {
         }
+        liveAmbientPassThroughMonitor.stop()
         conversationMonitor.stop()
         voiceMicMonitor.stop()
         standaloneBackgroundPlayer.stop()

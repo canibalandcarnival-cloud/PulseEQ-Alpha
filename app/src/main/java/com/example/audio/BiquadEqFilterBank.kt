@@ -9,6 +9,7 @@ import com.example.model.AudioMixMode
 import com.example.model.BackgroundSoundPreset
 import com.example.model.EqPresetsCatalog
 import com.example.model.FlagshipSpeakerSpecs
+import com.example.model.ListeningMode
 import com.example.model.NightIntensity
 import com.example.model.OutputTarget
 import com.example.model.PhoneOrientationMode
@@ -1145,6 +1146,7 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
     private val voiceIsolationProcessor = VoiceIsolationProcessor(sampleRate)
     private val adaptiveMultibandBalancer = AdaptiveMultibandToneBalancer(sampleRate)
     private val speakerPhaseAlignmentFilter = SpeakerPhaseAlignmentFilter(sampleRate)
+    private val listeningModeProcessor = ListeningModeProcessor(sampleRate)
     private val noiseFloorGate = ZeroNoiseFloorGateAndDitherer(sampleRate)
 
     @Volatile
@@ -1161,6 +1163,9 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
 
     @Volatile
     var conversationDuckLinear: Double = 1.0
+
+    @Volatile
+    var conversationSpeechActive: Boolean = false
 
     val latestGainReductionDb: Float
         get() {
@@ -1337,7 +1342,9 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         speakerPhaseAlignmentEnabled: Boolean = false,
         oversampledEqEnabled: Boolean = false,
         harmonicSheenPercent: Float = 0f,
-        noiseFloorGateEnabled: Boolean = false
+        noiseFloorGateEnabled: Boolean = false,
+        listeningMode: ListeningMode = ListeningMode.OFF,
+        ambientPassThroughPercent: Float = 0.65f
     ) {
         bypassed = isBypassed
         this.abCompareHeld = abCompareHeld
@@ -1444,6 +1451,13 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             outputTarget = outputTarget,
             speakerDspEnabled = speakerDspEnabled
         )
+        listeningModeProcessor.configure(
+            mode = listeningMode,
+            outputTarget = outputTarget,
+            isBypassed = !effectiveProcessing,
+            ambientPassThroughPercent = ambientPassThroughPercent,
+            conversationSpeechActive = conversationSpeechActive
+        )
 
         val activeBandGains = if (activeTenBand) gainsDb else List(10) { 0f }
         val threeBandAvg = if (activeThreeBand) {
@@ -1524,7 +1538,8 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         val (maxL, maxR) = loudnessMaximizerChain.processStereoSample(phaseL, phaseR)
         val (mbL, mbR) = adaptiveMultibandBalancer.processStereoSample(maxL, maxR)
         val (silL, silR) = siliconDspCore.processStereoSample(mbL, mbR)
-        val (volL, volR) = volumeContourProcessor.processStereoSample(silL, silR)
+        val (lmL, lmR) = listeningModeProcessor.processMusicSample(silL, silR)
+        val (volL, volR) = volumeContourProcessor.processStereoSample(lmL, lmR)
 
         // Final safety ceiling + Conversation Awareness auto-ducking -> Zero-Noise Gate (-75 dBFS) + TPDF Dither
         val (safeL, safeR) = if (loudnessMaximizerChain.enabled || speakerDspChain.speakerDspEnabled || siliconDspCore.enabled) {
@@ -1641,8 +1656,9 @@ class TestAudioSynthesizer {
     val isNoiseFloorGateMuted: Boolean
         get() = filterBank.isNoiseFloorGateMuted
 
-    fun setConversationDuckGain(duckGainLinear: Float) {
+    fun setConversationDuckGain(duckGainLinear: Float, speechDetected: Boolean = false) {
         filterBank.conversationDuckLinear = duckGainLinear.toDouble()
+        filterBank.conversationSpeechActive = speechDetected
     }
 
     fun updateEq(
@@ -1689,7 +1705,9 @@ class TestAudioSynthesizer {
         speakerPhaseAlignmentEnabled: Boolean = false,
         oversampledEqEnabled: Boolean = false,
         harmonicSheenPercent: Float = 0f,
-        noiseFloorGateEnabled: Boolean = false
+        noiseFloorGateEnabled: Boolean = false,
+        listeningMode: ListeningMode = ListeningMode.OFF,
+        ambientPassThroughPercent: Float = 0.65f
     ) {
         backgroundPreset = bgSoundPreset
         backgroundVolume = bgSoundVolume
@@ -1736,7 +1754,9 @@ class TestAudioSynthesizer {
             speakerPhaseAlignmentEnabled = speakerPhaseAlignmentEnabled,
             oversampledEqEnabled = oversampledEqEnabled,
             harmonicSheenPercent = harmonicSheenPercent,
-            noiseFloorGateEnabled = noiseFloorGateEnabled
+            noiseFloorGateEnabled = noiseFloorGateEnabled,
+            listeningMode = listeningMode,
+            ambientPassThroughPercent = ambientPassThroughPercent
         )
     }
 

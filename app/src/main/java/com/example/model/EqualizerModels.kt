@@ -204,6 +204,38 @@ enum class PhoneOrientationMode(
     LANDSCAPE("landscape", "Landscape")
 }
 
+enum class ListeningMode(
+    val id: String,
+    val label: String,
+    val shortLabel: String,
+    val subtitle: String
+) {
+    OFF(
+        id = "off",
+        label = "Off",
+        shortLabel = "Off",
+        subtitle = "Direct playback • Zero mic pass-through & neutral response"
+    ),
+    TRANSPARENCY(
+        id = "transparency",
+        label = "Transparency",
+        shortLabel = "Transparency",
+        subtitle = "220Hz HPF ambient pass-through + 2.5kHz vocal presence"
+    ),
+    ADAPTIVE(
+        id = "adaptive",
+        label = "Adaptive",
+        shortLabel = "Adaptive",
+        subtitle = "25% quiet blend • Auto-ducks <400Hz rumble + 120Hz warmth"
+    ),
+    NOISE_CANCELLATION(
+        id = "anc",
+        label = "Noise Cancellation",
+        shortLabel = "Noise Cancel",
+        subtitle = "Active Isolation Focus • 110Hz +2dB • 320Hz -2dB • 2.2kHz +1.5dB"
+    )
+}
+
 enum class SoftSoundIntensity(
     val id: String,
     val label: String,
@@ -291,7 +323,13 @@ data class AudioLabTelemetry(
     val studioSampleRateHz: Int = 48000,
     val oversampledEqActive: Boolean = true,
     val harmonicSheenThdPct: Float = 0f,
-    val noiseFloorGateMuted: Boolean = false
+    val noiseFloorGateMuted: Boolean = false,
+    val listeningPassThroughGain: Float = 0f,
+    val ambientNoiseRmsDb: Float = -60f,
+    val ambientRumbleRmsDb: Float = -60f,
+    val adaptiveRumbleDuckActive: Boolean = false,
+    val feedbackProtectionActive: Boolean = false,
+    val liveMicPassThroughRunning: Boolean = false
 )
 
 @Immutable
@@ -353,7 +391,9 @@ data class OutputEqProfile(
     val speakerPhaseAlignmentEnabled: Boolean = (target == OutputTarget.SPEAKER),
     val oversampledEqEnabled: Boolean = true,
     val harmonicSheenPercent: Float = 0.25f,
-    val noiseFloorGateEnabled: Boolean = true
+    val noiseFloorGateEnabled: Boolean = true,
+    val listeningMode: ListeningMode = ListeningMode.OFF,
+    val ambientPassThroughPercent: Float = 0.65f
 ) {
     companion object {
         fun defaultTrebleSmoothnessForTarget(target: OutputTarget): Float = when (target) {
@@ -611,6 +651,42 @@ object AtmosAsarSpecs {
     const val STUDIO_IR_SEC = 0.018
     const val STUDIO_IR_LPF_HZ = 3200.0
     const val STUDIO_IR_WET_MIX = 0.08
+}
+
+object ListeningModeSpecs {
+    // Transparency: 220 Hz HPF wind/rumble cut + 2.5 kHz (+1.5 dB) natural vocal presence
+    const val TRANSPARENCY_HPF_HZ = 220.0
+    const val TRANSPARENCY_HPF_Q = 0.7071
+    const val TRANSPARENCY_VOCAL_HZ = 2500.0
+    const val TRANSPARENCY_VOCAL_Q = 1.1
+    const val TRANSPARENCY_VOCAL_DB = 1.5
+
+    // Adaptive (iOS 27 Smart Blend): 25% quiet blend -> ducks loud <400 Hz rumble & boosts 120 Hz +2.0 dB
+    const val ADAPTIVE_QUIET_PASS_THROUGH = 0.25f
+    const val ADAPTIVE_DUCKED_PASS_THROUGH = 0.03f
+    const val ADAPTIVE_RUMBLE_LPF_HZ = 400.0
+    const val ADAPTIVE_QUIET_THRESHOLD_DB = -38.0
+    const val ADAPTIVE_SPIKE_THRESHOLD_DB = -22.0
+    const val ADAPTIVE_WARMTH_HZ = 120.0
+    const val ADAPTIVE_WARMTH_Q = 1.0
+    const val ADAPTIVE_WARMTH_DB = 2.0
+
+    // Noise Cancellation: Active Isolation Focus Curve (mutes mic pass-through completely)
+    const val ANC_WARMTH_HZ = 110.0
+    const val ANC_WARMTH_Q = 1.1
+    const val ANC_WARMTH_DB = 2.0
+    const val ANC_MUD_CUT_HZ = 320.0
+    const val ANC_MUD_CUT_Q = 1.3
+    const val ANC_MUD_CUT_DB = -2.0
+    const val ANC_VOCAL_HZ = 2200.0
+    const val ANC_VOCAL_Q = 1.1
+    const val ANC_VOCAL_DB = 1.5
+
+    // Conversation Awareness: 300Hz-3kHz speech detector, -75% music duck, 2s restore, external voice clarity boost
+    const val CONVERSATION_DUCK_GAIN = 0.25f
+    const val CONVERSATION_RESTORE_HOLD_MS = 2000L
+    const val CONVERSATION_EXTERNAL_VOICE_GAIN = 0.55f
+    const val CONVERSATION_VOICE_CLARITY_EXTRA_DB = 2.0
 }
 
 @Immutable

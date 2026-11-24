@@ -79,6 +79,8 @@ class EqPreferencesRepository(private val context: Context) {
         fun oversampledEqKey(target: OutputTarget) = booleanPreferencesKey("oversampled_eq_${target.id}")
         fun harmonicSheenKey(target: OutputTarget) = floatPreferencesKey("harmonic_sheen_${target.id}")
         fun noiseFloorGateKey(target: OutputTarget) = booleanPreferencesKey("noise_floor_gate_${target.id}")
+        fun listeningModeKey(target: OutputTarget) = stringPreferencesKey("listening_mode_${target.id}")
+        fun ambientPassThroughKey(target: OutputTarget) = floatPreferencesKey("ambient_pass_through_${target.id}")
     }
 
     val preferencesFlow: Flow<StoredEqPreferences> = context.eqDataStore.data.map { prefs ->
@@ -205,7 +207,11 @@ class EqPreferencesRepository(private val context: Context) {
                 speakerPhaseAlignmentEnabled = prefs[Keys.speakerPhaseAlignKey(target)] ?: (target == OutputTarget.SPEAKER),
                 oversampledEqEnabled = prefs[Keys.oversampledEqKey(target)] ?: true,
                 harmonicSheenPercent = (prefs[Keys.harmonicSheenKey(target)] ?: 0.25f).coerceIn(0f, 1f),
-                noiseFloorGateEnabled = prefs[Keys.noiseFloorGateKey(target)] ?: true
+                noiseFloorGateEnabled = prefs[Keys.noiseFloorGateKey(target)] ?: true,
+                listeningMode = com.example.model.ListeningMode.entries.firstOrNull {
+                    it.name == prefs[Keys.listeningModeKey(target)]
+                } ?: com.example.model.ListeningMode.OFF,
+                ambientPassThroughPercent = (prefs[Keys.ambientPassThroughKey(target)] ?: 0.65f).coerceIn(0f, 1f)
             )
         }
 
@@ -300,6 +306,8 @@ class EqPreferencesRepository(private val context: Context) {
             prefs[Keys.oversampledEqKey(profile.target)] = profile.oversampledEqEnabled
             prefs[Keys.harmonicSheenKey(profile.target)] = profile.harmonicSheenPercent.coerceIn(0f, 1f)
             prefs[Keys.noiseFloorGateKey(profile.target)] = profile.noiseFloorGateEnabled
+            prefs[Keys.listeningModeKey(profile.target)] = profile.listeningMode.name
+            prefs[Keys.ambientPassThroughKey(profile.target)] = profile.ambientPassThroughPercent.coerceIn(0f, 1f)
         }
     }
 }

@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.model.ListeningMode
 import com.example.model.OutputTarget
 import com.example.ui.components.AdaptiveMultibandPhaseCard
 import com.example.ui.components.AudioRoutingServiceCard
@@ -60,6 +61,7 @@ import com.example.ui.components.HeadphoneAccommodationsCard
 import com.example.ui.components.HearingCheckDialog
 import com.example.ui.components.IosAudioLabCard
 import com.example.ui.components.LateNightDynamicsCard
+import com.example.ui.components.ListeningModeCard
 import com.example.ui.components.LoudnessMaximizerCard
 import com.example.ui.components.MasterActionBar
 import com.example.ui.components.OutputDeviceSelector
@@ -122,6 +124,7 @@ fun EqualizerScreen(
     val isDeviceLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var showPresetsSheet by remember { mutableStateOf(false) }
+    var pendingListeningMode by remember { mutableStateOf<ListeningMode?>(null) }
 
     LaunchedEffect(isDeviceLandscape) {
         viewModel.updateDetectedDeviceOrientation(isDeviceLandscape)
@@ -131,6 +134,17 @@ fun EqualizerScreen(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         viewModel.onAudioPermissionResult(granted)
+    }
+
+    val listeningModeMicLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        viewModel.onAudioPermissionResult(granted)
+        val pending = pendingListeningMode
+        pendingListeningMode = null
+        if (pending != null) {
+            viewModel.setListeningMode(pending)
+        }
     }
 
     val conversationMicLauncher = rememberLauncherForActivityResult(
@@ -199,6 +213,20 @@ fun EqualizerScreen(
             ) {
                 val isWideLayout = maxWidth >= 720.dp
 
+                val onSelectListeningModeWithPermission: (ListeningMode) -> Unit = { mode ->
+                    val needsMic = mode == ListeningMode.TRANSPARENCY || mode == ListeningMode.ADAPTIVE
+                    val micGranted = ContextCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.RECORD_AUDIO
+                    ) == PackageManager.PERMISSION_GRANTED
+                    if (!needsMic || micGranted) {
+                        viewModel.setListeningMode(mode)
+                    } else {
+                        pendingListeningMode = mode
+                        listeningModeMicLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    }
+                }
+
                 if (isWideLayout) {
                     WideConsoleLayout(
                         uiState = uiState,
@@ -207,6 +235,7 @@ fun EqualizerScreen(
                         onRequestAudioPermission = {
                             audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                         },
+                        onSelectListeningModeWithPermission = onSelectListeningModeWithPermission,
                         onToggleConversationWithPermission = {
                             val micGranted = ContextCompat.checkSelfPermission(
                                 context,
@@ -238,6 +267,7 @@ fun EqualizerScreen(
                         onRequestAudioPermission = {
                             audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                         },
+                        onSelectListeningModeWithPermission = onSelectListeningModeWithPermission,
                         onToggleConversationWithPermission = {
                             val micGranted = ContextCompat.checkSelfPermission(
                                 context,
@@ -299,6 +329,7 @@ private fun CompactConsoleLayout(
     viewModel: EqualizerViewModel,
     onOpenPresetsSheet: () -> Unit,
     onRequestAudioPermission: () -> Unit,
+    onSelectListeningModeWithPermission: (ListeningMode) -> Unit,
     onToggleConversationWithPermission: () -> Unit,
     onToggleAccommodationsVoiceWithPermission: () -> Unit
 ) {
@@ -357,7 +388,9 @@ private fun CompactConsoleLayout(
             siliconDspEnabled = profile.siliconDspEnabled,
             masterVolumePercent = profile.masterVolumePercent,
             speakerDspEnabled = profile.speakerDspEnabled,
-            proMaxBodyWarmthEnabled = profile.proMaxBodyWarmthEnabled
+            proMaxBodyWarmthEnabled = profile.proMaxBodyWarmthEnabled,
+            listeningMode = profile.listeningMode,
+            adaptiveWarmthActive = uiState.audioLabTelemetry.adaptiveRumbleDuckActive
         )
 
         MasterActionBar(
@@ -366,6 +399,20 @@ private fun CompactConsoleLayout(
             onToggleBypass = viewModel::toggleBypass,
             onReset = viewModel::resetToFlat,
             onOpenPresetsSheet = onOpenPresetsSheet
+        )
+
+        ListeningModeCard(
+            listeningMode = profile.listeningMode,
+            ambientPassThroughPercent = profile.ambientPassThroughPercent,
+            conversationAwarenessEnabled = profile.conversationAwarenessEnabled,
+            isMasterBypassed = profile.isBypassed,
+            outputTarget = uiState.selectedTarget,
+            hasAudioPermission = uiState.hasAudioPermission,
+            telemetry = uiState.audioLabTelemetry,
+            onSelectMode = onSelectListeningModeWithPermission,
+            onAmbientPassThroughChange = viewModel::updateAmbientPassThrough,
+            onToggleConversationAwareness = onToggleConversationWithPermission,
+            onRequestAudioPermission = onRequestAudioPermission
         )
 
         OutputVolumeContourCard(
@@ -545,6 +592,7 @@ private fun WideConsoleLayout(
     viewModel: EqualizerViewModel,
     onOpenPresetsSheet: () -> Unit,
     onRequestAudioPermission: () -> Unit,
+    onSelectListeningModeWithPermission: (ListeningMode) -> Unit,
     onToggleConversationWithPermission: () -> Unit,
     onToggleAccommodationsVoiceWithPermission: () -> Unit
 ) {
@@ -612,7 +660,9 @@ private fun WideConsoleLayout(
                     siliconDspEnabled = profile.siliconDspEnabled,
                     masterVolumePercent = profile.masterVolumePercent,
                     speakerDspEnabled = profile.speakerDspEnabled,
-                    proMaxBodyWarmthEnabled = profile.proMaxBodyWarmthEnabled
+                    proMaxBodyWarmthEnabled = profile.proMaxBodyWarmthEnabled,
+                    listeningMode = profile.listeningMode,
+                    adaptiveWarmthActive = uiState.audioLabTelemetry.adaptiveRumbleDuckActive
                 )
 
                 PresetQuickStrip(
@@ -639,6 +689,20 @@ private fun WideConsoleLayout(
                     onToggleBypass = viewModel::toggleBypass,
                     onReset = viewModel::resetToFlat,
                     onOpenPresetsSheet = onOpenPresetsSheet
+                )
+
+                ListeningModeCard(
+                    listeningMode = profile.listeningMode,
+                    ambientPassThroughPercent = profile.ambientPassThroughPercent,
+                    conversationAwarenessEnabled = profile.conversationAwarenessEnabled,
+                    isMasterBypassed = profile.isBypassed,
+                    outputTarget = uiState.selectedTarget,
+                    hasAudioPermission = uiState.hasAudioPermission,
+                    telemetry = uiState.audioLabTelemetry,
+                    onSelectMode = onSelectListeningModeWithPermission,
+                    onAmbientPassThroughChange = viewModel::updateAmbientPassThrough,
+                    onToggleConversationAwareness = onToggleConversationWithPermission,
+                    onRequestAudioPermission = onRequestAudioPermission
                 )
 
                 OutputVolumeContourCard(

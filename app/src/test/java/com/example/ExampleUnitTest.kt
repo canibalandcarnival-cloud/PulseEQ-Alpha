@@ -1546,4 +1546,229 @@ class ExampleUnitTest {
         assertEquals(0.0, lastR, 0.0)
         assertEquals(0.toShort(), lastPcm)
     }
+
+    @Test
+    fun listening_mode_off_and_noise_cancellation_apply_neutral_and_isolation_focus_curves() {
+        val sampleRate = 48000
+        val processor = com.example.audio.ListeningModeProcessor(sampleRate)
+
+        // 1. Off: Pure bit-transparent music and zero ambient mic pass-through
+        processor.configure(
+            mode = com.example.model.ListeningMode.OFF,
+            outputTarget = com.example.model.OutputTarget.HEADPHONES,
+            isBypassed = false,
+            ambientPassThroughPercent = 0.8f
+        )
+        val (offOutL, offOutR) = processor.processStereoSampleWithAmbient(0.32, -0.18, 0.4)
+        assertEquals(0.32, offOutL, 1e-6)
+        assertEquals(-0.18, offOutR, 1e-6)
+
+        // 2. Noise Cancellation (Active Isolation Focus Curve: 110 Hz +2.0 dB, 320 Hz -2.0 dB, 2.2 kHz +1.5 dB)
+        val resp110 = com.example.audio.ListeningModeProcessor.computeMusicResponseDbAt(
+            freqHz = 110.0,
+            mode = com.example.model.ListeningMode.NOISE_CANCELLATION,
+            sampleRate = sampleRate
+        )
+        val resp320 = com.example.audio.ListeningModeProcessor.computeMusicResponseDbAt(
+            freqHz = 320.0,
+            mode = com.example.model.ListeningMode.NOISE_CANCELLATION,
+            sampleRate = sampleRate
+        )
+        val resp2200 = com.example.audio.ListeningModeProcessor.computeMusicResponseDbAt(
+            freqHz = 2200.0,
+            mode = com.example.model.ListeningMode.NOISE_CANCELLATION,
+            sampleRate = sampleRate
+        )
+        assertTrue("ANC 110 Hz warmth should boost > +1.3 dB (got $resp110)", resp110 > 1.3f)
+        assertTrue("ANC 320 Hz mud cut should dip < -1.3 dB (got $resp320)", resp320 < -1.3f)
+        assertTrue("ANC 2.2 kHz vocal clarity should boost > +1.0 dB (got $resp2200)", resp2200 > 1.0f)
+
+        // Ensure ANC strictly mutes ambient mic pass-through to 0.0 on music
+        processor.reset()
+        processor.configure(
+            mode = com.example.model.ListeningMode.NOISE_CANCELLATION,
+            outputTarget = com.example.model.OutputTarget.HEADPHONES,
+            isBypassed = false,
+            ambientPassThroughPercent = 1.0f
+        )
+        var maxAmbientLeak = 0.0
+        for (i in 0 until 2400) {
+            val mic = 0.4 * kotlin.math.sin(2.0 * Math.PI * 1000.0 * i / sampleRate)
+            maxAmbientLeak = maxOf(maxAmbientLeak, abs(processor.processAmbientMicSample(mic)))
+        }
+        assertEquals(0.0, maxAmbientLeak, 0.0)
+    }
+
+    @Test
+    fun listening_mode_transparency_filters_wind_rumble_boosts_vocals_and_scales_with_level() {
+        val sampleRate = 48000
+        val highPassCheck = com.example.audio.ListeningModeProcessor(sampleRate).apply {
+            configure(
+                mode = com.example.model.ListeningMode.TRANSPARENCY,
+                outputTarget = com.example.model.OutputTarget.HEADPHONES,
+                isBypassed = false,
+                ambientPassThroughPercent = 1.0f
+            )
+        }
+        val lowSliderCheck = com.example.audio.ListeningModeProcessor(sampleRate).apply {
+            configure(
+                mode = com.example.model.ListeningMode.TRANSPARENCY,
+                outputTarget = com.example.model.OutputTarget.BLUETOOTH,
+                isBypassed = false,
+                ambientPassThroughPercent = 0.25f
+            )
+        }
+
+        // Feed 60 Hz wind/rumble vs 2.5 kHz voice into 100% Transparency
+        var windRms = 0.0
+        var vocalFullRms = 0.0
+        var vocalQuarterRms = 0.0
+        for (i in 0 until sampleRate) {
+            val wind = 0.3 * kotlin.math.sin(2.0 * Math.PI * 60.0 * i / sampleRate)
+            val windOut = highPassCheck.processAmbientMicSample(wind)
+            if (i > sampleRate / 2) windRms += windOut * windOut
+        }
+        windRms = kotlin.math.sqrt(windRms / (sampleRate / 2))
+
+        highPassCheck.reset()
+        for (i in 0 until sampleRate) {
+            val voice = 0.3 * kotlin.math.sin(2.0 * Math.PI * 2500.0 * i / sampleRate)
+            val out100 = highPassCheck.processAmbientMicSample(voice)
+            val out25 = lowSliderCheck.processAmbientMicSample(voice)
+            if (i > sampleRate / 2) {
+                vocalFullRms += out100 * out100
+                vocalQuarterRms += out25 * out25
+            }
+        }
+        vocalFullRms = kotlin.math.sqrt(vocalFullRms / (sampleRate / 2))
+        vocalQuarterRms = kotlin.math.sqrt(vocalQuarterRms / (sampleRate / 2))
+
+        assertTrue("220 Hz HPF must strongly attenuate 60 Hz wind/rumble relative to 2.5 kHz vocals ($windRms vs $vocalFullRms)", windRms < vocalFullRms * 0.2)
+        assertTrue("2.5 kHz +1.5 dB vocal presence should pass clearly above unity input RMS", vocalFullRms > (0.3 / kotlin.math.sqrt(2.0)) * 1.1)
+        assertTrue("100% Ambient Pass-Through slider must scale strongly above 25% ($vocalFullRms vs $vocalQuarterRms)", vocalFullRms > vocalQuarterRms * 3.0)
+    }
+
+    @Test
+    fun listening_mode_adaptive_blends_25pct_quiet_and_ducks_on_loud_rumble_with_120hz_warmth() {
+        val sampleRate = 48000
+        val adaptive = com.example.audio.ListeningModeProcessor(sampleRate).apply {
+            configure(
+                mode = com.example.model.ListeningMode.ADAPTIVE,
+                outputTarget = com.example.model.OutputTarget.HEADPHONES,
+                isBypassed = false,
+                ambientPassThroughPercent = 1.0f
+            )
+        }
+
+        // 1. Quiet room (-52 dBFS @ 1.2 kHz): blends ~25% awareness with 0 warmth ratio
+        for (i in 0 until sampleRate) {
+            val quiet = 0.003 * kotlin.math.sin(2.0 * Math.PI * 1200.0 * i / sampleRate)
+            adaptive.processAmbientMicSample(quiet)
+        }
+        assertEquals(0.25f, adaptive.latestPassThroughGain, 0.03f)
+        assertEquals(false, adaptive.isAdaptiveRumbleDuckActive)
+
+        // 2. Loud <400 Hz rumble spike (-10 dBFS @ 120 Hz): ducks ambient pass-through well below 25% & engages +2.0 dB warmth @ 120 Hz
+        for (i in 0 until sampleRate) {
+            val rumble = 0.35 * kotlin.math.sin(2.0 * Math.PI * 120.0 * i / sampleRate)
+            adaptive.processAmbientMicSample(rumble)
+        }
+        assertTrue(
+            "Adaptive loud <400 Hz rumble must duck ambient pass-through well below 0.25 (got ${adaptive.latestPassThroughGain})",
+            adaptive.latestPassThroughGain < 0.08f
+        )
+        assertEquals(true, adaptive.isAdaptiveRumbleDuckActive)
+        assertTrue("Adaptive warmth ratio should climb near 1.0 during rumble spike", adaptive.latestAdaptiveWarmthRatio > 0.7f)
+
+        var dry120Rms = 0.0
+        var warmed120Rms = 0.0
+        for (i in 0 until 4800) {
+            val music = 0.1 * kotlin.math.sin(2.0 * Math.PI * 120.0 * i / sampleRate)
+            val (outL, _) = adaptive.processMusicSample(music, music)
+            if (i > 2400) {
+                dry120Rms += music * music
+                warmed120Rms += outL * outL
+            }
+        }
+        dry120Rms = kotlin.math.sqrt(dry120Rms / 2400)
+        warmed120Rms = kotlin.math.sqrt(warmed120Rms / 2400)
+        assertTrue("Adaptive noise spike should apply +2.0 dB warmth boost @ 120 Hz ($warmed120Rms > $dry120Rms)", warmed120Rms > dry120Rms * 1.15)
+    }
+
+    @Test
+    fun safe_feedback_protection_strictly_mutes_mic_passthrough_on_phone_speaker() {
+        val sampleRate = 48000
+        val guard = com.example.audio.ListeningModeProcessor(sampleRate)
+
+        // Speaker + Transparency MUST strictly output 0.0 ambient pass-through
+        guard.configure(
+            mode = com.example.model.ListeningMode.TRANSPARENCY,
+            outputTarget = com.example.model.OutputTarget.SPEAKER,
+            isBypassed = false,
+            ambientPassThroughPercent = 1.0f,
+            conversationSpeechActive = true
+        )
+        assertEquals(true, guard.isFeedbackProtectionEngaged)
+        var maxSpeakerOut = 0.0
+        for (i in 0 until 4800) {
+            val mic = 0.5 * kotlin.math.sin(2.0 * Math.PI * 1500.0 * i / sampleRate)
+            maxSpeakerOut = maxOf(maxSpeakerOut, abs(guard.processAmbientMicSample(mic)))
+        }
+        assertEquals("Phone Speaker MUST mute all ambient mic pass-through to 0.0", 0.0, maxSpeakerOut, 0.0)
+        assertEquals(0f, guard.latestPassThroughGain, 0f)
+
+        // Switching to Headphones unlocks pass-through immediately
+        guard.configure(
+            mode = com.example.model.ListeningMode.TRANSPARENCY,
+            outputTarget = com.example.model.OutputTarget.HEADPHONES,
+            isBypassed = false,
+            ambientPassThroughPercent = 0.8f
+        )
+        assertEquals(false, guard.isFeedbackProtectionEngaged)
+        var maxHpOut = 0.0
+        for (i in 0 until 4800) {
+            val mic = 0.3 * kotlin.math.sin(2.0 * Math.PI * 1500.0 * i / sampleRate)
+            maxHpOut = maxOf(maxHpOut, abs(guard.processAmbientMicSample(mic)))
+        }
+        assertTrue("Switching to Headphones must unlock live ambient mic pass-through ($maxHpOut)", maxHpOut > 0.1)
+    }
+
+    @Test
+    fun biquad_filter_bank_applies_anc_isolation_focus_and_conversation_ducking() {
+        val sampleRate = 48000
+        val bank = BiquadEqFilterBank(sampleRate).apply {
+            updateParameters(
+                gainsDb = List(10) { 0f },
+                preampDb = 0f,
+                isBypassed = false,
+                outputTarget = com.example.model.OutputTarget.HEADPHONES,
+                siliconDspEnabled = false,
+                adaptiveMultibandEnabled = false,
+                listeningMode = com.example.model.ListeningMode.NOISE_CANCELLATION
+            )
+        }
+        var in110Rms = 0.0
+        var out110Rms = 0.0
+        for (i in 0 until 9600) {
+            val s = 0.12 * kotlin.math.sin(2.0 * Math.PI * 110.0 * i / sampleRate)
+            val (oL, _) = bank.processStereoSample(s, s)
+            if (i > 4800) {
+                in110Rms += s * s
+                out110Rms += oL * oL
+            }
+        }
+        assertTrue("ANC Isolation Focus should lift 110 Hz music warmth ($out110Rms > $in110Rms)", out110Rms > in110Rms * 1.25)
+
+        // Check Conversation Awareness -75% duck gain scaling inside BiquadEqFilterBank
+        bank.conversationDuckLinear = com.example.model.ListeningModeSpecs.CONVERSATION_DUCK_GAIN.toDouble()
+        var duckedRms = 0.0
+        for (i in 0 until 9600) {
+            val s = 0.12 * kotlin.math.sin(2.0 * Math.PI * 110.0 * i / sampleRate)
+            val (oL, _) = bank.processStereoSample(s, s)
+            if (i > 4800) {
+                duckedRms += oL * oL
+            }
+        }
+        assertTrue("Conversation Awareness 0.25x ducking must lower music energy strongly", duckedRms < out110Rms * 0.1)
+    }
 }

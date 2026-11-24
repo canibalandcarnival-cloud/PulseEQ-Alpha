@@ -16,6 +16,7 @@ import com.example.model.CustomAudioSetupUiState
 import com.example.model.EqPreset
 import com.example.model.EqPresetsCatalog
 import com.example.model.HearingCheckUiState
+import com.example.model.ListeningMode
 import com.example.model.NightIntensity
 import com.example.model.OutputEqProfile
 import com.example.model.OutputTarget
@@ -520,6 +521,30 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
         commitProfile(updated)
     }
 
+    fun setListeningMode(mode: ListeningMode) {
+        val current = currentProfile()
+        val updated = current.copy(
+            listeningMode = mode,
+            isBypassed = if (mode != ListeningMode.OFF) false else current.isBypassed
+        )
+        commitProfile(updated)
+    }
+
+    fun updateAmbientPassThrough(rawPercent: Float) {
+        val current = currentProfile()
+        val snapped = ((rawPercent.coerceIn(0f, 1f) * 100f).roundToInt() / 100f).coerceIn(0f, 1f)
+        val updated = current.copy(
+            ambientPassThroughPercent = snapped,
+            listeningMode = if (current.listeningMode == ListeningMode.OFF && snapped > 0f) {
+                ListeningMode.TRANSPARENCY
+            } else {
+                current.listeningMode
+            },
+            isBypassed = if (snapped > 0f && current.isBypassed) false else current.isBypassed
+        )
+        commitProfile(updated)
+    }
+
     fun selectBackgroundSound(preset: BackgroundSoundPreset) {
         val current = currentProfile()
         val updated = current.copy(backgroundSoundPreset = preset)
@@ -910,7 +935,9 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             speakerPhaseAlignmentEnabled = profile.speakerPhaseAlignmentEnabled,
             oversampledEqEnabled = profile.oversampledEqEnabled,
             harmonicSheenPercent = profile.harmonicSheenPercent,
-            noiseFloorGateEnabled = profile.noiseFloorGateEnabled
+            noiseFloorGateEnabled = profile.noiseFloorGateEnabled,
+            listeningMode = profile.listeningMode,
+            ambientPassThroughPercent = profile.ambientPassThroughPercent
         )
     }
 
