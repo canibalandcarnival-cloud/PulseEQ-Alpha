@@ -6,10 +6,12 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.MediaRecorder
+import android.os.Build
 import com.example.model.AccommodationToneProfile
 import com.example.model.CustomAudioSetupUiState
 import com.example.model.SetupAuditionSlot
 import com.example.model.SoftSoundIntensity
+import com.example.model.StudioHiResSpecs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -225,7 +227,7 @@ class HeadphoneAccommodationsProcessor(private val sampleRate: Int = 44100) {
  * before automatically applying the winning profile.
  */
 class CustomAudioSetupAuditionEngine {
-    private val sampleRate = 44100
+    private val sampleRate = StudioHiResSpecs.SAMPLE_RATE_HZ
     private val processor = HeadphoneAccommodationsProcessor(sampleRate)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -357,8 +359,13 @@ class CustomAudioSetupAuditionEngine {
                         .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
                         .build()
                 )
-                .setBufferSizeInBytes(minBuf * 2)
+                .setBufferSizeInBytes(minBuf * StudioHiResSpecs.PLAYBACK_BUFFER_MULTIPLIER)
                 .setTransferMode(AudioTrack.MODE_STREAM)
+                .apply {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        setPerformanceMode(AudioTrack.PERFORMANCE_MODE_NONE)
+                    }
+                }
                 .build()
         } catch (_: Throwable) {
             return
@@ -438,8 +445,9 @@ class CustomAudioSetupAuditionEngine {
 class VoiceMicAccommodationsMonitor(
     private val onTelemetry: (active: Boolean, levelDb: Float) -> Unit
 ) {
-    private val sampleRate = 16000
-    private val processor = HeadphoneAccommodationsProcessor(sampleRate)
+    private var processorSampleRate = StudioHiResSpecs.SAMPLE_RATE_HZ
+    @Volatile
+    private var processor = HeadphoneAccommodationsProcessor(processorSampleRate)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var monitorJob: Job? = null
 
@@ -457,36 +465,22 @@ class VoiceMicAccommodationsMonitor(
         }
         if (monitorJob != null) return
 
-        val minBuf = AudioRecord.getMinBufferSize(
-            sampleRate,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT
-        ).coerceAtLeast(2048)
-
-        val record = try {
-            AudioRecord(
-                MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-                sampleRate,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                minBuf * 2
-            )
-        } catch (_: Throwable) {
+        val capture = UnprocessedMicFactory.openRawMicCapture()
+        if (capture == null) {
             onTelemetry(false, -60f)
             return
         }
-
-        if (record.state != AudioRecord.STATE_INITIALIZED) {
-            try {
-                record.release()
-            } catch (_: Throwable) {
+        val record = capture.audioRecord
+        if (capture.sampleRate != processorSampleRate) {
+            processorSampleRate = capture.sampleRate
+            processor = HeadphoneAccommodationsProcessor(processorSampleRate).apply {
+                configure(isEnabled = enabled, profile = profile, intensity = intensity)
             }
-            onTelemetry(false, -60f)
-            return
         }
 
         monitorJob = scope.launch {
-            val buf = ShortArray(640)
+            val frameSamples = (capture.sampleRate * 0.04).toInt().coerceAtLeast(640)
+            val buf = ShortArray(frameSamples)
             try {
                 record.startRecording()
                 while (isActive) {

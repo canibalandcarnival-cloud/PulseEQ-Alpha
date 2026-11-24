@@ -1335,4 +1335,258 @@ class ExampleUnitTest {
         assertTrue("Dynamic Crest Controller should report positive crest factor > 3 dB (got ${dynamicNormalizer.latestCrestDb})", dynamicNormalizer.latestCrestDb > 3.0f)
         assertTrue("Soft-crest guard must keep hot normalized transients <= 0.96 (max=$maxOutputAbs)", maxOutputAbs <= 0.961)
     }
+
+    @Test
+    fun studio_hires_specs_enforce_48khz_and_playback_buffer_stability() {
+        assertEquals(48000, com.example.model.StudioHiResSpecs.SAMPLE_RATE_HZ)
+        assertTrue(
+            "Playback buffer multiplier should prioritize glitch-free stability (>= 4x)",
+            com.example.model.StudioHiResSpecs.PLAYBACK_BUFFER_MULTIPLIER >= 4
+        )
+        val profile = com.example.model.OutputEqProfile(target = com.example.model.OutputTarget.HEADPHONES)
+        assertEquals(true, profile.oversampledEqEnabled)
+        assertEquals(0.25f, profile.harmonicSheenPercent, 0.001f)
+        assertEquals(true, profile.noiseFloorGateEnabled)
+    }
+
+    @Test
+    fun oversampled_upper_eq_reduces_nyquist_cramping_and_preserves_mutual_exclusion() {
+        val sampleRate = 48000
+
+        // 1. 1x 48kHz biquad vs 2x 96kHz oversampled peaking EQ at 16kHz (+6dB): check 19kHz anti-cramping extension
+        val oneX16k = com.example.audio.StereoBiquad().apply {
+            setPeaking(sampleRate, 16000.0, 1.414, 6.0)
+        }
+        val mag1xAt19k = oneX16k.magnitudeDbAt(sampleRate, 19000.0)
+        val mag2xAt19k = com.example.audio.OversampledUpperEqStage.compute2xTenBandUpperResponseDbAt(
+            freqHz = 19000.0,
+            gain8kDb = 0.0,
+            gain16kDb = 6.0,
+            baseSampleRate = sampleRate
+        )
+        assertTrue(
+            "2x oversampled 16kHz EQ should preserve more open 19kHz response ($mag2xAt19k dB) than 1x cramped biquad ($mag1xAt19k dB)",
+            mag2xAt19k > mag1xAt19k + 0.5
+        )
+
+        // 2. 1x 48kHz High Shelf vs 2x 96kHz High Shelf (4.7kHz +6dB): verify 2x matches ideal analog slope far closer than cramped 1x
+        val oneXShelf = com.example.audio.StereoBiquad().apply {
+            setHighShelf(sampleRate, 4700.0, 0.7071, 6.0)
+        }
+        val probeHz = 12000.0
+        val shelf1xAtProbe = oneXShelf.magnitudeDbAt(sampleRate, probeHz)
+        val shelf2xAtProbe = com.example.audio.OversampledUpperEqStage.compute2xThreeBandHighShelfDbAt(
+            freqHz = probeHz,
+            trebleDb = 6.0,
+            baseSampleRate = sampleRate
+        )
+        // Compute 8x oversampled reference (virtually zero bilinear cramping) as continuous-time analog ground truth
+        val analogShelfRef = com.example.audio.StereoBiquad().apply {
+            setHighShelf(sampleRate * 8, 4700.0, 0.7071, 6.0)
+        }.magnitudeDbAt(sampleRate * 8, probeHz)
+        val err1x = kotlin.math.abs(shelf1xAtProbe - analogShelfRef)
+        val err2x = kotlin.math.abs(shelf2xAtProbe - analogShelfRef)
+        assertTrue(
+            "2x oversampled 4.7kHz high shelf error ($err2x dB) must be significantly smaller than cramped 1x error ($err1x dB) vs analog ($analogShelfRef dB)",
+            err2x < err1x * 0.45
+        )
+
+        // 3. Strict mutual exclusion in BiquadEqFilterBank with oversampledEqEnabled = true
+        val threeBandActive = BiquadEqFilterBank(sampleRate).apply {
+            updateParameters(
+                gainsDb = List(10) { 12f },
+                preampDb = 0f,
+                isBypassed = false,
+                tenBandEnabled = false,
+                threeBandEnabled = true,
+                threeBandBassDb = 0f,
+                threeBandMidsDb = 0f,
+                threeBandTrebleDb = -6f,
+                oversampledEqEnabled = true
+            )
+        }
+        val tenBandActive = BiquadEqFilterBank(sampleRate).apply {
+            updateParameters(
+                gainsDb = listOf(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 10f),
+                preampDb = 0f,
+                isBypassed = false,
+                tenBandEnabled = true,
+                threeBandEnabled = false,
+                threeBandBassDb = 0f,
+                threeBandMidsDb = 0f,
+                threeBandTrebleDb = -6f,
+                oversampledEqEnabled = true
+            )
+        }
+
+        var rms3 = 0.0
+        var rms10 = 0.0
+        for (i in 0 until 4800) {
+            val s = 0.08 * kotlin.math.sin(2.0 * Math.PI * 16000.0 * i / sampleRate)
+            val (o3, _) = threeBandActive.processStereoSample(s, s)
+            val (o10, _) = tenBandActive.processStereoSample(s, s)
+            if (i > 2400) {
+                rms3 += o3 * o3
+                rms10 += o10 * o10
+            }
+        }
+        rms3 = kotlin.math.sqrt(rms3 / 2400)
+        rms10 = kotlin.math.sqrt(rms10 / 2400)
+        val inRms = 0.08 / kotlin.math.sqrt(2.0)
+
+        assertTrue("When 3-Band -6dB Treble is active at 2x, 10-band +12dB must stay bypassed ($rms3 < $inRms)", rms3 < inRms * 0.7)
+        assertTrue("When 10-Band +10dB @ 16kHz is active at 2x, 3-band -6dB Treble must stay bypassed ($rms10 > $inRms)", rms10 > inRms * 1.8)
+    }
+
+    @Test
+    fun harmonic_sheen_adds_clean_even_harmonics_under_0_4_percent_thd() {
+        val sampleRate = 48000
+        val sheen = com.example.audio.HarmonicSheenAndStereoFocusProcessor(sampleRate).apply {
+            configure(isEnabled = true, percent = 1.0f)
+        }
+
+        var corr2ndCos = 0.0
+        var corr2ndSin = 0.0
+        var corr3rdCos = 0.0
+        var corr3rdSin = 0.0
+        for (i in 0 until 9600) {
+            val sig = 0.35 * kotlin.math.sin(2.0 * Math.PI * 3000.0 * i / sampleRate)
+            val (oL, _) = sheen.processStereoSample(sig, sig)
+            if (i > 4800) {
+                corr2ndCos += oL * kotlin.math.cos(2.0 * Math.PI * 6000.0 * i / sampleRate)
+                corr2ndSin += oL * kotlin.math.sin(2.0 * Math.PI * 6000.0 * i / sampleRate)
+                corr3rdCos += oL * kotlin.math.cos(2.0 * Math.PI * 9000.0 * i / sampleRate)
+                corr3rdSin += oL * kotlin.math.sin(2.0 * Math.PI * 9000.0 * i / sampleRate)
+            }
+        }
+        val amp2nd = kotlin.math.hypot(corr2ndCos, corr2ndSin) / 2400.0
+        val amp3rd = kotlin.math.hypot(corr3rdCos, corr3rdSin) / 2400.0
+
+        assertTrue("2nd-order even harmonic @ 6kHz must be present ($amp2nd)", amp2nd > 0.0001)
+        assertTrue("3rd-order odd harmonic harshness @ 9kHz must stay negligible ($amp3rd vs $amp2nd)", amp3rd < amp2nd * 0.1)
+        assertTrue(
+            "Analog Harmonic Sheen THD must stay strictly below 0.40% (got ${sheen.latestThdPercent}%)",
+            sheen.latestThdPercent in 0.01f..com.example.model.StudioHiResSpecs.HARMONIC_SHEEN_MAX_THD_PCT
+        )
+    }
+
+    @Test
+    fun zero_noise_floor_gate_auto_mutes_below_minus_75dbfs_and_dithers_live_signal() {
+        val sampleRate = 48000
+        val gate = com.example.audio.ZeroNoiseFloorGateAndDitherer(sampleRate).apply {
+            enabled = true
+        }
+
+        // 1. Live -20 dBFS signal opens gate and stays unmuted with active TPDF dithering
+        var maxLivePcm = 0
+        for (i in 0 until 2400) {
+            val live = 0.1 * kotlin.math.sin(2.0 * Math.PI * 1000.0 * i / sampleRate)
+            val (oL, _) = gate.processStereoSample(live, live)
+            maxLivePcm = maxOf(maxLivePcm, abs(gate.quantize16BitPcm(oL, isLeft = true).toInt()))
+        }
+        assertEquals(false, gate.isAutoMuted)
+        assertTrue("Live -20 dBFS audio must pass cleanly through open gate", maxLivePcm > 2500)
+
+        // 2. Ultra-quiet noise below -75 dBFS (-84 dBFS ~ 6.3e-5) closes gate after 120ms hold + 180ms release -> exact 0.0
+        val hissAmp = Math.pow(10.0, -84.0 / 20.0)
+        var lastL = 1.0
+        var lastR = 1.0
+        var lastPcm: Short = 1
+        for (i in 0 until (sampleRate * 0.6).toInt()) {
+            val hiss = hissAmp * kotlin.math.sin(2.0 * Math.PI * 3000.0 * i / sampleRate)
+            val (oL, oR) = gate.processStereoSample(hiss, -hiss)
+            lastL = oL
+            lastR = oR
+            lastPcm = gate.quantize16BitPcm(oL, isLeft = true)
+        }
+        assertEquals(true, gate.isAutoMuted)
+        assertEquals(0.0, lastL, 0.0)
+        assertEquals(0.0, lastR, 0.0)
+        assertEquals(0.toShort(), lastPcm)
+    }
+
+    @Test
+    fun listening_mode_defaults_to_adaptive_for_headphones_and_bluetooth_and_off_for_speaker() {
+        val speakerProfile = com.example.model.OutputEqProfile(target = com.example.model.OutputTarget.SPEAKER)
+        val hpProfile = com.example.model.OutputEqProfile(target = com.example.model.OutputTarget.HEADPHONES)
+        val btProfile = com.example.model.OutputEqProfile(target = com.example.model.OutputTarget.BLUETOOTH)
+
+        assertEquals(com.example.model.ListeningMode.OFF, speakerProfile.listeningMode)
+        assertEquals(com.example.model.ListeningMode.ADAPTIVE, hpProfile.listeningMode)
+        assertEquals(com.example.model.ListeningMode.ADAPTIVE, btProfile.listeningMode)
+    }
+
+    @Test
+    fun listening_mode_processor_shapes_transparency_adaptive_anc_and_bypasses_speaker() {
+        val sampleRate = 48000
+        val proc = com.example.audio.ListeningModeProcessor(sampleRate)
+
+        // 1. Disengages cleanly on SPEAKER even if ANC requested
+        proc.configure(
+            isEnabled = true,
+            mode = com.example.model.ListeningMode.NOISE_CANCELLATION,
+            outputTarget = com.example.model.OutputTarget.SPEAKER
+        )
+        assertEquals(false, proc.isEngaged)
+        assertEquals(com.example.model.ListeningMode.OFF, proc.activeMode)
+        val (spkOutL, spkOutR) = proc.processStereoSample(0.25, -0.15)
+        assertEquals(0.25, spkOutL, 1e-9)
+        assertEquals(-0.15, spkOutR, 1e-9)
+
+        // 2. NOISE_CANCELLATION on HEADPHONES attenuates 75Hz cabin hum & reports -28 dB ANC isolation
+        proc.configure(
+            isEnabled = true,
+            mode = com.example.model.ListeningMode.NOISE_CANCELLATION,
+            outputTarget = com.example.model.OutputTarget.HEADPHONES
+        )
+        assertEquals(true, proc.isEngaged)
+        assertEquals(-28.0f, proc.latestIsolationDb, 0.01f)
+        var humRmsSq = 0.0
+        for (i in 0 until 4800) {
+            val hum = 0.2 * kotlin.math.sin(2.0 * Math.PI * 75.0 * i / sampleRate)
+            val (oL, _) = proc.processStereoSample(hum, hum)
+            if (i > 2400) humRmsSq += oL * oL
+        }
+        val humOutRms = kotlin.math.sqrt(humRmsSq / 2400.0)
+        val humInRms = 0.2 / kotlin.math.sqrt(2.0)
+        assertTrue("ANC should strongly attenuate 75Hz hum ($humOutRms < $humInRms)", humOutRms < humInRms * 0.72)
+
+        // 3. TRANSPARENCY on BLUETOOTH gives open 2.2kHz presence (+1.6 dB) and +8% side air
+        proc.configure(
+            isEnabled = true,
+            mode = com.example.model.ListeningMode.TRANSPARENCY,
+            outputTarget = com.example.model.OutputTarget.BLUETOOTH
+        )
+        assertEquals(true, proc.isEngaged)
+        assertEquals(1.6f, proc.latestIsolationDb, 0.05f)
+        var openRmsSq = 0.0
+        for (i in 0 until 4800) {
+            val pres = 0.1 * kotlin.math.sin(2.0 * Math.PI * 2200.0 * i / sampleRate)
+            val (oL, _) = proc.processStereoSample(pres, pres)
+            if (i > 2400) openRmsSq += oL * oL
+        }
+        val openOutRms = kotlin.math.sqrt(openRmsSq / 2400.0)
+        val openInRms = 0.1 / kotlin.math.sqrt(2.0)
+        assertTrue("Transparency should lift 2.2kHz natural openness ($openOutRms > $openInRms)", openOutRms > openInRms * 1.12)
+
+        // 4. ADAPTIVE dynamically reacts to hot 4.2kHz transient clutter while preserving speech
+        val bank = BiquadEqFilterBank(sampleRate).apply {
+            updateParameters(
+                gainsDb = List(10) { 0f },
+                preampDb = 0f,
+                isBypassed = false,
+                outputTarget = com.example.model.OutputTarget.BLUETOOTH,
+                listeningMode = com.example.model.ListeningMode.ADAPTIVE
+            )
+        }
+        assertEquals(com.example.model.ListeningMode.ADAPTIVE, bank.activeListeningMode)
+        for (i in 0 until 4800) {
+            val clutter = 0.35 * kotlin.math.sin(2.0 * Math.PI * 4200.0 * i / sampleRate)
+            bank.processStereoSample(clutter, clutter)
+        }
+        assertTrue(
+            "Adaptive isolation telemetry should show active dynamic blend (${bank.latestListeningModeIsolationDb} dB)",
+            bank.latestListeningModeIsolationDb <= -10.0f
+        )
+    }
 }

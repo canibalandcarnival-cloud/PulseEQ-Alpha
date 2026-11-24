@@ -3,11 +3,13 @@ package com.example.audio
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
+import android.os.Build
 import com.example.model.AccommodationToneProfile
 import com.example.model.AudioMixMode
 import com.example.model.BackgroundSoundPreset
 import com.example.model.EqPresetsCatalog
 import com.example.model.FlagshipSpeakerSpecs
+import com.example.model.ListeningMode
 import com.example.model.NightIntensity
 import com.example.model.OutputTarget
 import com.example.model.PhoneOrientationMode
@@ -832,7 +834,8 @@ class ThreeBandToneFilter(private val sampleRate: Int = 44100) {
         bassDb: Float,
         midsDb: Float,
         trebleDb: Float,
-        isSpeakerTarget: Boolean = false
+        isSpeakerTarget: Boolean = false,
+        skipHighShelf: Boolean = false
     ) {
         enabled = isEnabled
         val clampedBass = if (isEnabled) {
@@ -845,7 +848,7 @@ class ThreeBandToneFilter(private val sampleRate: Int = 44100) {
         } else {
             0.0
         }
-        val clampedTreble = if (isEnabled) {
+        val clampedTreble = if (isEnabled && !skipHighShelf) {
             trebleDb.coerceIn(ThreeBandEqRanges.TREBLE_MIN_DB, ThreeBandEqRanges.TREBLE_MAX_DB).toDouble()
         } else {
             0.0
@@ -1129,7 +1132,9 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
     private val headphoneAccommodationsProcessor = HeadphoneAccommodationsProcessor(sampleRate)
     private val bandFilters = Array(10) { StereoBiquad() }
     private val threeBandToneFilter = ThreeBandToneFilter(sampleRate)
+    private val oversampledUpperEqStage = OversampledUpperEqStage(sampleRate)
     private val trebleSmoothnessProcessor = TrebleSmoothnessProcessor(sampleRate)
+    private val harmonicSheenProcessor = HarmonicSheenAndStereoFocusProcessor(sampleRate)
     private val volumeContourProcessor = IosVolumeContourAndDeHarshProcessor(sampleRate)
     private val audioMixStemShaper = AudioMixStemShaper(sampleRate)
     private val lateNightCompressor = DynamicRangeCompressor(sampleRate)
@@ -1141,6 +1146,8 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
     private val voiceIsolationProcessor = VoiceIsolationProcessor(sampleRate)
     private val adaptiveMultibandBalancer = AdaptiveMultibandToneBalancer(sampleRate)
     private val speakerPhaseAlignmentFilter = SpeakerPhaseAlignmentFilter(sampleRate)
+    private val listeningModeProcessor = ListeningModeProcessor(sampleRate)
+    private val noiseFloorGate = ZeroNoiseFloorGateAndDitherer(sampleRate)
 
     @Volatile
     private var preampLinear: Double = 1.0
@@ -1244,6 +1251,25 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
     val latestVolumeContourStatus: String
         get() = if (bypassed || abCompareHeld) "Bypassed" else volumeContourProcessor.volumeStatusLabel
 
+    val isOversampledEqActive: Boolean
+        get() = !bypassed && !abCompareHeld && oversampledUpperEqStage.enabled
+
+    val latestHarmonicSheenThdPct: Float
+        get() = if (bypassed || abCompareHeld) 0f else harmonicSheenProcessor.latestThdPercent
+
+    val isNoiseFloorGateMuted: Boolean
+        get() = !bypassed && !abCompareHeld && noiseFloorGate.isAutoMuted
+
+    val activeListeningMode: ListeningMode
+        get() = if (bypassed || abCompareHeld) ListeningMode.OFF else listeningModeProcessor.activeMode
+
+    val latestListeningModeIsolationDb: Float
+        get() = if (bypassed || abCompareHeld) 0f else listeningModeProcessor.latestIsolationDb
+
+    fun quantize16BitPcm(sample: Double, isLeft: Boolean): Short {
+        return noiseFloorGate.quantize16BitPcm(sample, isLeft)
+    }
+
     init {
         updateParameters(
             gainsDb = List(10) { 0f },
@@ -1268,7 +1294,10 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             threeBandTrebleDb = 0f,
             siliconDspEnabled = false,
             adaptiveMultibandEnabled = false,
-            speakerPhaseAlignmentEnabled = false
+            speakerPhaseAlignmentEnabled = false,
+            oversampledEqEnabled = false,
+            harmonicSheenPercent = 0f,
+            noiseFloorGateEnabled = false
         )
     }
 
@@ -1311,7 +1340,11 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         applyMasterVolumeGain: Boolean = false,
         proMaxBodyWarmthEnabled: Boolean = false,
         adaptiveMultibandEnabled: Boolean = false,
-        speakerPhaseAlignmentEnabled: Boolean = false
+        speakerPhaseAlignmentEnabled: Boolean = false,
+        oversampledEqEnabled: Boolean = false,
+        harmonicSheenPercent: Float = 0f,
+        noiseFloorGateEnabled: Boolean = false,
+        listeningMode: ListeningMode = ListeningMode.OFF
     ) {
         bypassed = isBypassed
         this.abCompareHeld = abCompareHeld
@@ -1354,12 +1387,29 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             bassDb = if (activeThreeBand) threeBandBassDb else 0f,
             midsDb = if (activeThreeBand) threeBandMidsDb else 0f,
             trebleDb = if (activeThreeBand) threeBandTrebleDb else 0f,
-            isSpeakerTarget = (outputTarget == OutputTarget.SPEAKER)
+            isSpeakerTarget = (outputTarget == OutputTarget.SPEAKER),
+            skipHighShelf = oversampledEqEnabled
+        )
+        oversampledUpperEqStage.configure(
+            isEnabled = oversampledEqEnabled && effectiveProcessing,
+            useTenBand = activeTenBand,
+            useThreeBand = activeThreeBand,
+            gain8kDb = gainsDb.getOrElse(8) { 0f },
+            gain16kDb = gainsDb.getOrElse(9) { 0f },
+            threeBandTrebleDb = threeBandTrebleDb
         )
         trebleSmoothnessProcessor.configure(
             isEnabled = effectiveProcessing && trebleSmoothnessPercent > 0.005f,
             smoothnessPercent = trebleSmoothnessPercent
         )
+        harmonicSheenProcessor.configure(
+            isEnabled = effectiveProcessing && harmonicSheenPercent > 0.005f,
+            percent = harmonicSheenPercent
+        )
+        noiseFloorGate.enabled = noiseFloorGateEnabled && effectiveProcessing
+        if (!noiseFloorGate.enabled) {
+            noiseFloorGate.reset()
+        }
         volumeContourProcessor.configure(
             isEnabled = effectiveProcessing,
             volumePercent = masterVolumePercent,
@@ -1400,6 +1450,11 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             outputTarget = outputTarget,
             speakerDspEnabled = speakerDspEnabled
         )
+        listeningModeProcessor.configure(
+            isEnabled = effectiveProcessing,
+            mode = listeningMode,
+            outputTarget = outputTarget
+        )
 
         val activeBandGains = if (activeTenBand) gainsDb else List(10) { 0f }
         val threeBandAvg = if (activeThreeBand) {
@@ -1432,8 +1487,10 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
 
         for (i in 0 until 10) {
             val freq = EqPresetsCatalog.BANDS[i].frequencyHz.toDouble()
-            // Flat 0 dB bypass on all 10-band biquads whenever 3-Band EQ is active
-            val db = if (activeTenBand && effectiveProcessing) gainsDb.getOrElse(i) { 0f }.toDouble() else 0.0
+            // Flat 0 dB bypass on all 10-band biquads whenever 3-Band EQ is active;
+            // when 2x Oversampled EQ is active, 8kHz (8) and 16kHz (9) run at 96 kHz in oversampledUpperEqStage.
+            val processedAt2x = oversampledEqEnabled && i >= 8
+            val db = if (activeTenBand && effectiveProcessing && !processedAt2x) gainsDb.getOrElse(i) { 0f }.toDouble() else 0.0
             bandFilters[i].setPeaking(sampleRate, freq, 1.414, db)
         }
     }
@@ -1466,24 +1523,28 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         }
 
         val (toneL, toneR) = threeBandToneFilter.processStereoSample(l, r)
-        val (smoothL, smoothR) = trebleSmoothnessProcessor.processStereoSample(toneL, toneR)
-        val (mixL, mixR) = audioMixStemShaper.processStereoSample(smoothL, smoothR)
+        val (osL, osR) = oversampledUpperEqStage.processStereoSample(toneL, toneR)
+        val (smoothL, smoothR) = trebleSmoothnessProcessor.processStereoSample(osL, osR)
+        val (sheenL, sheenR) = harmonicSheenProcessor.processStereoSample(smoothL, smoothR)
+        val (mixL, mixR) = audioMixStemShaper.processStereoSample(sheenL, sheenR)
         val (isoL, isoR) = voiceIsolationProcessor.processStereoSample(mixL, mixR)
         val (compL, compR) = lateNightCompressor.processStereoSample(isoL, isoR)
         val (spatL, spatR) = spatialAudioEngine.processStereoSample(compL, compR)
         val (spkL, spkR) = speakerDspChain.processStereoSample(spatL, spatR)
-        val (phaseL, phaseR) = speakerPhaseAlignmentFilter.processStereoSample(spkL, spkR)
+        val (listenL, listenR) = listeningModeProcessor.processStereoSample(spkL, spkR)
+        val (phaseL, phaseR) = speakerPhaseAlignmentFilter.processStereoSample(listenL, listenR)
         val (maxL, maxR) = loudnessMaximizerChain.processStereoSample(phaseL, phaseR)
         val (mbL, mbR) = adaptiveMultibandBalancer.processStereoSample(maxL, maxR)
         val (silL, silR) = siliconDspCore.processStereoSample(mbL, mbR)
         val (volL, volR) = volumeContourProcessor.processStereoSample(silL, silR)
 
-        // Final safety ceiling + Conversation Awareness auto-ducking
-        return if (loudnessMaximizerChain.enabled || speakerDspChain.speakerDspEnabled || siliconDspCore.enabled) {
+        // Final safety ceiling + Conversation Awareness auto-ducking -> Zero-Noise Gate (-75 dBFS) + TPDF Dither
+        val (safeL, safeR) = if (loudnessMaximizerChain.enabled || speakerDspChain.speakerDspEnabled || siliconDspCore.enabled) {
             (volL * duck).coerceIn(-0.99, 0.99) to (volR * duck).coerceIn(-0.99, 0.99)
         } else {
             tanh(volL * duck * 0.92) to tanh(volR * duck * 0.92)
         }
+        return noiseFloorGate.processStereoSample(safeL, safeR)
     }
 }
 
@@ -1493,7 +1554,7 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
  * Late Night compression, Sound Check, Voice Isolation & Background Sounds immediately.
  */
 class TestAudioSynthesizer {
-    private val sampleRate = com.example.model.SiliconDspSpecs.SAMPLE_RATE_HZ
+    private val sampleRate = com.example.model.StudioHiResSpecs.SAMPLE_RATE_HZ
     private val filterBank = BiquadEqFilterBank(sampleRate)
     private val backgroundSynth = BackgroundSoundsSynthesizer(sampleRate)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -1583,6 +1644,21 @@ class TestAudioSynthesizer {
     val latestVolumeContourStatus: String
         get() = filterBank.latestVolumeContourStatus
 
+    val isOversampledEqActive: Boolean
+        get() = filterBank.isOversampledEqActive
+
+    val latestHarmonicSheenThdPct: Float
+        get() = filterBank.latestHarmonicSheenThdPct
+
+    val isNoiseFloorGateMuted: Boolean
+        get() = filterBank.isNoiseFloorGateMuted
+
+    val activeListeningMode: ListeningMode
+        get() = filterBank.activeListeningMode
+
+    val latestListeningModeIsolationDb: Float
+        get() = filterBank.latestListeningModeIsolationDb
+
     fun setConversationDuckGain(duckGainLinear: Float) {
         filterBank.conversationDuckLinear = duckGainLinear.toDouble()
     }
@@ -1627,7 +1703,11 @@ class TestAudioSynthesizer {
         masterVolumePercent: Float = 0.75f,
         proMaxBodyWarmthEnabled: Boolean = false,
         adaptiveMultibandEnabled: Boolean = false,
-        speakerPhaseAlignmentEnabled: Boolean = false
+        speakerPhaseAlignmentEnabled: Boolean = false,
+        oversampledEqEnabled: Boolean = false,
+        harmonicSheenPercent: Float = 0f,
+        noiseFloorGateEnabled: Boolean = false,
+        listeningMode: ListeningMode = ListeningMode.OFF
     ) {
         backgroundPreset = bgSoundPreset
         backgroundVolume = bgSoundVolume
@@ -1670,7 +1750,11 @@ class TestAudioSynthesizer {
             applyMasterVolumeGain = true,
             proMaxBodyWarmthEnabled = proMaxBodyWarmthEnabled,
             adaptiveMultibandEnabled = adaptiveMultibandEnabled,
-            speakerPhaseAlignmentEnabled = speakerPhaseAlignmentEnabled
+            speakerPhaseAlignmentEnabled = speakerPhaseAlignmentEnabled,
+            oversampledEqEnabled = oversampledEqEnabled,
+            harmonicSheenPercent = harmonicSheenPercent,
+            noiseFloorGateEnabled = noiseFloorGateEnabled,
+            listeningMode = listeningMode
         )
     }
 
@@ -1720,8 +1804,13 @@ class TestAudioSynthesizer {
                         .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
                         .build()
                 )
-                .setBufferSizeInBytes(minBuf * 2)
+                .setBufferSizeInBytes(minBuf * com.example.model.StudioHiResSpecs.PLAYBACK_BUFFER_MULTIPLIER)
                 .setTransferMode(AudioTrack.MODE_STREAM)
+                .apply {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        setPerformanceMode(AudioTrack.PERFORMANCE_MODE_NONE)
+                    }
+                }
                 .build()
         } catch (_: Throwable) {
             _currentSource.value = TestAudioSource.OFF
@@ -1818,8 +1907,8 @@ class TestAudioSynthesizer {
                     val mixedR = procR + bgR * filterBank.conversationDuckLinear
                     val clampedL = mixedL.coerceIn(-1.0, 1.0)
                     val clampedR = mixedR.coerceIn(-1.0, 1.0)
-                    pcmBuffer[i * 2] = (clampedL * 32767.0).toInt().toShort()
-                    pcmBuffer[i * 2 + 1] = (clampedR * 32767.0).toInt().toShort()
+                    pcmBuffer[i * 2] = filterBank.quantize16BitPcm(clampedL, isLeft = true)
+                    pcmBuffer[i * 2 + 1] = filterBank.quantize16BitPcm(clampedR, isLeft = false)
 
                     val mono = (clampedL + clampedR) * 0.5
                     if (i < 512) monoAnalysis[i] = mono

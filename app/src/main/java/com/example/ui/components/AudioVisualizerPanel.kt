@@ -51,12 +51,14 @@ import com.example.audio.AudioMixStemShaper
 import com.example.audio.HeadphoneAccommodationsProcessor
 import com.example.audio.IosVolumeContourAndDeHarshProcessor
 import com.example.audio.IphoneLoudnessMaximizerChain
+import com.example.audio.ListeningModeProcessor
 import com.example.audio.PhoneSpeakerDspChain
 import com.example.audio.ThreeBandToneFilter
 import com.example.audio.TrebleSmoothnessProcessor
 import com.example.model.AccommodationToneProfile
 import com.example.model.AudioMixMode
 import com.example.model.EqPresetsCatalog
+import com.example.model.ListeningMode
 import com.example.model.OutputTarget
 import com.example.model.SoftSoundIntensity
 import com.example.model.SpatialMode
@@ -117,6 +119,7 @@ fun AudioVisualizerPanel(
     masterVolumePercent: Float = 0.75f,
     speakerDspEnabled: Boolean = false,
     proMaxBodyWarmthEnabled: Boolean = false,
+    listeningMode: ListeningMode = ListeningMode.OFF,
     modifier: Modifier = Modifier
 ) {
     val activeThreeBand = threeBandEnabled && !tenBandEnabled
@@ -192,7 +195,16 @@ fun AudioVisualizerPanel(
         } else {
             0f
         }
-        val target = if (isBypassed) 0f else (tenBandGain + toneOffset + accommodationsOffset + smoothnessOffset + loudnessOffset + audioMixOffset + volumeContourOffset + bodyWarmthOffset + preampDb * 0.5f)
+        val listeningModeOffset = if (!isBypassed && (outputTarget == OutputTarget.HEADPHONES || outputTarget == OutputTarget.BLUETOOTH)) {
+            ListeningModeProcessor.computeContourResponseDbAt(
+                freqHz = freqHz,
+                mode = listeningMode,
+                target = outputTarget
+            )
+        } else {
+            0f
+        }
+        val target = if (isBypassed) 0f else (tenBandGain + toneOffset + accommodationsOffset + smoothnessOffset + loudnessOffset + audioMixOffset + volumeContourOffset + bodyWarmthOffset + listeningModeOffset + preampDb * 0.5f)
             .coerceIn(EqPresetsCatalog.MIN_GAIN_DB, EqPresetsCatalog.MAX_GAIN_DB)
         val anim by animateFloatAsState(
             targetValue = target,

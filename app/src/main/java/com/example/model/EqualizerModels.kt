@@ -204,6 +204,38 @@ enum class PhoneOrientationMode(
     LANDSCAPE("landscape", "Landscape")
 }
 
+enum class ListeningMode(
+    val id: String,
+    val label: String,
+    val badge: String,
+    val subtitle: String
+) {
+    OFF(
+        id = "off",
+        label = "Off",
+        badge = "Direct",
+        subtitle = "Passive isolation only"
+    ),
+    TRANSPARENCY(
+        id = "transparency",
+        label = "Transparency",
+        badge = "Ambient Open",
+        subtitle = "Natural external presence & open-ear air contour"
+    ),
+    ADAPTIVE(
+        id = "adaptive",
+        label = "Adaptive",
+        badge = "Dynamic Blend",
+        subtitle = "Real-time ambient control & speech-preserving balance"
+    ),
+    NOISE_CANCELLATION(
+        id = "noise_cancellation",
+        label = "Noise Cancellation",
+        badge = "Active ANC",
+        subtitle = "Sub-rumble hum suppression & isolated studio focus"
+    )
+}
+
 enum class SoftSoundIntensity(
     val id: String,
     val label: String,
@@ -287,7 +319,13 @@ data class AudioLabTelemetry(
     val multibandMidGrDb: Float = 0f,
     val multibandHighGrDb: Float = 0f,
     val phaseAlignmentActive: Boolean = false,
-    val soundCheckCrestDb: Float = 0f
+    val soundCheckCrestDb: Float = 0f,
+    val studioSampleRateHz: Int = 48000,
+    val oversampledEqActive: Boolean = true,
+    val harmonicSheenThdPct: Float = 0f,
+    val noiseFloorGateMuted: Boolean = false,
+    val activeListeningMode: ListeningMode = ListeningMode.OFF,
+    val listeningModeIsolationDb: Float = 0f
 )
 
 @Immutable
@@ -345,9 +383,19 @@ data class OutputEqProfile(
     val masterVolumePercent: Float = 0.75f,
     val proMaxBodyWarmthEnabled: Boolean = (target == OutputTarget.SPEAKER),
     val adaptiveMultibandEnabled: Boolean = true,
-    val speakerPhaseAlignmentEnabled: Boolean = (target == OutputTarget.SPEAKER)
+    val speakerPhaseAlignmentEnabled: Boolean = (target == OutputTarget.SPEAKER),
+    val oversampledEqEnabled: Boolean = true,
+    val harmonicSheenPercent: Float = 0.25f,
+    val noiseFloorGateEnabled: Boolean = true,
+    val listeningMode: ListeningMode = defaultListeningModeForTarget(target)
 ) {
     companion object {
+        fun defaultListeningModeForTarget(target: OutputTarget): ListeningMode = when (target) {
+            OutputTarget.SPEAKER -> ListeningMode.OFF
+            OutputTarget.HEADPHONES,
+            OutputTarget.BLUETOOTH -> ListeningMode.ADAPTIVE
+        }
+
         fun defaultTrebleSmoothnessForTarget(target: OutputTarget): Float = when (target) {
             OutputTarget.SPEAKER -> 0.35f
             OutputTarget.HEADPHONES,
@@ -552,6 +600,27 @@ object AdaptiveMultibandPhaseSpecs {
     // Apple Music Sound Check Dynamic Crest Controller
     const val SOUND_CHECK_TARGET_LUFS = -16.0
     const val CREST_SOFT_LIMITER_CEILING = 0.96
+}
+
+object StudioHiResSpecs {
+    const val SAMPLE_RATE_HZ = 48000
+    const val PLAYBACK_BUFFER_MULTIPLIER = 4
+
+    // 2x Oversampled EQ (96 kHz internal rate at 48 kHz) for anti-cramped highs
+    const val ANTI_ALIAS_LPF_RATIO = 0.455
+    const val HARMONIC_SHEEN_BAND_CENTER_HZ = 3464.0 // sqrt(2000 * 6000)
+    const val HARMONIC_SHEEN_BAND_Q = 0.85
+    const val HARMONIC_SHEEN_OVERTONE_HPF_HZ = 3800.0
+    const val HARMONIC_SHEEN_OVERTONE_LPF_HZ = 14000.0
+    const val HARMONIC_SHEEN_MAX_THD_PCT = 0.40f
+    const val HARMONIC_SHEEN_MAX_DRIVE_BLEND = 0.011 // yields ~0.22%-0.32% pure 2nd-order THD at 100%
+
+    // -75 dBFS Zero-Noise Floor Gate + TPDF Dither
+    const val NOISE_GATE_THRESHOLD_DBFS = -75.0
+    const val NOISE_GATE_ATTACK_MS = 2.0
+    const val NOISE_GATE_HOLD_MS = 120.0
+    const val NOISE_GATE_RELEASE_MS = 180.0
+    const val TPDF_DITHER_24BIT_LSB = 1.0 / 8388608.0 // +/-1 LSB @ 24-bit mastering resolution
 }
 
 @Immutable

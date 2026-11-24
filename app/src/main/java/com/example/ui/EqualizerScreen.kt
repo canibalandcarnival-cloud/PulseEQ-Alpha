@@ -60,6 +60,7 @@ import com.example.ui.components.HeadphoneAccommodationsCard
 import com.example.ui.components.HearingCheckDialog
 import com.example.ui.components.IosAudioLabCard
 import com.example.ui.components.LateNightDynamicsCard
+import com.example.ui.components.ListeningModeCard
 import com.example.ui.components.LoudnessMaximizerCard
 import com.example.ui.components.MasterActionBar
 import com.example.ui.components.OutputDeviceSelector
@@ -69,6 +70,7 @@ import com.example.ui.components.PresetsBrowserSheet
 import com.example.ui.components.SiliconDspCard
 import com.example.ui.components.SpatialAudioCard
 import com.example.ui.components.SpeakerDspCard
+import com.example.ui.components.StudioHiResMasteringCard
 import com.example.ui.components.ThreeBandEqualizerCard
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -327,6 +329,20 @@ private fun CompactConsoleLayout(
             onToggleAutoSwitch = viewModel::toggleAutoSwitch
         )
 
+        AnimatedVisibility(
+            visible = uiState.selectedTarget == OutputTarget.HEADPHONES ||
+                uiState.selectedTarget == OutputTarget.BLUETOOTH
+        ) {
+            ListeningModeCard(
+                listeningMode = profile.listeningMode,
+                outputTarget = uiState.selectedTarget,
+                isMasterBypassed = profile.isBypassed,
+                abCompareHeld = uiState.abCompareHeld,
+                telemetry = uiState.audioLabTelemetry,
+                onSelectListeningMode = viewModel::setListeningMode
+            )
+        }
+
         AudioVisualizerPanel(
             frame = uiState.visualizerFrame,
             bandGainsDb = profile.bandGainsDb,
@@ -356,7 +372,8 @@ private fun CompactConsoleLayout(
             siliconDspEnabled = profile.siliconDspEnabled,
             masterVolumePercent = profile.masterVolumePercent,
             speakerDspEnabled = profile.speakerDspEnabled,
-            proMaxBodyWarmthEnabled = profile.proMaxBodyWarmthEnabled
+            proMaxBodyWarmthEnabled = profile.proMaxBodyWarmthEnabled,
+            listeningMode = profile.listeningMode
         )
 
         MasterActionBar(
@@ -464,6 +481,18 @@ private fun CompactConsoleLayout(
             onToggleAdaptiveMultiband = viewModel::toggleAdaptiveMultiband,
             onToggleSpeakerPhaseAlignment = viewModel::toggleSpeakerPhaseAlignment,
             onToggleSoundCheck = viewModel::toggleSoundCheck
+        )
+
+        StudioHiResMasteringCard(
+            oversampledEqEnabled = profile.oversampledEqEnabled,
+            harmonicSheenPercent = profile.harmonicSheenPercent,
+            noiseFloorGateEnabled = profile.noiseFloorGateEnabled,
+            isMasterBypassed = profile.isBypassed,
+            abCompareHeld = uiState.abCompareHeld,
+            telemetry = uiState.audioLabTelemetry,
+            onToggleOversampledEq = viewModel::toggleOversampledEq,
+            onHarmonicSheenChange = viewModel::updateHarmonicSheen,
+            onToggleNoiseFloorGate = viewModel::toggleNoiseFloorGate
         )
 
         LateNightDynamicsCard(
@@ -574,6 +603,20 @@ private fun WideConsoleLayout(
                     onToggleAutoSwitch = viewModel::toggleAutoSwitch
                 )
 
+                AnimatedVisibility(
+                    visible = uiState.selectedTarget == OutputTarget.HEADPHONES ||
+                        uiState.selectedTarget == OutputTarget.BLUETOOTH
+                ) {
+                    ListeningModeCard(
+                        listeningMode = profile.listeningMode,
+                        outputTarget = uiState.selectedTarget,
+                        isMasterBypassed = profile.isBypassed,
+                        abCompareHeld = uiState.abCompareHeld,
+                        telemetry = uiState.audioLabTelemetry,
+                        onSelectListeningMode = viewModel::setListeningMode
+                    )
+                }
+
                 AudioVisualizerPanel(
                     frame = uiState.visualizerFrame,
                     bandGainsDb = profile.bandGainsDb,
@@ -603,7 +646,8 @@ private fun WideConsoleLayout(
                     siliconDspEnabled = profile.siliconDspEnabled,
                     masterVolumePercent = profile.masterVolumePercent,
                     speakerDspEnabled = profile.speakerDspEnabled,
-                    proMaxBodyWarmthEnabled = profile.proMaxBodyWarmthEnabled
+                    proMaxBodyWarmthEnabled = profile.proMaxBodyWarmthEnabled,
+                    listeningMode = profile.listeningMode
                 )
 
                 PresetQuickStrip(
@@ -729,6 +773,18 @@ private fun WideConsoleLayout(
                     onToggleAdaptiveMultiband = viewModel::toggleAdaptiveMultiband,
                     onToggleSpeakerPhaseAlignment = viewModel::toggleSpeakerPhaseAlignment,
                     onToggleSoundCheck = viewModel::toggleSoundCheck
+                )
+
+                StudioHiResMasteringCard(
+                    oversampledEqEnabled = profile.oversampledEqEnabled,
+                    harmonicSheenPercent = profile.harmonicSheenPercent,
+                    noiseFloorGateEnabled = profile.noiseFloorGateEnabled,
+                    isMasterBypassed = profile.isBypassed,
+                    abCompareHeld = uiState.abCompareHeld,
+                    telemetry = uiState.audioLabTelemetry,
+                    onToggleOversampledEq = viewModel::toggleOversampledEq,
+                    onHarmonicSheenChange = viewModel::updateHarmonicSheen,
+                    onToggleNoiseFloorGate = viewModel::toggleNoiseFloorGate
                 )
 
                 LateNightDynamicsCard(

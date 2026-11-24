@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.model.EqPresetsCatalog
+import com.example.model.ListeningMode
 import com.example.model.NightIntensity
 import com.example.model.OutputEqProfile
 import com.example.model.OutputTarget
@@ -75,6 +76,10 @@ class EqPreferencesRepository(private val context: Context) {
         fun proMaxBodyWarmthKey(target: OutputTarget) = booleanPreferencesKey("pro_max_body_warmth_${target.id}")
         fun adaptiveMultibandKey(target: OutputTarget) = booleanPreferencesKey("adaptive_multiband_${target.id}")
         fun speakerPhaseAlignKey(target: OutputTarget) = booleanPreferencesKey("speaker_phase_align_${target.id}")
+        fun oversampledEqKey(target: OutputTarget) = booleanPreferencesKey("oversampled_eq_${target.id}")
+        fun harmonicSheenKey(target: OutputTarget) = floatPreferencesKey("harmonic_sheen_${target.id}")
+        fun noiseFloorGateKey(target: OutputTarget) = booleanPreferencesKey("noise_floor_gate_${target.id}")
+        fun listeningModeKey(target: OutputTarget) = stringPreferencesKey("listening_mode_${target.id}")
     }
 
     val preferencesFlow: Flow<StoredEqPreferences> = context.eqDataStore.data.map { prefs ->
@@ -197,7 +202,13 @@ class EqPreferencesRepository(private val context: Context) {
                 masterVolumePercent = (prefs[Keys.masterVolumeKey(target)] ?: 0.75f).coerceIn(0f, 1f),
                 proMaxBodyWarmthEnabled = prefs[Keys.proMaxBodyWarmthKey(target)] ?: (target == OutputTarget.SPEAKER),
                 adaptiveMultibandEnabled = prefs[Keys.adaptiveMultibandKey(target)] ?: true,
-                speakerPhaseAlignmentEnabled = prefs[Keys.speakerPhaseAlignKey(target)] ?: (target == OutputTarget.SPEAKER)
+                speakerPhaseAlignmentEnabled = prefs[Keys.speakerPhaseAlignKey(target)] ?: (target == OutputTarget.SPEAKER),
+                oversampledEqEnabled = prefs[Keys.oversampledEqKey(target)] ?: true,
+                harmonicSheenPercent = (prefs[Keys.harmonicSheenKey(target)] ?: 0.25f).coerceIn(0f, 1f),
+                noiseFloorGateEnabled = prefs[Keys.noiseFloorGateKey(target)] ?: true,
+                listeningMode = ListeningMode.entries.firstOrNull {
+                    it.name == prefs[Keys.listeningModeKey(target)]
+                } ?: OutputEqProfile.defaultListeningModeForTarget(target)
             )
         }
 
@@ -288,6 +299,10 @@ class EqPreferencesRepository(private val context: Context) {
             prefs[Keys.proMaxBodyWarmthKey(profile.target)] = profile.proMaxBodyWarmthEnabled
             prefs[Keys.adaptiveMultibandKey(profile.target)] = profile.adaptiveMultibandEnabled
             prefs[Keys.speakerPhaseAlignKey(profile.target)] = profile.speakerPhaseAlignmentEnabled
+            prefs[Keys.oversampledEqKey(profile.target)] = profile.oversampledEqEnabled
+            prefs[Keys.harmonicSheenKey(profile.target)] = profile.harmonicSheenPercent.coerceIn(0f, 1f)
+            prefs[Keys.noiseFloorGateKey(profile.target)] = profile.noiseFloorGateEnabled
+            prefs[Keys.listeningModeKey(profile.target)] = profile.listeningMode.name
         }
     }
 }

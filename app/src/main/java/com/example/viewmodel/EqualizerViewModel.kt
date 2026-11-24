@@ -16,6 +16,7 @@ import com.example.model.CustomAudioSetupUiState
 import com.example.model.EqPreset
 import com.example.model.EqPresetsCatalog
 import com.example.model.HearingCheckUiState
+import com.example.model.ListeningMode
 import com.example.model.NightIntensity
 import com.example.model.OutputEqProfile
 import com.example.model.OutputTarget
@@ -697,6 +698,46 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
         commitProfile(updated)
     }
 
+    fun toggleOversampledEq() {
+        val current = currentProfile()
+        val enabling = !current.oversampledEqEnabled
+        val updated = current.copy(
+            oversampledEqEnabled = enabling,
+            isBypassed = if (enabling && current.isBypassed) false else current.isBypassed
+        )
+        commitProfile(updated)
+    }
+
+    fun updateHarmonicSheen(rawPercent: Float) {
+        val current = currentProfile()
+        val snapped = ((rawPercent.coerceIn(0f, 1f) * 100f).roundToInt() / 100f).coerceIn(0f, 1f)
+        val updated = current.copy(
+            harmonicSheenPercent = snapped,
+            isBypassed = if (snapped > 0f && current.isBypassed) false else current.isBypassed
+        )
+        commitProfile(updated)
+    }
+
+    fun toggleNoiseFloorGate() {
+        val current = currentProfile()
+        val enabling = !current.noiseFloorGateEnabled
+        val updated = current.copy(
+            noiseFloorGateEnabled = enabling,
+            isBypassed = if (enabling && current.isBypassed) false else current.isBypassed
+        )
+        commitProfile(updated)
+    }
+
+    fun setListeningMode(mode: ListeningMode) {
+        val current = currentProfile()
+        if (current.target != OutputTarget.HEADPHONES && current.target != OutputTarget.BLUETOOTH) return
+        val updated = current.copy(
+            listeningMode = mode,
+            isBypassed = if (mode != ListeningMode.OFF && current.isBypassed) false else current.isBypassed
+        )
+        commitProfile(updated)
+    }
+
     fun openCustomAudioSetup() {
         audioEngine.customAudioSetupEngine.open(currentProfile().accommodationsSoftIntensity)
     }
@@ -860,7 +901,11 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             masterVolumePercent = profile.masterVolumePercent,
             proMaxBodyWarmthEnabled = profile.proMaxBodyWarmthEnabled,
             adaptiveMultibandEnabled = profile.adaptiveMultibandEnabled,
-            speakerPhaseAlignmentEnabled = profile.speakerPhaseAlignmentEnabled
+            speakerPhaseAlignmentEnabled = profile.speakerPhaseAlignmentEnabled,
+            oversampledEqEnabled = profile.oversampledEqEnabled,
+            harmonicSheenPercent = profile.harmonicSheenPercent,
+            noiseFloorGateEnabled = profile.noiseFloorGateEnabled,
+            listeningMode = profile.listeningMode
         )
     }
 

@@ -6,6 +6,7 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.MediaRecorder
+import android.os.Build
 import com.example.model.AudioMixMode
 import com.example.model.BackgroundSoundPreset
 import com.example.model.EqPresetsCatalog
@@ -13,6 +14,7 @@ import com.example.model.HearingCheckUiState
 import com.example.model.NightIntensity
 import com.example.model.OutputTarget
 import com.example.model.SpatialMode
+import com.example.model.StudioHiResSpecs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -319,7 +321,7 @@ class BackgroundSoundsSynthesizer(private val sampleRate: Int = 44100) {
  * allowing Apple's ambient sounds to play underneath Spotify, YouTube, or Podcasts.
  */
 class StandaloneBackgroundAudioPlayer {
-    private val sampleRate = 44100
+    private val sampleRate = StudioHiResSpecs.SAMPLE_RATE_HZ
     private val synth = BackgroundSoundsSynthesizer(sampleRate)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -366,8 +368,13 @@ class StandaloneBackgroundAudioPlayer {
                         .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
                         .build()
                 )
-                .setBufferSizeInBytes(minBuf * 2)
+                .setBufferSizeInBytes(minBuf * StudioHiResSpecs.PLAYBACK_BUFFER_MULTIPLIER)
                 .setTransferMode(AudioTrack.MODE_STREAM)
+                .apply {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        setPerformanceMode(AudioTrack.PERFORMANCE_MODE_NONE)
+                    }
+                }
                 .build()
         } catch (_: Throwable) {
             return
@@ -425,8 +432,8 @@ class ConversationAwarenessMonitor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var monitorJob: Job? = null
 
-    private val speechLowCut = StereoBiquad().apply { setHighPass(16000, 300.0, 0.707) }
-    private val speechHighCut = StereoBiquad().apply { setLowPass(16000, 3000.0, 0.707) }
+    private val speechLowCut = StereoBiquad().apply { setHighPass(StudioHiResSpecs.SAMPLE_RATE_HZ, 300.0, 0.707) }
+    private val speechHighCut = StereoBiquad().apply { setLowPass(StudioHiResSpecs.SAMPLE_RATE_HZ, 3000.0, 0.707) }
 
     @Volatile
     var isSpeechDetected: Boolean = false
@@ -444,35 +451,14 @@ class ConversationAwarenessMonitor(
         }
         if (monitorJob != null) return
 
-        val sampleRate = 16000
-        val minBuf = AudioRecord.getMinBufferSize(
-            sampleRate,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT
-        ).coerceAtLeast(2048)
-
-        val record = try {
-            AudioRecord(
-                MediaRecorder.AudioSource.VOICE_RECOGNITION,
-                sampleRate,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                minBuf * 2
-            )
-        } catch (_: Throwable) {
-            return
-        }
-
-        if (record.state != AudioRecord.STATE_INITIALIZED) {
-            try {
-                record.release()
-            } catch (_: Throwable) {
-            }
-            return
-        }
+        val capture = UnprocessedMicFactory.openRawMicCapture() ?: return
+        val record = capture.audioRecord
+        speechLowCut.setHighPass(capture.sampleRate, 300.0, 0.707)
+        speechHighCut.setLowPass(capture.sampleRate, 3000.0, 0.707)
 
         monitorJob = scope.launch {
-            val buf = ShortArray(640) // 40ms frames
+            val frameSamples = (capture.sampleRate * 0.04).toInt().coerceAtLeast(640)
+            val buf = ShortArray(frameSamples) // 40ms frames at raw mic rate
             var lastVoiceTimestampMs = 0L
             var speechActive = false
             var gain = 1f
@@ -612,7 +598,7 @@ class AudiogramCheckEngine {
     private fun launchToneForStep(stepIdx: Int) {
         stopTone()
         val freq = frequenciesHz[stepIdx].toDouble()
-        val sampleRate = 44100
+        val sampleRate = StudioHiResSpecs.SAMPLE_RATE_HZ
         val minBuf = AudioTrack.getMinBufferSize(
             sampleRate,
             AudioFormat.CHANNEL_OUT_MONO,
@@ -634,8 +620,13 @@ class AudiogramCheckEngine {
                         .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
                         .build()
                 )
-                .setBufferSizeInBytes(minBuf * 2)
+                .setBufferSizeInBytes(minBuf * StudioHiResSpecs.PLAYBACK_BUFFER_MULTIPLIER)
                 .setTransferMode(AudioTrack.MODE_STREAM)
+                .apply {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        setPerformanceMode(AudioTrack.PERFORMANCE_MODE_NONE)
+                    }
+                }
                 .build()
         } catch (_: Throwable) {
             trackFallbackTimer(stepIdx)
