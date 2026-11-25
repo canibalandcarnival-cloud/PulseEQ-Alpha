@@ -28,11 +28,11 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install dependencies and build web app
+     - name: Install dependencies and build web app
         working-directory: ${{ steps.root.outputs.dir }}
         run: |
           npm install --legacy-peer-deps
-          npm run build
+          npx vite build
 
       - name: Install Capacitor and add Android
         working-directory: ${{ steps.root.outputs.dir }}
