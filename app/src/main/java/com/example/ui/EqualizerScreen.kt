@@ -467,6 +467,7 @@ private fun CompactConsoleLayout(
             recommendedMode = profile.threeBandRecommendedMode,
             recommendedBannerVisible = profile.threeBandRecommendedBannerVisible,
             isSpeakerTarget = (uiState.selectedTarget == OutputTarget.SPEAKER),
+            isInfinixReferenceActive = profile.isInfinixHot60ThreeBandReferenceActive(),
             isMasterBypassed = profile.isBypassed,
             onBassChange = viewModel::updateThreeBandBass,
             onMidsChange = viewModel::updateThreeBandMids,
@@ -474,6 +475,7 @@ private fun CompactConsoleLayout(
             onToggleEnabled = viewModel::toggleThreeBandEnabled,
             onToggleSmartCurve = viewModel::toggleThreeBandSmartCurve,
             onSelectRecommendedMode = viewModel::setThreeBandRecommendedMode,
+            onApplyInfinixReference = viewModel::applyInfinixHot60ThreeBandReference,
             onDismissRecommendedBanner = viewModel::dismissThreeBandRecommendedBanner,
             onReset = viewModel::resetThreeBand
         )
@@ -768,6 +770,7 @@ private fun WideConsoleLayout(
                     recommendedMode = profile.threeBandRecommendedMode,
                     recommendedBannerVisible = profile.threeBandRecommendedBannerVisible,
                     isSpeakerTarget = (uiState.selectedTarget == OutputTarget.SPEAKER),
+                    isInfinixReferenceActive = profile.isInfinixHot60ThreeBandReferenceActive(),
                     isMasterBypassed = profile.isBypassed,
                     onBassChange = viewModel::updateThreeBandBass,
                     onMidsChange = viewModel::updateThreeBandMids,
@@ -775,6 +778,7 @@ private fun WideConsoleLayout(
                     onToggleEnabled = viewModel::toggleThreeBandEnabled,
                     onToggleSmartCurve = viewModel::toggleThreeBandSmartCurve,
                     onSelectRecommendedMode = viewModel::setThreeBandRecommendedMode,
+                    onApplyInfinixReference = viewModel::applyInfinixHot60ThreeBandReference,
                     onDismissRecommendedBanner = viewModel::dismissThreeBandRecommendedBanner,
                     onReset = viewModel::resetThreeBand
                 )

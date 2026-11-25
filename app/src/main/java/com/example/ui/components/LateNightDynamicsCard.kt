@@ -141,8 +141,18 @@ fun LateNightDynamicsCard(
                         style = MaterialTheme.typography.titleMedium.copy(fontSize = 14.sp),
                         color = TextPrimary
                     )
+                    val ratioStr = if (abs(nightIntensity.ratio - nightIntensity.ratio.roundToInt()) < 0.05f) {
+                        "${nightIntensity.ratio.roundToInt()}:1"
+                    } else {
+                        String.format(Locale.US, "%.1f:1", nightIntensity.ratio)
+                    }
+                    val makeupStr = if (abs(nightIntensity.makeupGainDb - nightIntensity.makeupGainDb.roundToInt()) < 0.05f) {
+                        "+${nightIntensity.makeupGainDb.roundToInt()}dB"
+                    } else {
+                        String.format(Locale.US, "+%.1fdB", nightIntensity.makeupGainDb)
+                    }
                     Text(
-                        text = "${nightIntensity.thresholdDb.toInt()}dB • 4:1 • 20dB knee • +${nightIntensity.makeupGainDb.toInt()}dB",
+                        text = "${nightIntensity.thresholdDb.toInt()}dB • $ratioStr • 20dB knee • $makeupStr",
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.5.sp),
                         color = if (active) WarmAmber else TextMuted
                     )
@@ -319,8 +329,13 @@ fun LateNightDynamicsCard(
             ) {
                 NightIntensity.entries.forEach { level ->
                     val selected = level == nightIntensity
+                    val lvlMakeup = if (abs(level.makeupGainDb - level.makeupGainDb.roundToInt()) < 0.05f) {
+                        "+${level.makeupGainDb.roundToInt()}dB"
+                    } else {
+                        String.format(Locale.US, "+%.1fdB", level.makeupGainDb)
+                    }
                     Text(
-                        text = "${level.label} (${level.thresholdDb.toInt()}dB / +${level.makeupGainDb.toInt()}dB)",
+                        text = "${level.label} (${level.thresholdDb.toInt()}dB / $lvlMakeup)",
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
                         color = if (selected) (if (lateNightEnabled) WarmAmber else TextPrimary) else TextMuted,
                         modifier = Modifier

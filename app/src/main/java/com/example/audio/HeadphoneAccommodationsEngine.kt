@@ -9,6 +9,8 @@ import android.media.MediaRecorder
 import android.os.Build
 import com.example.model.AccommodationToneProfile
 import com.example.model.CustomAudioSetupUiState
+import com.example.model.HeadphoneAccommodationsSpecs
+import com.example.model.OutputTarget
 import com.example.model.SetupAuditionSlot
 import com.example.model.SoftSoundIntensity
 import com.example.model.StudioHiResSpecs
@@ -49,6 +51,7 @@ class HeadphoneAccommodationsProcessor(private val sampleRate: Int = 44100) {
     private val eqBand2 = StereoBiquad()
     private val eqBand3 = StereoBiquad()
     private val eqBand4 = StereoBiquad()
+    private val mediatekSmoothnessDip3200 = StereoBiquad()
 
     private val parallelClarityHpf1200 = StereoBiquad()
     private val softSoundCompressor = DynamicRangeCompressor(sampleRate)
@@ -61,6 +64,9 @@ class HeadphoneAccommodationsProcessor(private val sampleRate: Int = 44100) {
 
     @Volatile
     private var mudCutEnabled: Boolean = false
+
+    @Volatile
+    private var mediatekSmoothnessEnabled: Boolean = false
 
     @Volatile
     private var parallelLiftMix: Double = 0.0
@@ -85,14 +91,15 @@ class HeadphoneAccommodationsProcessor(private val sampleRate: Int = 44100) {
         profile: AccommodationToneProfile,
         intensity: SoftSoundIntensity,
         outputGainDb: Float = 0f,
-        hfScale: Double = 1.0
+        hfScale: Double = 1.0,
+        outputTarget: OutputTarget = OutputTarget.HEADPHONES
     ) {
         enabled = isEnabled
         val scale = intensity.eqScale.toDouble()
         val cappedHfScale = hfScale.coerceIn(0.1, 1.0)
         val clampedOutDb = outputGainDb.coerceIn(
-            com.example.model.HeadphoneAccommodationsSpecs.OUTPUT_GAIN_MIN_DB,
-            com.example.model.HeadphoneAccommodationsSpecs.OUTPUT_GAIN_MAX_DB
+            HeadphoneAccommodationsSpecs.OUTPUT_GAIN_MIN_DB,
+            HeadphoneAccommodationsSpecs.OUTPUT_GAIN_MAX_DB
         )
         outputGainLinear = Math.pow(10.0, clampedOutDb / 20.0)
         parallelLiftMix = intensity.parallelMix.toDouble().coerceIn(0.0, 0.75)
@@ -130,19 +137,31 @@ class HeadphoneAccommodationsProcessor(private val sampleRate: Int = 44100) {
             }
         }
 
+        mediatekSmoothnessEnabled = isEnabled && (outputTarget != OutputTarget.SPEAKER)
+        if (mediatekSmoothnessEnabled) {
+            mediatekSmoothnessDip3200.setPeaking(
+                sampleRate,
+                HeadphoneAccommodationsSpecs.MEDIATEK_SMOOTHNESS_HZ,
+                HeadphoneAccommodationsSpecs.MEDIATEK_SMOOTHNESS_Q,
+                HeadphoneAccommodationsSpecs.MEDIATEK_SMOOTHNESS_DB
+            )
+        } else {
+            mediatekSmoothnessDip3200.reset()
+        }
+
         parallelClarityHpf1200.setHighPass(
             sampleRate,
-            com.example.model.HeadphoneAccommodationsSpecs.PARALLEL_CLARITY_HPF_HZ,
-            com.example.model.HeadphoneAccommodationsSpecs.PARALLEL_CLARITY_HPF_Q
+            HeadphoneAccommodationsSpecs.PARALLEL_CLARITY_HPF_HZ,
+            HeadphoneAccommodationsSpecs.PARALLEL_CLARITY_HPF_Q
         )
 
         softSoundCompressor.configureCustom(
             isEnabled = isEnabled && intensity.parallelMix > 0f,
-            threshold = com.example.model.HeadphoneAccommodationsSpecs.PARALLEL_COMP_THRESHOLD_DB,
-            knee = com.example.model.HeadphoneAccommodationsSpecs.PARALLEL_COMP_KNEE_DB,
-            compRatio = com.example.model.HeadphoneAccommodationsSpecs.PARALLEL_COMP_RATIO,
-            attackMs = com.example.model.HeadphoneAccommodationsSpecs.PARALLEL_COMP_ATTACK_MS,
-            releaseMs = com.example.model.HeadphoneAccommodationsSpecs.PARALLEL_COMP_RELEASE_MS,
+            threshold = HeadphoneAccommodationsSpecs.PARALLEL_COMP_THRESHOLD_DB,
+            knee = HeadphoneAccommodationsSpecs.PARALLEL_COMP_KNEE_DB,
+            compRatio = HeadphoneAccommodationsSpecs.PARALLEL_COMP_RATIO,
+            attackMs = HeadphoneAccommodationsSpecs.PARALLEL_COMP_ATTACK_MS,
+            releaseMs = HeadphoneAccommodationsSpecs.PARALLEL_COMP_RELEASE_MS,
             makeupGainDb = intensity.clarityGainDb
         )
     }
@@ -165,7 +184,12 @@ class HeadphoneAccommodationsProcessor(private val sampleRate: Int = 44100) {
         val (e1L, e1R) = eqBand1.processStereo(l, r)
         val (e2L, e2R) = eqBand2.processStereo(e1L, e1R)
         val (e3L, e3R) = eqBand3.processStereo(e2L, e2R)
-        val (eqL, eqR) = eqBand4.processStereo(e3L, e3R)
+        val (e4L, e4R) = eqBand4.processStereo(e3L, e3R)
+        val (eqL, eqR) = if (mediatekSmoothnessEnabled) {
+            mediatekSmoothnessDip3200.processStereo(e4L, e4R)
+        } else {
+            e4L to e4R
+        }
 
         val mix = parallelLiftMix
         val mixedL: Double
@@ -206,7 +230,8 @@ class HeadphoneAccommodationsProcessor(private val sampleRate: Int = 44100) {
             profile: AccommodationToneProfile,
             intensity: SoftSoundIntensity,
             sampleRate: Int = 44100,
-            hfScale: Double = 1.0
+            hfScale: Double = 1.0,
+            isHeadphoneOrBluetooth: Boolean = true
         ): Float {
             val scale = intensity.eqScale.toDouble()
             val cappedHfScale = hfScale.coerceIn(0.1, 1.0)
@@ -250,6 +275,17 @@ class HeadphoneAccommodationsProcessor(private val sampleRate: Int = 44100) {
             totalDb += b3.magnitudeDbAt(sampleRate, freqHz)
             if (profile == AccommodationToneProfile.BALANCED_TONE) {
                 totalDb += b4.magnitudeDbAt(sampleRate, freqHz)
+            }
+            if (isHeadphoneOrBluetooth) {
+                val mediatekDip = StereoBiquad().apply {
+                    setPeaking(
+                        sampleRate,
+                        HeadphoneAccommodationsSpecs.MEDIATEK_SMOOTHNESS_HZ,
+                        HeadphoneAccommodationsSpecs.MEDIATEK_SMOOTHNESS_Q,
+                        HeadphoneAccommodationsSpecs.MEDIATEK_SMOOTHNESS_DB
+                    )
+                }
+                totalDb += mediatekDip.magnitudeDbAt(sampleRate, freqHz)
             }
             return totalDb.toFloat()
         }

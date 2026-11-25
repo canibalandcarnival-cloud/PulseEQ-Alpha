@@ -185,7 +185,8 @@ fun AudioVisualizerPanel(
                         freqHz = freqHz,
                         profile = accommodationsToneProfile,
                         intensity = accommodationsSoftIntensity,
-                        hfScale = trebleBudget.accHfScale.toDouble()
+                        hfScale = trebleBudget.accHfScale.toDouble(),
+                        isHeadphoneOrBluetooth = (outputTarget != OutputTarget.SPEAKER)
                     )
                 } else {
                     0f

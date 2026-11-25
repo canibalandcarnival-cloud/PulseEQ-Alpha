@@ -175,7 +175,7 @@ fun HeadphoneAccommodationsCard(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
-                            text = "Pre-EQ Stage",
+                            text = "Pre-EQ • 3.2kHz -1.0dB MediaTek Smooth",
                             style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.5.sp),
                             color = TextSecondary
                         )

@@ -532,7 +532,7 @@ fun SiliconDspCard(
                 bgColor = AnalyzerCyanSoft
             )
             SiliconStageChip(
-                text = if (isSpeaker) "2. CS35L f₀=92Hz SVF 68–122Hz" else "2. CS35L Thermal • 24Hz SVF",
+                text = if (isSpeaker) "2. CS35L f₀=92Hz SVF 86–120Hz" else "2. CS35L Thermal • 24Hz SVF",
                 isActive = active,
                 highlightColor = RouteEmerald,
                 bgColor = RouteEmeraldSoft

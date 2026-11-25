@@ -19,7 +19,7 @@ import kotlin.math.tanh
  * Implements 5 hardware-modeled stages sample-by-sample:
  * 1. True 5 ms Lookahead Ring Buffer (240 samples at 48 kHz)
  * 2. 2nd-Order Electromechanical Voice-Coil Excursion (f0 = 92 Hz, Qts = 0.85) + Dual-Tau Thermal Model (1.8s / 18.0s)
- *    modulating a 2-pole Cytomic TPT State-Variable High-Pass Filter (68 Hz–122 Hz on Phone Speaker, 24 Hz fixed on Headphones)
+ *    modulating a 2-pole Cytomic TPT State-Variable High-Pass Filter (86 Hz–120 Hz on Phone Speaker, 24 Hz fixed on Headphones)
  * 3. Adaptive Class-H Charge-Pump Rail (3.7 V – 11.5 V, 0.2 ms attack / 60 ms hold-decay) +
  *    4x Oversampled Asymmetric tanh Soft-Knee Saturation (linear below -3.0 dBFS, ceiling 0.992)
  * 4. Minimum-Phase Reconstruction (19.2 kHz 2-pole Butterworth LPF) + Micro-Air (+1.1 dB @ 14.5 kHz) Filter

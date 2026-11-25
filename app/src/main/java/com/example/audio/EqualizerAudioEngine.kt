@@ -1113,7 +1113,8 @@ class EqualizerAudioEngine(private val context: Context) {
                                     freqHz = EqPresetsCatalog.BANDS[i].frequencyHz.toDouble(),
                                     profile = currentAccommodationsToneProfile,
                                     intensity = currentAccommodationsSoftIntensity,
-                                    hfScale = trebleBudget.accHfScale.toDouble()
+                                    hfScale = trebleBudget.accHfScale.toDouble(),
+                                    isHeadphoneOrBluetooth = (currentTarget != OutputTarget.SPEAKER)
                                 )
                             } else {
                                 0f

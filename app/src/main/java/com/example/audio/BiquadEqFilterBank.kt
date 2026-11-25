@@ -418,6 +418,8 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
     private val harshnessCut4500Hz = StereoBiquad()
     private val deEsser7000Hz = StereoBiquad()
     private val crispAirShelf12000Hz = StereoBiquad()
+    // Asymmetrical Top-Earpiece Tweeter Compensator (+1.8 dB @ 1.8–4 kHz on Left channel in landscape)
+    private val earpiecePresenceLeft = StereoBiquad()
 
     // Stage 4: Hybrid Earpiece + Bottom Speaker Crossover (<180Hz 24dB/oct mono bass + Orientation/Cinema XTC)
     private val hybridSideHpf1 = StereoBiquad().apply {
@@ -528,6 +530,12 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
         } else {
             portraitVocalCenter2000Hz.reset()
         }
+        earpiecePresenceLeft.setPeaking(
+            sampleRate,
+            FlagshipSpeakerSpecs.EARPIECE_PRESENCE_HZ,
+            FlagshipSpeakerSpecs.EARPIECE_PRESENCE_Q,
+            FlagshipSpeakerSpecs.EARPIECE_PRESENCE_DB
+        )
 
         when (profile) {
             SpeakerTuningProfile.PRO_MAX_MUSIC,
@@ -666,12 +674,14 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
         val (hcL, hcR) = harshnessCut4500Hz.processStereo(prL, prR)
         val (deL, deR) = deEsser7000Hz.processStereo(hcL, hcR)
         val (arL, arR) = crispAirShelf12000Hz.processStereo(deL, deR)
-        l = arL
+        // Asymmetrical Top-Earpiece Channel (+1.8 dB upper-mid presence lift 1.8kHz–4kHz on Left channel)
+        val balancedLeft = earpiecePresenceLeft.processStereo(arL, 0.0).first
+        l = balancedLeft
         r = arR
 
         // Stage 4: Orientation-Aware & Cinema Landscape Hybrid Earpiece + Bottom Speaker Crossover Simulation
         // Always keeps <180Hz bass centered mono L=R for balanced vertical weight.
-        // - Portrait: focuses center vocals (2kHz) & preserves stereo above 180Hz.
+        // - Portrait: focuses center vocals (2kHz), preserves >180Hz stereo, & narrows XTC to -8% @ 0.18ms.
         // - Landscape: widens horizontal stereo via 2nd-Order Transaural XTC (-22% @ 0.18ms + +4.84% @ 0.36ms).
         // - Cinema Landscape profile: engages 2nd-order transaural XTC (-26% @ 0.17ms + +12% @ 0.34ms, 4.5kHz shadow LPF).
         val isCinemaLandscape = profile == SpeakerTuningProfile.CINEMA_LANDSCAPE
@@ -717,6 +727,10 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
             val secondaryGain = FlagshipSpeakerSpecs.XTC_SECONDARY_GAIN
             l = centeredL - crossGain * delayedXtcR + secondaryGain * delayedSecXtcL
             r = centeredR - crossGain * delayedXtcL + secondaryGain * delayedSecXtcR
+        } else if (portraitVocalFocusEnabled) {
+            val portraitCrossGain = FlagshipSpeakerSpecs.PORTRAIT_XTC_CROSSFEED_GAIN
+            l = centeredL - portraitCrossGain * delayedXtcR
+            r = centeredR - portraitCrossGain * delayedXtcL
         } else {
             l = centeredL
             r = centeredR
@@ -1504,7 +1518,8 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             profile = accommodationsToneProfile,
             intensity = accommodationsSoftIntensity,
             outputGainDb = accommodationsOutputGainDb,
-            hfScale = trebleBudget.accHfScale.toDouble()
+            hfScale = trebleBudget.accHfScale.toDouble(),
+            outputTarget = outputTarget
         )
         threeBandToneFilter.configure(
             isEnabled = activeThreeBand && effectiveProcessing,

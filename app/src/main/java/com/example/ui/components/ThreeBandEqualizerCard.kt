@@ -107,6 +107,7 @@ fun ThreeBandEqualizerCard(
     recommendedMode: Boolean = false,
     recommendedBannerVisible: Boolean = false,
     isSpeakerTarget: Boolean = false,
+    isInfinixReferenceActive: Boolean = false,
     isMasterBypassed: Boolean,
     onBassChange: (Float) -> Unit,
     onMidsChange: (Float) -> Unit,
@@ -114,13 +115,14 @@ fun ThreeBandEqualizerCard(
     onToggleEnabled: () -> Unit,
     onToggleSmartCurve: (Boolean) -> Unit = {},
     onSelectRecommendedMode: (Boolean) -> Unit = {},
+    onApplyInfinixReference: () -> Unit = {},
     onDismissRecommendedBanner: () -> Unit = {},
     onReset: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val effectivelyBypassed = isMasterBypassed || !threeBandEnabled
     val isFlat = abs(bassDb) < 0.05f && abs(midsDb) < 0.05f && abs(trebleDb) < 0.05f
-    val isRecommendedSelected = recommendedMode && isFlat
+    val isRecommendedSelected = recommendedMode && isFlat && !isInfinixReferenceActive
     val bodyAlpha by animateFloatAsState(
         targetValue = if (threeBandEnabled) 1f else 0.40f,
         animationSpec = spring(dampingRatio = 0.9f, stiffness = 700f),
@@ -463,6 +465,82 @@ fun ThreeBandEqualizerCard(
                     color = if (!smartCurveEnabled) AnalyzerCyan else TextSecondary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+
+        // One-tap Infinix Hot 60 5G Reference 3-Band EQ Curve
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .defaultMinSize(minHeight = 48.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(
+                    if (threeBandEnabled && isInfinixReferenceActive) {
+                        WarmAmber.copy(alpha = 0.16f)
+                    } else {
+                        StudioBackground.copy(alpha = 0.65f)
+                    }
+                )
+                .border(
+                    width = 1.dp,
+                    color = if (threeBandEnabled && isInfinixReferenceActive) {
+                        WarmAmber.copy(alpha = 0.78f)
+                    } else {
+                        StudioBorder
+                    },
+                    shape = RoundedCornerShape(12.dp)
+                )
+                .clickable(onClick = onApplyInfinixReference)
+                .padding(horizontal = 10.dp, vertical = 6.dp)
+                .testTag("three_band_infinix_reference_btn"),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Infinix Hot 60 5G Reference",
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = if (threeBandEnabled && isInfinixReferenceActive) WarmAmber else TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = if (isSpeakerTarget) {
+                        "Speaker Ref: Low +1.5 / Mid +0.5 / High -1.0 dB"
+                    } else {
+                        "Headphone / BT Ref: Low +1.5 / Mid 0.0 / High +1.0 dB"
+                    },
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.5.sp),
+                    color = if (threeBandEnabled && isInfinixReferenceActive) TextPrimary.copy(alpha = 0.86f) else TextMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .padding(start = 8.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(
+                        if (threeBandEnabled && isInfinixReferenceActive) WarmAmber.copy(alpha = 0.24f) else StudioSurfaceElevated
+                    )
+                    .border(
+                        1.dp,
+                        if (threeBandEnabled && isInfinixReferenceActive) WarmAmber else StudioBorder,
+                        RoundedCornerShape(8.dp)
+                    )
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Text(
+                    text = if (threeBandEnabled && isInfinixReferenceActive) "APPLIED" else "APPLY",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = 8.5.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = if (threeBandEnabled && isInfinixReferenceActive) WarmAmber else AppleBlue
                 )
             }
         }

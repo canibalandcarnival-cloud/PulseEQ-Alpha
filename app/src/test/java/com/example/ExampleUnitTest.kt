@@ -560,10 +560,26 @@ class ExampleUnitTest {
             sampleRate
         )
         assertTrue("Balanced 1kHz tilt should be around +1.5 dB ($bal1k)", bal1k in 1.2f..2.1f)
-        assertTrue("Balanced 3kHz tilt should be around +2.5 dB ($bal3k)", bal3k in 2.1f..3.2f)
+        assertTrue("Balanced 3kHz tilt with 3.2kHz -1.0dB MediaTek smoothness dip should be around +1.6 dB ($bal3k)", bal3k in 1.2f..2.2f)
         assertTrue("Balanced 8kHz tilt should be around +3.2 dB ($bal8k)", bal8k in 2.8f..4.2f)
 
-        // 2. Vocal Range @ Moderate (1.0x): 110Hz HPF cuts 50Hz rumble, 280Hz -2dB, 1.5kHz +3dB, 3kHz +3.8dB, 6kHz +1.5dB
+        val raw3200 = com.example.audio.HeadphoneAccommodationsProcessor.computeResponseDbAt(
+            3200.0,
+            com.example.model.AccommodationToneProfile.BALANCED_TONE,
+            com.example.model.SoftSoundIntensity.MODERATE,
+            sampleRate,
+            isHeadphoneOrBluetooth = false
+        )
+        val mediatek3200 = com.example.audio.HeadphoneAccommodationsProcessor.computeResponseDbAt(
+            3200.0,
+            com.example.model.AccommodationToneProfile.BALANCED_TONE,
+            com.example.model.SoftSoundIntensity.MODERATE,
+            sampleRate,
+            isHeadphoneOrBluetooth = true
+        )
+        assertEquals("MediaTek wired/BT smoothness dip at 3.2kHz must be -1.0 dB", -1.0f, mediatek3200 - raw3200, 0.15f)
+
+        // 2. Vocal Range @ Moderate (1.0x): 110Hz HPF cuts 50Hz rumble, 280Hz -2dB, 1.5kHz +3dB, 3kHz +3.8dB - 1.0dB MediaTek dip, 6kHz +1.5dB
         val vocal50 = com.example.audio.HeadphoneAccommodationsProcessor.computeResponseDbAt(
             50.0,
             com.example.model.AccommodationToneProfile.VOCAL_RANGE,
@@ -584,7 +600,7 @@ class ExampleUnitTest {
         )
         assertTrue("Vocal Range 110Hz HPF must strongly attenuate 50Hz rumble ($vocal50)", vocal50 < -10f)
         assertEquals(-2.0f, vocal280, 0.6f)
-        assertTrue("Vocal Range 3kHz speech boost should be strong ($vocal3k)", vocal3k in 3.2f..4.6f)
+        assertTrue("Vocal Range 3kHz speech boost with 3.2kHz MediaTek dip should be clean & strong ($vocal3k)", vocal3k in 2.4f..3.6f)
 
         // 3. Brightness: Neutral bass/mids (0 dB < 1 kHz) and scaling Off < Slight < Moderate < Strong at 14kHz
         val brightLow250 = com.example.audio.HeadphoneAccommodationsProcessor.computeResponseDbAt(
@@ -939,7 +955,7 @@ class ExampleUnitTest {
         assertTrue("Signal must emerge after exact 240-sample 5ms lookahead", postLookaheadEnergy > 10.0)
 
         // 2. Stage 2 & Stage 3: Phone Speaker heavy <92Hz bass drives spring-mass-damper excursion,
-        //    modulates SVF cutoff upward from 68Hz toward 122Hz, warms dual-tau voice coil (>25°C),
+        //    modulates SVF cutoff upward from 86Hz toward 120Hz, warms dual-tau voice coil (>25°C),
         //    and boosts Adaptive Class-H rail above 3.7V (Headphones stay at 24Hz SVF).
         val speakerCore = com.example.audio.SiliconDspCore(sampleRate).apply {
             configure(isEnabled = true, target = com.example.model.OutputTarget.SPEAKER)
@@ -2306,5 +2322,131 @@ class ExampleUnitTest {
             }
         }
         assertTrue("Dual-speaker 2nd-order landscape XTC (-22% 0.18ms) must project wider stereo stage ($withXtcSide vs $noXtcSide)", withXtcSide > noXtcSide * 1.10)
+    }
+
+    @Test
+    fun infinix_hot_60_5g_full_feature_dsp_optimization_verified() {
+        val sampleRate = 48000
+
+        // 1. Asymmetrical Top-Earpiece (+1.8dB @ 2.68kHz Left) & Portrait -8% XTC vs Landscape -22% XTC
+        val chainNoXtc = com.example.audio.PhoneSpeakerDspChain(sampleRate).apply {
+            configure(
+                isSpeakerDspEnabled = true,
+                isVirtualBassEnabled = false,
+                isLandscapeStereoEnabled = false,
+                profile = com.example.model.SpeakerTuningProfile.PRO_MAX_MUSIC,
+                isPortraitVocalFocus = false
+            )
+        }
+        var earpieceSq = 0.0
+        var bottomSq = 0.0
+        for (i in 0 until 4800) {
+            val s = 0.08 * kotlin.math.sin(2.0 * Math.PI * 2680.0 * i / sampleRate)
+            val (outL, outR) = chainNoXtc.processStereoSample(s, s)
+            if (i >= 2400) {
+                earpieceSq += outL * outL
+                bottomSq += outR * outR
+            }
+        }
+        val earpieceDbAboveBottom = 10.0 * kotlin.math.log10((earpieceSq / bottomSq).coerceAtLeast(1e-6))
+        assertTrue(
+            "Top earpiece (Left channel) must receive ~+1.8 dB upper-mid presence lift relative to bottom driver (got $earpieceDbAboveBottom dB)",
+            earpieceDbAboveBottom in 1.4..2.2
+        )
+        assertEquals(0.08, com.example.model.FlagshipSpeakerSpecs.PORTRAIT_XTC_CROSSFEED_GAIN, 1e-6)
+        assertEquals(0.22, com.example.model.FlagshipSpeakerSpecs.XTC_CROSSFEED_GAIN, 1e-6)
+
+        // Portrait (-8% XTC) vs Landscape (-22% XTC) separation ordering
+        val portraitChain = com.example.audio.PhoneSpeakerDspChain(sampleRate).apply {
+            configure(
+                isSpeakerDspEnabled = true,
+                isVirtualBassEnabled = false,
+                isLandscapeStereoEnabled = false,
+                profile = com.example.model.SpeakerTuningProfile.PRO_MAX_MUSIC,
+                isPortraitVocalFocus = true
+            )
+        }
+        val landscapeChain = com.example.audio.PhoneSpeakerDspChain(sampleRate).apply {
+            configure(
+                isSpeakerDspEnabled = true,
+                isVirtualBassEnabled = false,
+                isLandscapeStereoEnabled = true,
+                profile = com.example.model.SpeakerTuningProfile.PRO_MAX_MUSIC,
+                isPortraitVocalFocus = false
+            )
+        }
+        var portraitSide = 0.0
+        var landscapeSide = 0.0
+        for (i in 0 until 4800) {
+            val l = 0.06 * kotlin.math.sin(2.0 * Math.PI * 900.0 * i / sampleRate)
+            val r = 0.01 * kotlin.math.sin(2.0 * Math.PI * 900.0 * i / sampleRate)
+            val (pL, pR) = portraitChain.processStereoSample(l, r)
+            val (lL, lR) = landscapeChain.processStereoSample(l, r)
+            if (i >= 2400) {
+                portraitSide += abs(pL - pR)
+                landscapeSide += abs(lL - lR)
+            }
+        }
+        assertTrue(
+            "Portrait -8% XTC must stay cohesive & narrower than Landscape -22% XTC ($portraitSide < $landscapeSide)",
+            portraitSide < landscapeSide * 0.78
+        )
+
+        // 2. Silicon Excursion Filter calibrated to 86Hz-120Hz in Phone Speaker mode
+        assertEquals(86.0, com.example.model.SiliconDspSpecs.SVF_MIN_HZ, 1e-4)
+        assertEquals(120.0, com.example.model.SiliconDspSpecs.SVF_MAX_HZ, 1e-4)
+        val idleSpeakerCore = com.example.audio.SiliconDspCore(sampleRate).apply {
+            configure(isEnabled = true, target = com.example.model.OutputTarget.SPEAKER)
+        }
+        idleSpeakerCore.processStereoSample(0.0, 0.0)
+        assertTrue(
+            "Phone Speaker Silicon SVF floor must start at >=86Hz (got ${idleSpeakerCore.latestSvfCutoffHz}Hz)",
+            idleSpeakerCore.latestSvfCutoffHz in 85.9f..120.1f
+        )
+
+        // 3. Spatial Audio Phone Speaker dry center vocals (1kHz-3.5kHz) vs Headphone HRTF
+        val speakerSpatial = com.example.audio.SpatialAudioEngine(sampleRate).apply {
+            configure(
+                mode = com.example.model.SpatialMode.ATMOS_MUSIC,
+                target = com.example.model.OutputTarget.SPEAKER
+            )
+        }
+        var dryVocalsRatioSum = 0.0
+        for (i in 0 until 1200) {
+            val vocal = 0.05 * kotlin.math.sin(2.0 * Math.PI * 2000.0 * i / sampleRate)
+            val (outL, outR) = speakerSpatial.processStereoSample(vocal, vocal)
+            if (i >= 800) {
+                dryVocalsRatioSum += abs(outL - outR)
+            }
+        }
+        assertEquals("Phone Speaker Spatial center vocals must stay 100% dry & phase-identical L/R", 0.0, dryVocalsRatioSum, 1e-6)
+
+        // 4. Late Night Mode Standard default (-22 dB threshold, 3.5:1 ratio, +4.5 dB makeup)
+        assertEquals(-22f, com.example.model.NightIntensity.STANDARD.thresholdDb, 1e-4f)
+        assertEquals(3.5f, com.example.model.NightIntensity.STANDARD.ratio, 1e-4f)
+        assertEquals(4.5f, com.example.model.NightIntensity.STANDARD.makeupGainDb, 1e-4f)
+
+        // 5. Infinix Hot 60 5G Reference 3-Band EQ curves for Speaker vs Headphones/BT
+        val spkRef = com.example.model.OutputEqProfile(target = com.example.model.OutputTarget.SPEAKER)
+            .withInfinixHot60ThreeBandReference()
+        assertTrue(spkRef.isInfinixHot60ThreeBandReferenceActive())
+        assertTrue(spkRef.threeBandEnabled && !spkRef.tenBandEnabled)
+        assertEquals(1.5f, spkRef.threeBandBassDb, 1e-4f)
+        assertEquals(0.5f, spkRef.threeBandMidsDb, 1e-4f)
+        assertEquals(-1.0f, spkRef.threeBandTrebleDb, 1e-4f)
+
+        val hpRef = com.example.model.OutputEqProfile(target = com.example.model.OutputTarget.HEADPHONES)
+            .withInfinixHot60ThreeBandReference()
+        assertTrue(hpRef.isInfinixHot60ThreeBandReferenceActive())
+        assertEquals(1.5f, hpRef.threeBandBassDb, 1e-4f)
+        assertEquals(0.0f, hpRef.threeBandMidsDb, 1e-4f)
+        assertEquals(1.0f, hpRef.threeBandTrebleDb, 1e-4f)
+
+        val btRef = com.example.model.OutputEqProfile(target = com.example.model.OutputTarget.BLUETOOTH)
+            .withInfinixHot60ThreeBandReference()
+        assertTrue(btRef.isInfinixHot60ThreeBandReferenceActive())
+        assertEquals(1.5f, btRef.threeBandBassDb, 1e-4f)
+        assertEquals(0.0f, btRef.threeBandMidsDb, 1e-4f)
+        assertEquals(1.0f, btRef.threeBandTrebleDb, 1e-4f)
     }
 }

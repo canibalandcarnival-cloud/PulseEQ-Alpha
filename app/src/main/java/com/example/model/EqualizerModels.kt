@@ -69,8 +69,9 @@ enum class NightIntensity(
     ),
     STANDARD(
         label = "Standard",
-        thresholdDb = -24f,
-        makeupGainDb = 4f
+        thresholdDb = -22f,
+        makeupGainDb = 4.5f,
+        ratio = 3.5f
     ),
     HEAVY(
         label = "Heavy",
@@ -333,7 +334,7 @@ data class AudioLabTelemetry(
     val loudnessBrickwallGrDb: Float = 0f,
     val loudnessAntiClipActive: Boolean = false,
     val siliconExcursionPct: Float = 0f,
-    val siliconSvfCutoffHz: Float = 68f,
+    val siliconSvfCutoffHz: Float = 86f,
     val siliconCoilTempC: Float = 25f,
     val siliconClassHRailV: Float = 3.7f,
     val siliconTruePeakGrDb: Float = 0f,
@@ -460,6 +461,38 @@ data class OutputEqProfile(
             kotlin.math.abs(threeBandMidsDb) < 0.05f &&
             kotlin.math.abs(threeBandTrebleDb - (-2.0f)) < 0.05f &&
             !isBypassed
+
+    fun withInfinixHot60ThreeBandReference(): OutputEqProfile {
+        val (low, mid, high) = if (target == OutputTarget.SPEAKER) {
+            Triple(1.5f, 0.5f, -1.0f)
+        } else {
+            Triple(1.5f, 0.0f, 1.0f)
+        }
+        return copy(
+            tenBandEnabled = false,
+            threeBandEnabled = true,
+            threeBandBassDb = low,
+            threeBandMidsDb = mid,
+            threeBandTrebleDb = high,
+            threeBandRecommendedMode = false,
+            threeBandRecommendedBannerVisible = false,
+            isBypassed = false
+        )
+    }
+
+    fun isInfinixHot60ThreeBandReferenceActive(): Boolean {
+        val (expLow, expMid, expHigh) = if (target == OutputTarget.SPEAKER) {
+            Triple(1.5f, 0.5f, -1.0f)
+        } else {
+            Triple(1.5f, 0.0f, 1.0f)
+        }
+        return threeBandEnabled &&
+            !tenBandEnabled &&
+            !isBypassed &&
+            kotlin.math.abs(threeBandBassDb - expLow) < 0.05f &&
+            kotlin.math.abs(threeBandMidsDb - expMid) < 0.05f &&
+            kotlin.math.abs(threeBandTrebleDb - expHigh) < 0.05f
+    }
     companion object {
         fun defaultTrebleSmoothnessForTarget(target: OutputTarget): Float = when (target) {
             OutputTarget.SPEAKER -> 0.35f
@@ -562,6 +595,10 @@ object FlagshipSpeakerSpecs {
 
     // Hybrid Earpiece + Bottom Speaker Crossover Simulation & 2nd-Order Transaural XTC
     const val HYBRID_CROSSOVER_BASS_HZ = 180.0
+    const val EARPIECE_PRESENCE_HZ = 2680.0
+    const val EARPIECE_PRESENCE_Q = 0.95
+    const val EARPIECE_PRESENCE_DB = 1.8
+    const val PORTRAIT_XTC_CROSSFEED_GAIN = 0.08
     const val XTC_CROSSFEED_GAIN = 0.22
     const val XTC_DELAY_SEC = 0.00018
     const val XTC_SECONDARY_GAIN = 0.0484
@@ -590,6 +627,9 @@ object HeadphoneAccommodationsSpecs {
     const val OUTPUT_GAIN_MIN_DB = 0f
     const val OUTPUT_GAIN_MAX_DB = 10f
     const val MAX_PROFILE_BOOST_DB = 4.2f
+    const val MEDIATEK_SMOOTHNESS_HZ = 3200.0
+    const val MEDIATEK_SMOOTHNESS_Q = 1.8
+    const val MEDIATEK_SMOOTHNESS_DB = -1.0
     const val PARALLEL_CLARITY_HPF_HZ = 1200.0
     const val PARALLEL_CLARITY_HPF_Q = 0.7071
     const val PARALLEL_COMP_THRESHOLD_DB = -38.0f
@@ -608,8 +648,8 @@ object SiliconDspSpecs {
     const val EXCURSION_DRIVE_SCALE = 1.35
     const val SVF_ATTACK_SEC = 0.0005
     const val SVF_RELEASE_SEC = 0.120
-    const val SVF_MIN_HZ = 68.0
-    const val SVF_MAX_HZ = 122.0
+    const val SVF_MIN_HZ = 86.0
+    const val SVF_MAX_HZ = 120.0
     const val SVF_HEADPHONES_HZ = 24.0
     const val THERMAL_TAU_COIL_SEC = 1.8
     const val THERMAL_TAU_MAGNET_SEC = 18.0

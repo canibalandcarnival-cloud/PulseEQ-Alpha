@@ -704,6 +704,10 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
         commitProfile(updated)
     }
 
+    fun applyInfinixHot60ThreeBandReference() {
+        commitProfile(currentProfile().withInfinixHot60ThreeBandReference())
+    }
+
     fun toggleHeadphoneAccommodations() {
         val current = currentProfile()
         val updated = current.copy(

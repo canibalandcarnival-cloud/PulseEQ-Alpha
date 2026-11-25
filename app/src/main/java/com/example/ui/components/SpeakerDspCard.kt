@@ -250,7 +250,7 @@ fun SpeakerDspCard(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = "Dual stereo speakers • -22% 0.18ms 2nd-Order XTC • Mono-Bass <180Hz • 4.5k/7k Guard • +9.5dB • +2.5 Low / -2.0 High",
+                        text = "Dual stereo • -22% Landscape / -8% Portrait 0.18ms XTC • +1.8dB Top Earpiece • +9.5dB • +2.5 Low / -2.0 High",
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
                         color = if (isInfinixHot60CompensatorActive) TextPrimary.copy(alpha = 0.88f) else TextMuted,
                         maxLines = 2,
@@ -429,7 +429,7 @@ fun SpeakerDspCard(
                         isCinemaProfile -> "Cinema XTC: -26% 0.17ms + 0.34ms"
                         !landscapeStereoStage -> "Stage Off"
                         resolvedLandscape -> "Landscape: -22% 0.18ms 2nd-Order XTC"
-                        else -> "Portrait: Stereo + Center Vocal + Mono Bass"
+                        else -> "Portrait: -8% 0.18ms XTC + +1.8dB Earpiece"
                     },
                     style = MaterialTheme.typography.labelSmall.copy(
                         fontSize = 9.sp,
@@ -520,9 +520,9 @@ fun SpeakerDspCard(
                     )
                     Text(
                         text = if (resolvedLandscape) {
-                            "Landscape 2nd-Order XTC • <180Hz centered • -22% 0.18ms wide"
+                            "Landscape 2nd-Order XTC • <180Hz centered • +1.8dB Top Earpiece • -22% 0.18ms"
                         } else {
-                            "Portrait Stereo + Vocal Focus • <180Hz centered • L/R balanced"
+                            "Portrait Stereo + Vocal Focus • <180Hz centered • +1.8dB Earpiece • -8% 0.18ms XTC"
                         },
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
                         color = TextMuted
@@ -698,11 +698,17 @@ fun SpeakerDspCard(
                 text = when {
                     isCinemaProfile -> "Cinema Landscape: -26% 2nd-Order XTC"
                     resolvedLandscape -> "Landscape: -22% 0.18ms 2nd-Order XTC"
-                    else -> "Portrait: Stereo + Center Vocal + Mono Bass"
+                    else -> "Portrait: -8% 0.18ms XTC + Mono Bass"
                 },
                 isActive = active && effectiveCinemaOrLandscapeXtc || (active && landscapeStereoStage),
                 highlightColor = AppleBlue,
                 bgColor = AppleBlueSoft
+            )
+            DspStageChip(
+                text = "+1.8dB (1.8–4kHz) Top Earpiece Balance",
+                isActive = active,
+                highlightColor = AnalyzerCyan,
+                bgColor = AnalyzerCyanSoft
             )
             DspStageChip(
                 text = "3-Band LR4 2.2:1 (6ms / 85ms) → -0.3dB",
