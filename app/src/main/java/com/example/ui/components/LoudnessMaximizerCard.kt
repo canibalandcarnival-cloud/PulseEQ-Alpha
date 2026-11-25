@@ -243,13 +243,13 @@ fun LoudnessMaximizerCard(
                     color = TextMuted
                 )
                 Text(
-                    text = "+50% (+4.5 dB)",
+                    text = String.format(Locale.US, "+50%% (+%.1f dB)", LoudnessMaximizerSpecs.MAX_MAKEUP_BOOST_DB * 0.5f),
                     style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
                     color = TextMuted,
                     modifier = Modifier.clickable { onBoostPercentChange(0.50f) }
                 )
                 Text(
-                    text = "+100% (+9.0 dB)",
+                    text = String.format(Locale.US, "+100%% (+%.1f dB)", LoudnessMaximizerSpecs.MAX_MAKEUP_BOOST_DB),
                     style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
                     color = TextMuted
                 )

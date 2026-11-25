@@ -158,20 +158,20 @@ enum class AccommodationToneProfile(
     BALANCED_TONE(
         id = "balanced_tone",
         label = "Balanced Tone",
-        shortSummary = "Balanced presence & headroom-safe air",
-        detailBadge = "300Hz -2 • 1k +1.0 • 3k +1.8 • 8k +2.1 • 14k +1.5 dB"
+        shortSummary = "Smooth wide-range presence & air tilt",
+        detailBadge = "1k +1.5 • 3k +2.5 • 8k +3.2 • 12k +2.5 dB"
     ),
     VOCAL_RANGE(
         id = "vocal_range",
         label = "Vocal Range",
-        shortSummary = "Speech clarity & 100Hz rumble cut",
-        detailBadge = "100Hz HPF • 250Hz -2 • 1k +1.5 • 2.5k +2.1 • 4k +1.8 dB"
+        shortSummary = "Speech intelligibility & 110Hz HPF",
+        detailBadge = "110Hz HPF • 280Hz -2 • 1.5k +3 • 3k +3.8 • 6k +1.5 dB"
     ),
     BRIGHTNESS(
         id = "brightness",
         label = "Brightness",
-        shortSummary = "Headroom-normalized high-frequency air",
-        detailBadge = "300Hz -2 • 4k +1.1 • 8k +1.4 • 12k +1.7 • 16k +1.3 dB"
+        shortSummary = "Neutral bass/mids (0dB <1k) & crisp air lift",
+        detailBadge = "0dB <1kHz • 4k +2.0 • 8k +3.8 • 14k +4.2 dB"
     )
 }
 
@@ -245,38 +245,57 @@ enum class ListeningMode(
 enum class SoftSoundIntensity(
     val id: String,
     val label: String,
+    val parallelMix: Float,
+    val clarityGainDb: Float,
     val eqScale: Float,
-    val thresholdDb: Float,
-    val ratio: Float,
-    val kneeDb: Float,
-    val makeupGainDb: Float
+    val thresholdDb: Float = -38f,
+    val ratio: Float = 3.5f,
+    val kneeDb: Float = 12f,
+    val makeupGainDb: Float = clarityGainDb
 ) {
+    OFF(
+        id = "off",
+        label = "Off",
+        parallelMix = 0.0f,
+        clarityGainDb = 0.0f,
+        eqScale = 0.60f,
+        thresholdDb = -38f,
+        ratio = 1.0f,
+        kneeDb = 12f,
+        makeupGainDb = 0.0f
+    ),
     SLIGHT(
         id = "slight",
         label = "Slight",
-        eqScale = 0.6f,
-        thresholdDb = -24f,
-        ratio = 1.8f,
-        kneeDb = 20f,
-        makeupGainDb = 3.5f
+        parallelMix = 0.18f,
+        clarityGainDb = 2.0f,
+        eqScale = 0.80f,
+        thresholdDb = -38f,
+        ratio = 3.5f,
+        kneeDb = 12f,
+        makeupGainDb = 2.0f
     ),
     MODERATE(
         id = "moderate",
         label = "Moderate",
-        eqScale = 1.0f,
-        thresholdDb = -28f,
-        ratio = 2.2f,
-        kneeDb = 20f,
-        makeupGainDb = 6.0f
+        parallelMix = 0.32f,
+        clarityGainDb = 3.8f,
+        eqScale = 1.00f,
+        thresholdDb = -38f,
+        ratio = 3.5f,
+        kneeDb = 12f,
+        makeupGainDb = 3.8f
     ),
     STRONG(
         id = "strong",
         label = "Strong",
-        eqScale = 1.4f,
-        thresholdDb = -32f,
-        ratio = 2.6f,
-        kneeDb = 15f,
-        makeupGainDb = 8.5f
+        parallelMix = 0.48f,
+        clarityGainDb = 5.5f,
+        eqScale = 1.20f,
+        thresholdDb = -38f,
+        ratio = 3.5f,
+        kneeDb = 12f,
+        makeupGainDb = 5.5f
     )
 }
 
@@ -289,10 +308,12 @@ enum class SetupAuditionSlot {
 @Immutable
 data class CustomAudioSetupUiState(
     val isOpen: Boolean = false,
-    val stepIndex: Int = 0, // 0: Option A vs B (Balanced vs Vocal), 1: Winner vs Brightness, 2: Summary
+    val stepIndex: Int = 0, // 0: Speech Clarity (Std vs Vocal), 1: Music Detail (Balanced vs Brightness), 2: Soft-Sound (Slight vs Strong)
     val optionA: AccommodationToneProfile = AccommodationToneProfile.BALANCED_TONE,
     val optionB: AccommodationToneProfile = AccommodationToneProfile.VOCAL_RANGE,
-    val activeAuditionSlot: SetupAuditionSlot = SetupAuditionSlot.OPTION_A,
+    val activeAuditionSlot: SetupAuditionSlot = SetupAuditionSlot.STANDARD,
+    val pickedVocalInStep1: Boolean = false,
+    val musicChoiceInStep2: AccommodationToneProfile = AccommodationToneProfile.BALANCED_TONE,
     val chosenProfile: AccommodationToneProfile = AccommodationToneProfile.BALANCED_TONE,
     val softIntensity: SoftSoundIntensity = SoftSoundIntensity.MODERATE,
     val isCompleted: Boolean = false
@@ -380,11 +401,15 @@ data class OutputEqProfile(
     val threeBandBassDb: Float = 0f,
     val threeBandMidsDb: Float = 0f,
     val threeBandTrebleDb: Float = 0f,
+    val threeBandSmartCurveEnabled: Boolean = true,
+    val threeBandRecommendedMode: Boolean = false,
+    val threeBandRecommendedBannerVisible: Boolean = false,
     val accommodationsEnabled: Boolean = false,
     val accommodationsToneProfile: AccommodationToneProfile = AccommodationToneProfile.BALANCED_TONE,
     val accommodationsSoftIntensity: SoftSoundIntensity = SoftSoundIntensity.MODERATE,
     val accommodationsApplyToMedia: Boolean = true,
     val accommodationsApplyToVoice: Boolean = false,
+    val accommodationsAutoEngageHeadphones: Boolean = false,
     val accommodationsOutputGainDb: Float = 0f,
     val loudnessMaximizerEnabled: Boolean = false,
     val loudnessBoostPercent: Float = 0.50f,
@@ -401,6 +426,40 @@ data class OutputEqProfile(
     val listeningMode: ListeningMode = ListeningMode.OFF,
     val ambientPassThroughPercent: Float = 0.65f
 ) {
+    fun withInfinixHot60Compensator(): OutputEqProfile = copy(
+        speakerDspEnabled = true,
+        landscapeStereoStage = true,
+        speakerTuningProfile = SpeakerTuningProfile.PRO_MAX_MUSIC,
+        proMaxBodyWarmthEnabled = true,
+        virtualBassEnabled = true,
+        trebleSmoothnessPercent = 0.50f,
+        loudnessMaximizerEnabled = true,
+        loudnessBoostPercent = 1.0f,
+        tenBandEnabled = false,
+        threeBandEnabled = true,
+        threeBandBassDb = 2.5f,
+        threeBandMidsDb = 0f,
+        threeBandTrebleDb = -2.0f,
+        threeBandRecommendedMode = false,
+        threeBandRecommendedBannerVisible = false,
+        preampDb = 0f,
+        isBypassed = false
+    )
+
+    fun isInfinixHot60CompensatorActive(): Boolean =
+        speakerDspEnabled &&
+            landscapeStereoStage &&
+            speakerTuningProfile == SpeakerTuningProfile.PRO_MAX_MUSIC &&
+            proMaxBodyWarmthEnabled &&
+            kotlin.math.abs(trebleSmoothnessPercent - 0.50f) < 0.02f &&
+            loudnessMaximizerEnabled &&
+            loudnessBoostPercent >= 0.99f &&
+            threeBandEnabled &&
+            !tenBandEnabled &&
+            kotlin.math.abs(threeBandBassDb - 2.5f) < 0.05f &&
+            kotlin.math.abs(threeBandMidsDb) < 0.05f &&
+            kotlin.math.abs(threeBandTrebleDb - (-2.0f)) < 0.05f &&
+            !isBypassed
     companion object {
         fun defaultTrebleSmoothnessForTarget(target: OutputTarget): Float = when (target) {
             OutputTarget.SPEAKER -> 0.35f
@@ -457,17 +516,17 @@ data class VisualizerFrame(
 )
 
 object ThreeBandEqRanges {
-    const val BASS_MIN_DB = -12f
-    const val BASS_MAX_DB = 12f
-    const val MIDS_MIN_DB = -12f
-    const val MIDS_MAX_DB = 12f
-    const val TREBLE_MIN_DB = -12f
-    const val TREBLE_MAX_DB = 12f
+    const val BASS_MIN_DB = -7f
+    const val BASS_MAX_DB = 7f
+    const val MIDS_MIN_DB = -7f
+    const val MIDS_MAX_DB = 7f
+    const val TREBLE_MIN_DB = -7f
+    const val TREBLE_MAX_DB = 7f
 }
 
 object LoudnessMaximizerSpecs {
     const val SUB_BASS_HPF_HZ = 115.0
-    const val MAX_MAKEUP_BOOST_DB = 9.0f
+    const val MAX_MAKEUP_BOOST_DB = 9.5f
     const val RMS_THRESHOLD_DB = -20.0f
     const val RMS_RATIO = 4.0f
     const val RMS_KNEE_DB = 15.0f
@@ -493,7 +552,7 @@ object FlagshipSpeakerSpecs {
     const val PRESENCE_DB = 2.0
     const val HARSHNESS_CUT_HZ = 4500.0
     const val HARSHNESS_CUT_Q = 1.8
-    const val HARSHNESS_CUT_DB = -3.0
+    const val HARSHNESS_CUT_DB = -3.2
     const val DE_ESSER_HZ = 7000.0
     const val DE_ESSER_Q = 2.5
     const val DE_ESSER_DB = -3.5
@@ -501,10 +560,12 @@ object FlagshipSpeakerSpecs {
     const val AIR_SHELF_Q = 0.707
     const val AIR_SHELF_DB = 1.0
 
-    // Hybrid Earpiece + Bottom Speaker Crossover Simulation & Transaural XTC
+    // Hybrid Earpiece + Bottom Speaker Crossover Simulation & 2nd-Order Transaural XTC
     const val HYBRID_CROSSOVER_BASS_HZ = 180.0
     const val XTC_CROSSFEED_GAIN = 0.22
-    const val XTC_DELAY_SEC = 0.00019
+    const val XTC_DELAY_SEC = 0.00018
+    const val XTC_SECONDARY_GAIN = 0.0484
+    const val XTC_SECONDARY_DELAY_SEC = 0.00036
     const val CINEMA_XTC_PRIMARY_GAIN = 0.26
     const val CINEMA_XTC_PRIMARY_DELAY_SEC = 0.00017
     const val CINEMA_XTC_SECONDARY_GAIN = 0.12
@@ -528,7 +589,14 @@ object FlagshipSpeakerSpecs {
 object HeadphoneAccommodationsSpecs {
     const val OUTPUT_GAIN_MIN_DB = 0f
     const val OUTPUT_GAIN_MAX_DB = 10f
-    const val MAX_PROFILE_BOOST_DB = 3.0f
+    const val MAX_PROFILE_BOOST_DB = 4.2f
+    const val PARALLEL_CLARITY_HPF_HZ = 1200.0
+    const val PARALLEL_CLARITY_HPF_Q = 0.7071
+    const val PARALLEL_COMP_THRESHOLD_DB = -38.0f
+    const val PARALLEL_COMP_RATIO = 3.5f
+    const val PARALLEL_COMP_ATTACK_MS = 4.0f
+    const val PARALLEL_COMP_RELEASE_MS = 80.0f
+    const val PARALLEL_COMP_KNEE_DB = 12.0f
 }
 
 object SiliconDspSpecs {
@@ -732,9 +800,9 @@ object TrebleGainStagingBudget {
             0f
         } else {
             when (accommodationsProfile) {
-                AccommodationToneProfile.BALANCED_TONE -> (2.1f * eqScale).coerceAtMost(HeadphoneAccommodationsSpecs.MAX_PROFILE_BOOST_DB)
-                AccommodationToneProfile.VOCAL_RANGE -> (1.8f * eqScale).coerceAtMost(HeadphoneAccommodationsSpecs.MAX_PROFILE_BOOST_DB)
-                AccommodationToneProfile.BRIGHTNESS -> (1.7f * eqScale).coerceAtMost(HeadphoneAccommodationsSpecs.MAX_PROFILE_BOOST_DB)
+                AccommodationToneProfile.BALANCED_TONE -> 3.2f * eqScale
+                AccommodationToneProfile.VOCAL_RANGE -> 1.5f * eqScale
+                AccommodationToneProfile.BRIGHTNESS -> 4.2f * eqScale
             }
         }
         val spatialRawDb = if (spatialActive) {

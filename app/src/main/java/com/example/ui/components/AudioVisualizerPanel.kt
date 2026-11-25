@@ -106,6 +106,7 @@ fun AudioVisualizerPanel(
     threeBandBassDb: Float = 0f,
     threeBandMidsDb: Float = 0f,
     threeBandTrebleDb: Float = 0f,
+    threeBandSmartCurveEnabled: Boolean = true,
     accommodationsEnabled: Boolean = false,
     accommodationsToneProfile: AccommodationToneProfile = AccommodationToneProfile.BALANCED_TONE,
     accommodationsSoftIntensity: SoftSoundIntensity = SoftSoundIntensity.MODERATE,
@@ -135,6 +136,7 @@ fun AudioVisualizerPanel(
         threeBandBassDb,
         threeBandMidsDb,
         threeBandTrebleDb,
+        threeBandSmartCurveEnabled,
         accommodationsEnabled,
         accommodationsToneProfile,
         accommodationsSoftIntensity,
@@ -172,7 +174,8 @@ fun AudioVisualizerPanel(
                         bassDb = threeBandBassDb,
                         midsDb = threeBandMidsDb,
                         trebleDb = threeBandTrebleDb,
-                        isSpeakerTarget = (outputTarget == OutputTarget.SPEAKER)
+                        isSpeakerTarget = (outputTarget == OutputTarget.SPEAKER),
+                        smartCurveEnabled = threeBandSmartCurveEnabled
                     )
                 } else {
                     0f

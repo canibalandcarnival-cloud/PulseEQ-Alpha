@@ -315,10 +315,10 @@ fun EqualizerScreen(
     CustomAudioSetupDialog(
         state = uiState.customAudioSetupState,
         onSelectAuditionSlot = viewModel::selectCustomSetupAudition,
-        onSelectIntensity = viewModel::selectCustomSetupIntensity,
-        onChooseWinner = viewModel::pickCustomSetupWinner,
+        onChooseStep1Speech = viewModel::chooseWizardStep1Speech,
+        onChooseStep2Music = viewModel::chooseWizardStep2Music,
+        onChooseStep3AndApply = viewModel::chooseWizardStep3SensitivityAndApply,
         onRestart = viewModel::restartCustomAudioSetup,
-        onApply = viewModel::applyCustomAudioSetupResult,
         onClose = viewModel::closeCustomAudioSetup
     )
 }
@@ -375,6 +375,7 @@ private fun CompactConsoleLayout(
             threeBandBassDb = profile.threeBandBassDb,
             threeBandMidsDb = profile.threeBandMidsDb,
             threeBandTrebleDb = profile.threeBandTrebleDb,
+            threeBandSmartCurveEnabled = profile.threeBandSmartCurveEnabled,
             accommodationsEnabled = profile.accommodationsEnabled,
             accommodationsToneProfile = profile.accommodationsToneProfile,
             accommodationsSoftIntensity = profile.accommodationsSoftIntensity,
@@ -437,6 +438,7 @@ private fun CompactConsoleLayout(
             onOpenCustomAudioSetup = viewModel::openCustomAudioSetup,
             onToggleApplyToMedia = viewModel::toggleAccommodationsMedia,
             onToggleApplyToVoice = onToggleAccommodationsVoiceWithPermission,
+            onToggleAutoEngageHeadphones = viewModel::toggleAccommodationsAutoEngage,
             onOutputGainChange = viewModel::updateAccommodationsOutputGain
         )
 
@@ -461,11 +463,18 @@ private fun CompactConsoleLayout(
             bassDb = profile.threeBandBassDb,
             midsDb = profile.threeBandMidsDb,
             trebleDb = profile.threeBandTrebleDb,
+            smartCurveEnabled = profile.threeBandSmartCurveEnabled,
+            recommendedMode = profile.threeBandRecommendedMode,
+            recommendedBannerVisible = profile.threeBandRecommendedBannerVisible,
+            isSpeakerTarget = (uiState.selectedTarget == OutputTarget.SPEAKER),
             isMasterBypassed = profile.isBypassed,
             onBassChange = viewModel::updateThreeBandBass,
             onMidsChange = viewModel::updateThreeBandMids,
             onTrebleChange = viewModel::updateThreeBandTreble,
             onToggleEnabled = viewModel::toggleThreeBandEnabled,
+            onToggleSmartCurve = viewModel::toggleThreeBandSmartCurve,
+            onSelectRecommendedMode = viewModel::setThreeBandRecommendedMode,
+            onDismissRecommendedBanner = viewModel::dismissThreeBandRecommendedBanner,
             onReset = viewModel::resetThreeBand
         )
 
@@ -479,12 +488,14 @@ private fun CompactConsoleLayout(
                 deviceIsLandscape = uiState.deviceIsLandscape,
                 proMaxBodyWarmthEnabled = profile.proMaxBodyWarmthEnabled,
                 isBypassed = profile.isBypassed,
+                isInfinixHot60CompensatorActive = profile.isInfinixHot60CompensatorActive(),
                 onToggleSpeakerDsp = viewModel::toggleSpeakerDsp,
                 onToggleVirtualBass = viewModel::toggleVirtualBass,
                 onToggleLandscapeStereo = viewModel::toggleLandscapeStereoStage,
                 onSelectTuningProfile = viewModel::selectSpeakerTuningProfile,
                 onSelectOrientationMode = viewModel::setPhoneOrientationMode,
-                onToggleBodyWarmth = viewModel::toggleProMaxBodyWarmth
+                onToggleBodyWarmth = viewModel::toggleProMaxBodyWarmth,
+                onApplyInfinixHot60Compensator = viewModel::applyInfinixHot60Compensator
             )
         }
 
@@ -647,6 +658,7 @@ private fun WideConsoleLayout(
                     threeBandBassDb = profile.threeBandBassDb,
                     threeBandMidsDb = profile.threeBandMidsDb,
                     threeBandTrebleDb = profile.threeBandTrebleDb,
+                    threeBandSmartCurveEnabled = profile.threeBandSmartCurveEnabled,
                     accommodationsEnabled = profile.accommodationsEnabled,
                     accommodationsToneProfile = profile.accommodationsToneProfile,
                     accommodationsSoftIntensity = profile.accommodationsSoftIntensity,
@@ -727,6 +739,7 @@ private fun WideConsoleLayout(
                     onOpenCustomAudioSetup = viewModel::openCustomAudioSetup,
                     onToggleApplyToMedia = viewModel::toggleAccommodationsMedia,
                     onToggleApplyToVoice = onToggleAccommodationsVoiceWithPermission,
+                    onToggleAutoEngageHeadphones = viewModel::toggleAccommodationsAutoEngage,
                     onOutputGainChange = viewModel::updateAccommodationsOutputGain
                 )
 
@@ -751,11 +764,18 @@ private fun WideConsoleLayout(
                     bassDb = profile.threeBandBassDb,
                     midsDb = profile.threeBandMidsDb,
                     trebleDb = profile.threeBandTrebleDb,
+                    smartCurveEnabled = profile.threeBandSmartCurveEnabled,
+                    recommendedMode = profile.threeBandRecommendedMode,
+                    recommendedBannerVisible = profile.threeBandRecommendedBannerVisible,
+                    isSpeakerTarget = (uiState.selectedTarget == OutputTarget.SPEAKER),
                     isMasterBypassed = profile.isBypassed,
                     onBassChange = viewModel::updateThreeBandBass,
                     onMidsChange = viewModel::updateThreeBandMids,
                     onTrebleChange = viewModel::updateThreeBandTreble,
                     onToggleEnabled = viewModel::toggleThreeBandEnabled,
+                    onToggleSmartCurve = viewModel::toggleThreeBandSmartCurve,
+                    onSelectRecommendedMode = viewModel::setThreeBandRecommendedMode,
+                    onDismissRecommendedBanner = viewModel::dismissThreeBandRecommendedBanner,
                     onReset = viewModel::resetThreeBand
                 )
 
@@ -769,12 +789,14 @@ private fun WideConsoleLayout(
                         deviceIsLandscape = uiState.deviceIsLandscape,
                         proMaxBodyWarmthEnabled = profile.proMaxBodyWarmthEnabled,
                         isBypassed = profile.isBypassed,
+                        isInfinixHot60CompensatorActive = profile.isInfinixHot60CompensatorActive(),
                         onToggleSpeakerDsp = viewModel::toggleSpeakerDsp,
                         onToggleVirtualBass = viewModel::toggleVirtualBass,
                         onToggleLandscapeStereo = viewModel::toggleLandscapeStereoStage,
                         onSelectTuningProfile = viewModel::selectSpeakerTuningProfile,
                         onSelectOrientationMode = viewModel::setPhoneOrientationMode,
-                        onToggleBodyWarmth = viewModel::toggleProMaxBodyWarmth
+                        onToggleBodyWarmth = viewModel::toggleProMaxBodyWarmth,
+                        onApplyInfinixHot60Compensator = viewModel::applyInfinixHot60Compensator
                     )
                 }
 

@@ -202,7 +202,7 @@ class ExampleUnitTest {
         )
         assertTrue("18 Pro Dialogue should emphasize 1.8kHz speech more than Music ($dialogue1800 vs $music1800)", dialogue1800 > music1800 + 2.0f)
 
-        // 4. Hybrid Dual-Speaker Mode: keeps bass (<180Hz) tight & centered while widening >180Hz via -22% 0.19ms XTC
+        // 4. Hybrid Dual-Speaker Mode: keeps bass (<180Hz) tight & centered while widening >180Hz via 2nd-Order -22% 0.18ms XTC
         val xtcOff = com.example.audio.PhoneSpeakerDspChain(sampleRate).apply {
             configure(isSpeakerDspEnabled = true, isVirtualBassEnabled = false, isLandscapeStereoEnabled = false)
         }
@@ -234,7 +234,7 @@ class ExampleUnitTest {
             }
         }
         assertTrue(
-            "Hybrid Dual-Speaker Landscape XTC (-22% 0.19ms) should widen >180Hz L/R separation ($sideEnergyOn vs $sideEnergyOff)",
+            "Hybrid Dual-Speaker Landscape 2nd-Order XTC (-22% 0.18ms) should widen >180Hz L/R separation ($sideEnergyOn vs $sideEnergyOff)",
             sideEnergyOn > sideEnergyOff * 1.12
         )
 
@@ -466,51 +466,56 @@ class ExampleUnitTest {
     fun three_band_tone_filter_targets_correct_bands_and_enforces_limits() {
         val sampleRate = 44100
 
-        // 1. Low band low-shelf (250 Hz, -12..+12 dB) boosts 100 Hz while keeping 10 kHz near unity
+        // 1. Linear Independent Low band low-shelf (250 Hz, -7..+7 dB) boosts 100 Hz while keeping 10 kHz near unity
         val bassBoostAt100Hz = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
             freqHz = 100.0,
             bassDb = 7.0f,
             midsDb = 0f,
             trebleDb = 0f,
-            sampleRate = sampleRate
+            sampleRate = sampleRate,
+            smartCurveEnabled = false
         )
         val bassBoostAt10kHz = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
             freqHz = 10000.0,
             bassDb = 7.0f,
             midsDb = 0f,
             trebleDb = 0f,
-            sampleRate = sampleRate
+            sampleRate = sampleRate,
+            smartCurveEnabled = false
         )
         assertTrue("Low Band +7dB should boost 100Hz clearly", bassBoostAt100Hz > 5.0f)
         assertTrue("Low Band +7dB should leave 10kHz near 0 dB", abs(bassBoostAt10kHz) < 0.5f)
 
-        // 2. Mid band peaking (1084 Hz, Q=0.35, spanning 250Hz to 4.7kHz, -12..+12 dB)
+        // 2. Linear Independent Mid band peaking (1084 Hz, Q=0.35, -7..+7 dB)
         val midsCutAt1084Hz = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
             freqHz = 1084.0,
             bassDb = 0f,
             midsDb = -6.0f,
             trebleDb = 0f,
-            sampleRate = sampleRate
+            sampleRate = sampleRate,
+            smartCurveEnabled = false
         )
         assertTrue("Mid Band -6dB should attenuate 1084Hz", midsCutAt1084Hz < -4.0f)
 
-        // 3. High band high-shelf (4.7 kHz, -12..+12 dB) boosts 10kHz while leaving 100Hz near unity
+        // 3. Linear Independent High band high-shelf (4.7 kHz, -7..+7 dB) boosts 10kHz while leaving 100Hz near unity
         val trebleBoostAt10kHz = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
             freqHz = 10000.0,
             bassDb = 0f,
             midsDb = 0f,
             trebleDb = 7.0f,
-            sampleRate = sampleRate
+            sampleRate = sampleRate,
+            smartCurveEnabled = false
         )
         val trebleBoostAt100Hz = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
             freqHz = 100.0,
             bassDb = 0f,
             midsDb = 0f,
             trebleDb = 7.0f,
-            sampleRate = sampleRate
+            sampleRate = sampleRate,
+            smartCurveEnabled = false
         )
         assertTrue("High Band +7dB should boost 10kHz clearly", trebleBoostAt10kHz > 4.5f)
-        assertTrue("High Band +7dB should leave 100Hz near 0 dB", abs(trebleBoostAt100Hz) < 0.5f)
+        assertTrue("High Band +7dB in Linear Independent must leave 100Hz near 0 dB", abs(trebleBoostAt100Hz) < 0.5f)
 
         // 5. Real-time sample processing passes cleanly when disabled and boosts when enabled
         val filter = com.example.audio.ThreeBandToneFilter(sampleRate)
@@ -533,11 +538,17 @@ class ExampleUnitTest {
 
     @Test
     fun headphone_accommodations_tone_profiles_and_soft_sound_scaling_work_accurately() {
-        val sampleRate = 44100
+        val sampleRate = 48000
 
-        // 1. Balanced Tone @ Moderate (1.0x): -2 dB headroom cut @ 300Hz, boosts capped <= +3.0 dB
-        val bal300 = com.example.audio.HeadphoneAccommodationsProcessor.computeResponseDbAt(
-            300.0,
+        // 1. Balanced Tone @ Moderate (1.0x): 1kHz +1.5dB, 3kHz +2.5dB, 8kHz +3.2dB, 12kHz +2.5dB
+        val bal1k = com.example.audio.HeadphoneAccommodationsProcessor.computeResponseDbAt(
+            1000.0,
+            com.example.model.AccommodationToneProfile.BALANCED_TONE,
+            com.example.model.SoftSoundIntensity.MODERATE,
+            sampleRate
+        )
+        val bal3k = com.example.audio.HeadphoneAccommodationsProcessor.computeResponseDbAt(
+            3000.0,
             com.example.model.AccommodationToneProfile.BALANCED_TONE,
             com.example.model.SoftSoundIntensity.MODERATE,
             sampleRate
@@ -548,67 +559,78 @@ class ExampleUnitTest {
             com.example.model.SoftSoundIntensity.MODERATE,
             sampleRate
         )
-        assertEquals(-2.0f, bal300, 0.5f)
-        assertTrue("Balanced 8kHz boost should be around +2.1 dB and <= +3.0 dB", bal8k in 1.5f..3.0f)
+        assertTrue("Balanced 1kHz tilt should be around +1.5 dB ($bal1k)", bal1k in 1.2f..2.1f)
+        assertTrue("Balanced 3kHz tilt should be around +2.5 dB ($bal3k)", bal3k in 2.1f..3.2f)
+        assertTrue("Balanced 8kHz tilt should be around +3.2 dB ($bal8k)", bal8k in 2.8f..4.2f)
 
-        // 2. Vocal Range @ Moderate (1.0x): 100Hz HPF cuts 50Hz rumble, -2.0 dB @ 250Hz, balanced boost @ 2.5kHz (<= +3.0 dB)
+        // 2. Vocal Range @ Moderate (1.0x): 110Hz HPF cuts 50Hz rumble, 280Hz -2dB, 1.5kHz +3dB, 3kHz +3.8dB, 6kHz +1.5dB
         val vocal50 = com.example.audio.HeadphoneAccommodationsProcessor.computeResponseDbAt(
             50.0,
             com.example.model.AccommodationToneProfile.VOCAL_RANGE,
             com.example.model.SoftSoundIntensity.MODERATE,
             sampleRate
         )
-        val vocal250 = com.example.audio.HeadphoneAccommodationsProcessor.computeResponseDbAt(
-            250.0,
+        val vocal280 = com.example.audio.HeadphoneAccommodationsProcessor.computeResponseDbAt(
+            280.0,
             com.example.model.AccommodationToneProfile.VOCAL_RANGE,
             com.example.model.SoftSoundIntensity.MODERATE,
             sampleRate
         )
-        val vocal2500 = com.example.audio.HeadphoneAccommodationsProcessor.computeResponseDbAt(
-            2500.0,
+        val vocal3k = com.example.audio.HeadphoneAccommodationsProcessor.computeResponseDbAt(
+            3000.0,
             com.example.model.AccommodationToneProfile.VOCAL_RANGE,
             com.example.model.SoftSoundIntensity.MODERATE,
             sampleRate
         )
-        assertTrue("Vocal Range 100Hz HPF must strongly attenuate 50Hz rumble", vocal50 < -10f)
-        assertEquals(-2.0f, vocal250, 0.6f)
-        assertTrue("Vocal Range 2.5kHz lift should stay balanced <= +3.0 dB", vocal2500 in 1.6f..3.0f)
+        assertTrue("Vocal Range 110Hz HPF must strongly attenuate 50Hz rumble ($vocal50)", vocal50 < -10f)
+        assertEquals(-2.0f, vocal280, 0.6f)
+        assertTrue("Vocal Range 3kHz speech boost should be strong ($vocal3k)", vocal3k in 3.2f..4.6f)
 
-        // 3. Brightness scaling: Slight (0.6x) < Moderate (1.0x) < Strong (1.4x) at 12kHz, all <= +3.0 dB (+0.6 dB tolerance)
+        // 3. Brightness: Neutral bass/mids (0 dB < 1 kHz) and scaling Off < Slight < Moderate < Strong at 14kHz
+        val brightLow250 = com.example.audio.HeadphoneAccommodationsProcessor.computeResponseDbAt(
+            250.0,
+            com.example.model.AccommodationToneProfile.BRIGHTNESS,
+            com.example.model.SoftSoundIntensity.MODERATE,
+            sampleRate
+        )
+        val brightOff = com.example.audio.HeadphoneAccommodationsProcessor.computeResponseDbAt(
+            14000.0,
+            com.example.model.AccommodationToneProfile.BRIGHTNESS,
+            com.example.model.SoftSoundIntensity.OFF,
+            sampleRate
+        )
         val brightSlight = com.example.audio.HeadphoneAccommodationsProcessor.computeResponseDbAt(
-            12000.0,
+            14000.0,
             com.example.model.AccommodationToneProfile.BRIGHTNESS,
             com.example.model.SoftSoundIntensity.SLIGHT,
             sampleRate
         )
         val brightMod = com.example.audio.HeadphoneAccommodationsProcessor.computeResponseDbAt(
-            12000.0,
+            14000.0,
             com.example.model.AccommodationToneProfile.BRIGHTNESS,
             com.example.model.SoftSoundIntensity.MODERATE,
             sampleRate
         )
         val brightStrong = com.example.audio.HeadphoneAccommodationsProcessor.computeResponseDbAt(
-            12000.0,
+            14000.0,
             com.example.model.AccommodationToneProfile.BRIGHTNESS,
             com.example.model.SoftSoundIntensity.STRONG,
             sampleRate
         )
-        assertTrue("Slight (0.6x) < Moderate (1.0x)", brightSlight < brightMod)
-        assertTrue("Moderate (1.0x) < Strong (1.4x)", brightMod < brightStrong)
-        assertTrue("Brightness Strong 12kHz peak should stay balanced (<= +3.5 dB instead of +5.5 dB)", brightStrong <= 3.5f)
+        assertEquals("Brightness must remain 0 dB neutral below 1 kHz", 0.0f, brightLow250, 0.15f)
+        assertTrue("Off < Slight < Moderate < Strong", brightOff < brightSlight && brightSlight < brightMod && brightMod < brightStrong)
 
-        // 4. Boost Soft Sounds softened compressor thresholds, ratios, and increased makeup gain specs
-        assertEquals(-24f, com.example.model.SoftSoundIntensity.SLIGHT.thresholdDb, 0.01f)
-        assertEquals(1.8f, com.example.model.SoftSoundIntensity.SLIGHT.ratio, 0.01f)
-        assertEquals(3.5f, com.example.model.SoftSoundIntensity.SLIGHT.makeupGainDb, 0.01f)
-
-        assertEquals(-28f, com.example.model.SoftSoundIntensity.MODERATE.thresholdDb, 0.01f)
-        assertEquals(2.2f, com.example.model.SoftSoundIntensity.MODERATE.ratio, 0.01f)
-        assertEquals(6.0f, com.example.model.SoftSoundIntensity.MODERATE.makeupGainDb, 0.01f)
-
-        assertEquals(-32f, com.example.model.SoftSoundIntensity.STRONG.thresholdDb, 0.01f)
-        assertEquals(2.6f, com.example.model.SoftSoundIntensity.STRONG.ratio, 0.01f)
-        assertEquals(8.5f, com.example.model.SoftSoundIntensity.STRONG.makeupGainDb, 0.01f)
+        // 4. Parallel Soft-Sound Upward Lift specs: Off 0%/0dB, Slight 18%/+2.0dB, Moderate 32%/+3.8dB, Strong 48%/+5.5dB
+        assertEquals(0.0f, com.example.model.SoftSoundIntensity.OFF.parallelMix, 0.001f)
+        assertEquals(0.0f, com.example.model.SoftSoundIntensity.OFF.clarityGainDb, 0.01f)
+        assertEquals(0.18f, com.example.model.SoftSoundIntensity.SLIGHT.parallelMix, 0.001f)
+        assertEquals(2.0f, com.example.model.SoftSoundIntensity.SLIGHT.clarityGainDb, 0.01f)
+        assertEquals(0.32f, com.example.model.SoftSoundIntensity.MODERATE.parallelMix, 0.001f)
+        assertEquals(3.8f, com.example.model.SoftSoundIntensity.MODERATE.clarityGainDb, 0.01f)
+        assertEquals(0.48f, com.example.model.SoftSoundIntensity.STRONG.parallelMix, 0.001f)
+        assertEquals(5.5f, com.example.model.SoftSoundIntensity.STRONG.clarityGainDb, 0.01f)
+        assertEquals(-38.0f, com.example.model.SoftSoundIntensity.STRONG.thresholdDb, 0.01f)
+        assertEquals(3.5f, com.example.model.SoftSoundIntensity.STRONG.ratio, 0.01f)
 
         // 5. Turning Accommodations ON increases perceived loudness on normal -18 dBFS music instead of making it quieter,
         //    and Accommodations Output Gain (+0..+10 dB) dials in extra clean loudness
@@ -647,21 +669,21 @@ class ExampleUnitTest {
         var rmsOff = 0.0
         var rmsMod = 0.0
         var rmsBoosted = 0.0
-        for (i in 0 until 4410) {
+        for (i in 0 until 4800) {
             // Typical -18 dBFS 1 kHz track level
             val s = 0.125 * kotlin.math.sin(2.0 * Math.PI * 1000.0 * i / sampleRate)
             val (oOff, _) = accOffBank.processStereoSample(s, s)
             val (oMod, _) = accModerateBank.processStereoSample(s, s)
             val (oBoost, _) = accBoostedBank.processStereoSample(s, s)
-            if (i > 2205) {
+            if (i > 2400) {
                 rmsOff += oOff * oOff
                 rmsMod += oMod * oMod
                 rmsBoosted += oBoost * oBoost
             }
         }
-        rmsOff = kotlin.math.sqrt(rmsOff / 2205)
-        rmsMod = kotlin.math.sqrt(rmsMod / 2205)
-        rmsBoosted = kotlin.math.sqrt(rmsBoosted / 2205)
+        rmsOff = kotlin.math.sqrt(rmsOff / 2400)
+        rmsMod = kotlin.math.sqrt(rmsMod / 2400)
+        rmsBoosted = kotlin.math.sqrt(rmsBoosted / 2400)
         assertTrue("Turning Accommodations ON must increase loudness on -18 dBFS audio (rmsMod=$rmsMod vs rmsOff=$rmsOff)", rmsMod > rmsOff * 1.15)
         assertTrue("Accommodations Output Gain (+6 dB) should increase output further cleanly", rmsBoosted > rmsMod * 1.45)
     }
@@ -1956,5 +1978,333 @@ class ExampleUnitTest {
             "Upper treble (>2.2kHz) must include ~0.14ms (~6.72 samples) micro-arrival offset (highDelay=$highDelaySamples, lowDelay=$lowDelaySamples)",
             highDelaySamples in 6.5..10.5 && sFullHigh > sApHigh * 0.92
         )
+    }
+
+    @Test
+    fun headphone_accommodations_parallel_upward_lift_boosts_quiet_detail_without_squashing_peaks() {
+        val sampleRate = 48000
+        val offProc = com.example.audio.HeadphoneAccommodationsProcessor(sampleRate).apply {
+            configure(
+                isEnabled = true,
+                profile = com.example.model.AccommodationToneProfile.BRIGHTNESS,
+                intensity = com.example.model.SoftSoundIntensity.OFF
+            )
+        }
+        val strongProc = com.example.audio.HeadphoneAccommodationsProcessor(sampleRate).apply {
+            configure(
+                isEnabled = true,
+                profile = com.example.model.AccommodationToneProfile.BRIGHTNESS,
+                intensity = com.example.model.SoftSoundIntensity.STRONG
+            )
+        }
+
+        // 1. Quiet 2.5 kHz whisper/detail (-46 dBFS, >1.2kHz HPF, below -38 dB threshold) -> Strong 48% lift boosts strongly
+        var quietOffSq = 0.0
+        var quietStrongSq = 0.0
+        for (i in 0 until 4800) {
+            val s = 0.005 * kotlin.math.sin(2.0 * Math.PI * 2500.0 * i / sampleRate)
+            val (oOff, _) = offProc.processStereoSample(s, s)
+            val (oStrong, _) = strongProc.processStereoSample(s, s)
+            if (i >= 2400) {
+                quietOffSq += oOff * oOff
+                quietStrongSq += oStrong * oStrong
+            }
+        }
+        val quietOffRms = kotlin.math.sqrt(quietOffSq / 2400)
+        val quietStrongRms = kotlin.math.sqrt(quietStrongSq / 2400)
+        val upwardLiftDb = 20.0 * kotlin.math.log10((quietStrongRms / quietOffRms).coerceAtLeast(1e-6))
+        assertTrue(
+            "Parallel 48% +5.5dB clarity lift must boost quiet >1.2kHz details by >= +3.5 dB (got $upwardLiftDb dB)",
+            upwardLiftDb >= 3.5
+        )
+
+        // 2. Loud 2.5 kHz transient (-4 dBFS) must NOT be crushed downward by parallel compressor
+        var loudOffSq = 0.0
+        var loudStrongSq = 0.0
+        for (i in 0 until 4800) {
+            val s = 0.63 * kotlin.math.sin(2.0 * Math.PI * 2500.0 * i / sampleRate)
+            val (oOff, _) = offProc.processStereoSample(s, s)
+            val (oStrong, _) = strongProc.processStereoSample(s, s)
+            if (i >= 2400) {
+                loudOffSq += oOff * oOff
+                loudStrongSq += oStrong * oStrong
+            }
+        }
+        val loudOffRms = kotlin.math.sqrt(loudOffSq / 2400)
+        val loudStrongRms = kotlin.math.sqrt(loudStrongSq / 2400)
+        assertTrue(
+            "Loud peaks must never drop volume when Strong Soft-Sound Lift is engaged (loudStrong=$loudStrongRms vs loudOff=$loudOffRms)",
+            loudStrongRms >= loudOffRms * 0.98
+        )
+    }
+
+    @Test
+    fun custom_audio_setup_3_step_wizard_picks_combined_profile_and_intensity() {
+        val engine = com.example.audio.CustomAudioSetupAuditionEngine()
+        engine.open(com.example.model.SoftSoundIntensity.OFF)
+        assertTrue(engine.state.value.isOpen)
+        assertEquals(0, engine.state.value.stepIndex)
+
+        // Step 1: Choose Vocal Focus -> advances to Step 2
+        engine.chooseStep1Speech(preferVocalFocus = true)
+        assertEquals(1, engine.state.value.stepIndex)
+        assertTrue(engine.state.value.pickedVocalInStep1)
+        assertEquals(com.example.model.AccommodationToneProfile.VOCAL_RANGE, engine.state.value.chosenProfile)
+
+        // Step 2: Choose Balanced Tone (preserves Vocal Focus from Step 1) -> advances to Step 3
+        engine.chooseStep2Music(com.example.model.AccommodationToneProfile.BALANCED_TONE)
+        assertEquals(2, engine.state.value.stepIndex)
+        assertEquals(com.example.model.AccommodationToneProfile.VOCAL_RANGE, engine.state.value.chosenProfile)
+
+        // Step 3: Choose Strong Soft-Sound boost -> completes wizard with VOCAL_RANGE + STRONG
+        engine.chooseStep3Sensitivity(com.example.model.SoftSoundIntensity.STRONG)
+        assertTrue(engine.state.value.isCompleted)
+        assertEquals(com.example.model.SoftSoundIntensity.STRONG, engine.state.value.softIntensity)
+
+        // Restart and test Brightness path: Step 1 Standard + Step 2 Brightness + Step 3 Slight
+        engine.restartWizard()
+        assertEquals(0, engine.state.value.stepIndex)
+        engine.chooseStep1Speech(preferVocalFocus = false)
+        engine.chooseStep2Music(com.example.model.AccommodationToneProfile.BRIGHTNESS)
+        engine.chooseStep3Sensitivity(com.example.model.SoftSoundIntensity.SLIGHT)
+        assertTrue(engine.state.value.isCompleted)
+        assertEquals(com.example.model.AccommodationToneProfile.BRIGHTNESS, engine.state.value.chosenProfile)
+        assertEquals(com.example.model.SoftSoundIntensity.SLIGHT, engine.state.value.softIntensity)
+        engine.close()
+    }
+
+    @Test
+    fun three_band_ios27_smart_curve_applies_cross_band_compensation_and_7db_limits() {
+        val sampleRate = 48000
+
+        // 1. Official -7.0 dB to +7.0 dB bounds clamp excess inputs cleanly
+        assertEquals(-7f, com.example.model.ThreeBandEqRanges.BASS_MIN_DB, 1e-4f)
+        assertEquals(7f, com.example.model.ThreeBandEqRanges.BASS_MAX_DB, 1e-4f)
+        val clamped100Hz = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
+            freqHz = 60.0,
+            bassDb = 12.0f,
+            midsDb = 0f,
+            trebleDb = 0f,
+            sampleRate = sampleRate,
+            smartCurveEnabled = true
+        )
+        val exact7dB100Hz = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
+            freqHz = 60.0,
+            bassDb = 7.0f,
+            midsDb = 0f,
+            trebleDb = 0f,
+            sampleRate = sampleRate,
+            smartCurveEnabled = true
+        )
+        assertEquals("Excess gain above +7.0 dB must clamp to +7.0 dB", exact7dB100Hz, clamped100Hz, 0.05f)
+
+        // 2. Mid > 0 (+6 dB): boosts vocal presence (600Hz-4.7kHz), trims <250Hz mud (-0.4 dB/dB -> -2.4 dB), lifts >3.3kHz (+0.5 dB/dB -> +3.0 dB)
+        val midPosBass = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
+            freqHz = 80.0,
+            bassDb = 0f,
+            midsDb = 6.0f,
+            trebleDb = 0f,
+            sampleRate = sampleRate,
+            smartCurveEnabled = true
+        )
+        val midPosVocal = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
+            freqHz = 1700.0,
+            bassDb = 0f,
+            midsDb = 6.0f,
+            trebleDb = 0f,
+            sampleRate = sampleRate,
+            smartCurveEnabled = true
+        )
+        val midPosHigh = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
+            freqHz = 9000.0,
+            bassDb = 0f,
+            midsDb = 6.0f,
+            trebleDb = 0f,
+            sampleRate = sampleRate,
+            smartCurveEnabled = true
+        )
+        assertTrue("Mid +6dB must trim <250Hz mud (< -1.6 dB, got $midPosBass)", midPosBass < -1.6f)
+        assertTrue("Mid +6dB must boost 1.7kHz vocal presence (> +5.0 dB, got $midPosVocal)", midPosVocal > 5.0f)
+        assertTrue("Mid +6dB must add >3.3kHz crisp clarity (> +2.5 dB, got $midPosHigh)", midPosHigh > 2.5f)
+
+        // 3. Mid < 0 (-6 dB): cuts boxy 300Hz-2.6kHz and adds V-curve warmth (+0.7 dB/dB <250Hz, +0.5 dB/dB >3.3kHz)
+        val midNegBass = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
+            freqHz = 80.0,
+            bassDb = 0f,
+            midsDb = -6.0f,
+            trebleDb = 0f,
+            sampleRate = sampleRate,
+            smartCurveEnabled = true
+        )
+        val midNegBoxy = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
+            freqHz = 880.0,
+            bassDb = 0f,
+            midsDb = -6.0f,
+            trebleDb = 0f,
+            sampleRate = sampleRate,
+            smartCurveEnabled = true
+        )
+        val midNegHigh = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
+            freqHz = 9000.0,
+            bassDb = 0f,
+            midsDb = -6.0f,
+            trebleDb = 0f,
+            sampleRate = sampleRate,
+            smartCurveEnabled = true
+        )
+        assertTrue("Mid -6dB must add V-curve bass warmth (> +3.0 dB, got $midNegBass)", midNegBass > 3.0f)
+        assertTrue("Mid -6dB must cut boxy 880Hz midrange (< -4.5 dB, got $midNegBoxy)", midNegBoxy < -4.5f)
+        assertTrue("Mid -6dB must add >3.3kHz V-curve clarity (> +2.2 dB, got $midNegHigh)", midNegHigh > 2.2f)
+
+        // 4. High > 0 (+6 dB): boosts >4.7kHz and applies subtle inverse warmth tilt (-0.15 dB/dB <2.5kHz -> ~ -0.9 dB)
+        val highPosTilt200Hz = com.example.audio.ThreeBandToneFilter.computeCombinedResponseDbAt(
+            freqHz = 200.0,
+            bassDb = 0f,
+            midsDb = 0f,
+            trebleDb = 6.0f,
+            sampleRate = sampleRate,
+            smartCurveEnabled = true
+        )
+        assertTrue(
+            "High +6dB in iOS 27 Smart Curve must apply ~ -0.9 dB inverse warmth tilt below 2.5kHz (got $highPosTilt200Hz)",
+            highPosTilt200Hz in -1.25f..-0.55f
+        )
+    }
+
+    @Test
+    fun infinix_hot_60_5g_compensator_enables_dual_stereo_2nd_order_xtc_and_tweeter_guard() {
+        val sampleRate = 48000
+        val initial = com.example.model.OutputEqProfile(
+            target = com.example.model.OutputTarget.SPEAKER,
+            landscapeStereoStage = false,
+            speakerTuningProfile = com.example.model.SpeakerTuningProfile.CINEMA_LANDSCAPE,
+            proMaxBodyWarmthEnabled = false,
+            trebleSmoothnessPercent = 0f,
+            loudnessMaximizerEnabled = false,
+            loudnessBoostPercent = 0f,
+            tenBandEnabled = true,
+            threeBandEnabled = false
+        )
+        val calibrated = initial.withInfinixHot60Compensator()
+
+        assertTrue(calibrated.isInfinixHot60CompensatorActive())
+        assertTrue(calibrated.speakerDspEnabled)
+        assertTrue("Infinix Hot 60 5G Compensator must enable dual-speaker stereo & landscape XTC", calibrated.landscapeStereoStage)
+        assertEquals(0.22, com.example.model.FlagshipSpeakerSpecs.XTC_CROSSFEED_GAIN, 1e-6)
+        assertEquals(0.00018, com.example.model.FlagshipSpeakerSpecs.XTC_DELAY_SEC, 1e-7)
+        assertEquals(com.example.model.SpeakerTuningProfile.PRO_MAX_MUSIC, calibrated.speakerTuningProfile)
+        assertTrue("Pro Max Body Warmth (125Hz) must be ON", calibrated.proMaxBodyWarmthEnabled)
+        assertEquals(0.50f, calibrated.trebleSmoothnessPercent, 1e-4f)
+        assertTrue(calibrated.loudnessMaximizerEnabled)
+        assertEquals(1.0f, calibrated.loudnessBoostPercent, 1e-4f)
+        assertEquals(9.5f, com.example.model.LoudnessMaximizerSpecs.MAX_MAKEUP_BOOST_DB, 1e-4f)
+        assertTrue(!calibrated.tenBandEnabled)
+        assertTrue(calibrated.threeBandEnabled)
+        assertEquals(2.5f, calibrated.threeBandBassDb, 1e-4f)
+        assertEquals(0.0f, calibrated.threeBandMidsDb, 1e-4f)
+        assertEquals(-2.0f, calibrated.threeBandTrebleDb, 1e-4f)
+
+        // 1. Verify top-earpiece tweeter De-Harsh Guard (4.5kHz <= -2.5dB, 7.0kHz <= -3.0dB) & warm 130Hz bass punch (>= +3.0dB)
+        val resp130 = com.example.audio.PhoneSpeakerDspChain.computeVcurveResponseDbAt(
+            130.0,
+            calibrated.speakerTuningProfile,
+            sampleRate,
+            isBodyWarmthEnabled = calibrated.proMaxBodyWarmthEnabled
+        )
+        val resp4500 = com.example.audio.PhoneSpeakerDspChain.computeVcurveResponseDbAt(
+            4500.0,
+            calibrated.speakerTuningProfile,
+            sampleRate,
+            isBodyWarmthEnabled = calibrated.proMaxBodyWarmthEnabled
+        )
+        val resp7000 = com.example.audio.PhoneSpeakerDspChain.computeVcurveResponseDbAt(
+            7000.0,
+            calibrated.speakerTuningProfile,
+            sampleRate,
+            isBodyWarmthEnabled = calibrated.proMaxBodyWarmthEnabled
+        )
+        assertTrue("Bottom speaker must deliver warm 130Hz bass punch (>= +3.0 dB, got $resp130)", resp130 >= 3.0f)
+        assertTrue("Top earpiece 4.5kHz De-Harsh Guard must be active (<= -2.5 dB, got $resp4500)", resp4500 <= -2.5f)
+        assertTrue("Top earpiece 7.0kHz De-Harsh Guard must be active (<= -3.0 dB, got $resp7000)", resp7000 <= -3.0f)
+
+        // 2. Verify DSP bank keeps <180Hz bass centered mono while preserving full L/R stereo & engaging 2nd-order 0.18ms XTC
+        val dualStereoBank = com.example.audio.BiquadEqFilterBank(sampleRate)
+        dualStereoBank.updateParameters(
+            gainsDb = calibrated.bandGainsDb,
+            preampDb = calibrated.preampDb,
+            isBypassed = calibrated.isBypassed,
+            speakerDspEnabled = calibrated.speakerDspEnabled,
+            virtualBassEnabled = calibrated.virtualBassEnabled,
+            landscapeStereoStage = calibrated.landscapeStereoStage,
+            speakerTuningProfile = calibrated.speakerTuningProfile,
+            outputTarget = calibrated.target,
+            tenBandEnabled = calibrated.tenBandEnabled,
+            threeBandEnabled = calibrated.threeBandEnabled,
+            threeBandBassDb = calibrated.threeBandBassDb,
+            threeBandMidsDb = calibrated.threeBandMidsDb,
+            threeBandTrebleDb = calibrated.threeBandTrebleDb,
+            threeBandSmartCurveEnabled = calibrated.threeBandSmartCurveEnabled,
+            loudnessMaximizerEnabled = calibrated.loudnessMaximizerEnabled,
+            loudnessBoostPercent = calibrated.loudnessBoostPercent,
+            trebleSmoothnessPercent = calibrated.trebleSmoothnessPercent,
+            proMaxBodyWarmthEnabled = calibrated.proMaxBodyWarmthEnabled,
+            deviceIsLandscape = true
+        )
+
+        var bassSideSum = 0.0
+        var bassMidSum = 0.0
+        for (i in 0 until 2400) {
+            val l = 0.08 * kotlin.math.sin(2.0 * Math.PI * 100.0 * i / sampleRate)
+            val r = 0.02 * kotlin.math.sin(2.0 * Math.PI * 100.0 * i / sampleRate)
+            val (outL, outR) = dualStereoBank.processStereoSample(l, r)
+            if (i >= 1200) {
+                bassSideSum += abs(outL - outR)
+                bassMidSum += abs(outL + outR)
+            }
+        }
+        val inputSideMidRatio = (0.08 - 0.02) / (0.08 + 0.02)
+        val outputSideMidRatio = bassSideSum / bassMidSum.coerceAtLeast(1e-6)
+        assertTrue("Clean mono-bass summing must preserve strong 100Hz energy (midSum=$bassMidSum)", bassMidSum > 100.0)
+        assertTrue(
+            "Mono-bass <180Hz must stay centered cleanly (in=$inputSideMidRatio, out=$outputSideMidRatio)",
+            outputSideMidRatio < 0.18 && outputSideMidRatio < inputSideMidRatio * 0.35
+        )
+
+        // Compare true dual-speaker 2nd-order Landscape XTC against non-XTC at 800Hz
+        val noXtcBank = com.example.audio.BiquadEqFilterBank(sampleRate)
+        noXtcBank.updateParameters(
+            gainsDb = calibrated.bandGainsDb,
+            preampDb = calibrated.preampDb,
+            isBypassed = calibrated.isBypassed,
+            speakerDspEnabled = calibrated.speakerDspEnabled,
+            virtualBassEnabled = calibrated.virtualBassEnabled,
+            landscapeStereoStage = false,
+            speakerTuningProfile = calibrated.speakerTuningProfile,
+            outputTarget = calibrated.target,
+            tenBandEnabled = calibrated.tenBandEnabled,
+            threeBandEnabled = calibrated.threeBandEnabled,
+            threeBandBassDb = calibrated.threeBandBassDb,
+            threeBandMidsDb = calibrated.threeBandMidsDb,
+            threeBandTrebleDb = calibrated.threeBandTrebleDb,
+            threeBandSmartCurveEnabled = calibrated.threeBandSmartCurveEnabled,
+            loudnessMaximizerEnabled = calibrated.loudnessMaximizerEnabled,
+            loudnessBoostPercent = calibrated.loudnessBoostPercent,
+            trebleSmoothnessPercent = calibrated.trebleSmoothnessPercent,
+            proMaxBodyWarmthEnabled = calibrated.proMaxBodyWarmthEnabled,
+            deviceIsLandscape = true
+        )
+        var noXtcSide = 0.0
+        var withXtcSide = 0.0
+        for (i in 0 until 2400) {
+            val l = 0.06 * kotlin.math.sin(2.0 * Math.PI * 800.0 * i / sampleRate)
+            val r = 0.01 * kotlin.math.sin(2.0 * Math.PI * 800.0 * i / sampleRate)
+            val (nL, nR) = noXtcBank.processStereoSample(l, r)
+            val (xL, xR) = dualStereoBank.processStereoSample(l, r)
+            if (i >= 1200) {
+                noXtcSide += abs(nL - nR)
+                withXtcSide += abs(xL - xR)
+            }
+        }
+        assertTrue("Dual-speaker 2nd-order landscape XTC (-22% 0.18ms) must project wider stereo stage ($withXtcSide vs $noXtcSide)", withXtcSide > noXtcSide * 1.10)
     }
 }

@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
@@ -12,7 +13,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -24,12 +24,17 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -45,6 +50,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
@@ -55,11 +63,15 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.audio.ThreeBandToneFilter
 import com.example.model.ThreeBandEqRanges
 import com.example.ui.theme.AnalyzerCyan
 import com.example.ui.theme.AnalyzerCyanSoft
+import com.example.ui.theme.AppleBlue
+import com.example.ui.theme.AppleBlueSoft
 import com.example.ui.theme.AppleGlassBorder
 import com.example.ui.theme.AppleGlassBottom
 import com.example.ui.theme.AppleGlassTop
@@ -82,6 +94,8 @@ import com.example.ui.theme.TextSecondary
 import com.example.ui.theme.WarmAmber
 import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.ln
+import kotlin.math.pow
 
 @Composable
 fun ThreeBandEqualizerCard(
@@ -89,15 +103,24 @@ fun ThreeBandEqualizerCard(
     bassDb: Float,
     midsDb: Float,
     trebleDb: Float,
+    smartCurveEnabled: Boolean = true,
+    recommendedMode: Boolean = false,
+    recommendedBannerVisible: Boolean = false,
+    isSpeakerTarget: Boolean = false,
     isMasterBypassed: Boolean,
     onBassChange: (Float) -> Unit,
     onMidsChange: (Float) -> Unit,
     onTrebleChange: (Float) -> Unit,
     onToggleEnabled: () -> Unit,
+    onToggleSmartCurve: (Boolean) -> Unit = {},
+    onSelectRecommendedMode: (Boolean) -> Unit = {},
+    onDismissRecommendedBanner: () -> Unit = {},
     onReset: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val effectivelyBypassed = isMasterBypassed || !threeBandEnabled
+    val isFlat = abs(bassDb) < 0.05f && abs(midsDb) < 0.05f && abs(trebleDb) < 0.05f
+    val isRecommendedSelected = recommendedMode && isFlat
     val bodyAlpha by animateFloatAsState(
         targetValue = if (threeBandEnabled) 1f else 0.40f,
         animationSpec = spring(dampingRatio = 0.9f, stiffness = 700f),
@@ -115,13 +138,13 @@ fun ThreeBandEqualizerCard(
             )
             .border(
                 1.dp,
-                if (threeBandEnabled && !isMasterBypassed) AnalyzerCyan.copy(alpha = 0.45f) else AppleGlassBorder,
+                if (threeBandEnabled && !isMasterBypassed) AppleBlue.copy(alpha = 0.50f) else AppleGlassBorder,
                 RoundedCornerShape(20.dp)
             )
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // Header Row: Title, Disabled Badge, Reset, and ON/OFF Toggle
+        // Header Row: Title, Reset, and ON/OFF Toggle
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -136,10 +159,10 @@ fun ThreeBandEqualizerCard(
                     modifier = Modifier
                         .size(30.dp)
                         .clip(RoundedCornerShape(8.dp))
-                        .background(if (effectivelyBypassed) StudioSurfaceElevated else AnalyzerCyanSoft)
+                        .background(if (effectivelyBypassed) StudioSurfaceElevated else AppleBlueSoft)
                         .border(
                             1.dp,
-                            if (effectivelyBypassed) StudioBorder else AnalyzerCyan.copy(alpha = 0.55f),
+                            if (effectivelyBypassed) StudioBorder else AppleBlue.copy(alpha = 0.55f),
                             RoundedCornerShape(8.dp)
                         ),
                     contentAlignment = Alignment.Center
@@ -147,14 +170,14 @@ fun ThreeBandEqualizerCard(
                     Icon(
                         imageVector = Icons.Rounded.Tune,
                         contentDescription = null,
-                        tint = if (effectivelyBypassed) TextMuted else AnalyzerCyan,
+                        tint = if (effectivelyBypassed) TextMuted else AppleBlue,
                         modifier = Modifier.size(16.dp)
                     )
                 }
 
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "3-Band Tone Equalizer",
+                        text = "iOS 27 3-Band Equalizer",
                         style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
                         color = if (threeBandEnabled) TextPrimary else TextSecondary
                     )
@@ -170,9 +193,13 @@ fun ThreeBandEqualizerCard(
                         )
                     } else {
                         Text(
-                            text = "LOW (20Hz–250Hz) • MID (250Hz–4.7kHz) • HIGH (4.7kHz–20kHz)",
+                            text = if (smartCurveEnabled) {
+                                "iOS 27 Smart Curve • -7.0 to +7.0 dB"
+                            } else {
+                                "Linear Independent • -7.0 to +7.0 dB"
+                            },
                             style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                            color = TextSecondary
+                            color = if (smartCurveEnabled) AppleBlue else TextSecondary
                         )
                     }
                 }
@@ -182,22 +209,7 @@ fun ThreeBandEqualizerCard(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (!threeBandEnabled) {
-                    Surface(
-                        shape = RoundedCornerShape(999.dp),
-                        color = StudioSurfaceElevated,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(999.dp))
-                            .border(1.dp, StudioBorder, RoundedCornerShape(999.dp))
-                    ) {
-                        Text(
-                            text = "Disabled (10-Band Active)",
-                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
-                            color = TextMuted,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                        )
-                    }
-                } else {
+                if (threeBandEnabled) {
                     Surface(
                         shape = RoundedCornerShape(999.dp),
                         color = StudioSurfaceElevated,
@@ -273,7 +285,189 @@ fun ThreeBandEqualizerCard(
             }
         }
 
-        // 3 Clean Graphic Vertical Faders (Bass, Mids, Treble) — Dimmed (0.40) & pointer-blocked when 10-Band EQ is active
+        // Top Pill Switcher: Recommended (Flat) | Custom (iOS 27 AirPods style)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(999.dp))
+                .background(StudioBackground.copy(alpha = 0.72f))
+                .border(1.dp, StudioBorder, RoundedCornerShape(999.dp))
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .defaultMinSize(minHeight = 48.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(if (threeBandEnabled && isRecommendedSelected) AppleBlueSoft else Color.Transparent)
+                    .border(
+                        1.dp,
+                        if (threeBandEnabled && isRecommendedSelected) AppleBlue.copy(alpha = 0.72f) else Color.Transparent,
+                        RoundedCornerShape(999.dp)
+                    )
+                    .clickable { onSelectRecommendedMode(true) }
+                    .testTag("three_band_recommended_pill"),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Recommended (Flat)",
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontSize = 11.5.sp,
+                        fontWeight = if (threeBandEnabled && isRecommendedSelected) FontWeight.Bold else FontWeight.Medium
+                    ),
+                    color = if (threeBandEnabled && isRecommendedSelected) AppleBlue else TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .defaultMinSize(minHeight = 48.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(if (threeBandEnabled && !isRecommendedSelected) AppleBlueSoft else Color.Transparent)
+                    .border(
+                        1.dp,
+                        if (threeBandEnabled && !isRecommendedSelected) AppleBlue.copy(alpha = 0.72f) else Color.Transparent,
+                        RoundedCornerShape(999.dp)
+                    )
+                    .clickable { onSelectRecommendedMode(false) }
+                    .testTag("three_band_custom_pill"),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Custom",
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontSize = 11.5.sp,
+                        fontWeight = if (threeBandEnabled && !isRecommendedSelected) FontWeight.Bold else FontWeight.Medium
+                    ),
+                    color = if (threeBandEnabled && !isRecommendedSelected) AppleBlue else TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+
+        // Subtle iOS-style Info Banner when Headphone Accommodations > Custom Audio Setup resets 3-Band EQ to Recommended
+        AnimatedVisibility(visible = recommendedBannerVisible) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(AppleBlueSoft)
+                    .border(1.dp, AppleBlue.copy(alpha = 0.55f), RoundedCornerShape(12.dp))
+                    .padding(start = 10.dp, end = 4.dp, top = 6.dp, bottom = 6.dp)
+                    .testTag("three_band_recommended_banner"),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Info,
+                    contentDescription = "Recommended Equalizer Notice",
+                    tint = AppleBlue,
+                    modifier = Modifier.size(16.dp)
+                )
+                Text(
+                    text = "Equalizer set to Recommended to match your Custom Audio Setup",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.Medium
+                    ),
+                    color = TextPrimary,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(
+                    onClick = onDismissRecommendedBanner,
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .testTag("three_band_banner_dismiss_btn")
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Close,
+                        contentDescription = "Dismiss Recommended notice",
+                        tint = TextSecondary,
+                        modifier = Modifier.size(15.dp)
+                    )
+                }
+            }
+        }
+
+        // Apple Smart Tilt vs. Pure Independent Curve Mode Switch
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(StudioBackground.copy(alpha = 0.65f))
+                .border(1.dp, StudioBorder, RoundedCornerShape(12.dp))
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .defaultMinSize(minHeight = 48.dp)
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(if (smartCurveEnabled) AppleBlueSoft else Color.Transparent)
+                    .border(
+                        1.dp,
+                        if (smartCurveEnabled) AppleBlue.copy(alpha = 0.72f) else Color.Transparent,
+                        RoundedCornerShape(9.dp)
+                    )
+                    .clickable { onToggleSmartCurve(true) }
+                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                    .testTag("three_band_smart_curve_btn"),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.AutoAwesome,
+                    contentDescription = null,
+                    tint = if (smartCurveEnabled) AppleBlue else TextMuted,
+                    modifier = Modifier.size(13.dp)
+                )
+                Text(
+                    text = " iOS 27 Smart Curve",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = 10.5.sp,
+                        fontWeight = if (smartCurveEnabled) FontWeight.Bold else FontWeight.Medium
+                    ),
+                    color = if (smartCurveEnabled) AppleBlue else TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .defaultMinSize(minHeight = 48.dp)
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(if (!smartCurveEnabled) AnalyzerCyanSoft else Color.Transparent)
+                    .border(
+                        1.dp,
+                        if (!smartCurveEnabled) AnalyzerCyan.copy(alpha = 0.68f) else Color.Transparent,
+                        RoundedCornerShape(9.dp)
+                    )
+                    .clickable { onToggleSmartCurve(false) }
+                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                    .testTag("three_band_linear_curve_btn"),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Linear Independent",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = 10.5.sp,
+                        fontWeight = if (!smartCurveEnabled) FontWeight.Bold else FontWeight.Medium
+                    ),
+                    color = if (!smartCurveEnabled) AnalyzerCyan else TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+
+        // Interactive 60fps Frequency Curve + 3 Vertical Faders (Low, Mid, High) — Dimmed & locked when 10-Band EQ is active
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -283,6 +477,20 @@ fun ThreeBandEqualizerCard(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                // Smooth 60fps iOS Blue Curve Visualization directly above faders
+                ThreeBandInteractiveCurveCanvas(
+                    bassDb = if (threeBandEnabled) bassDb else 0f,
+                    midsDb = if (threeBandEnabled) midsDb else 0f,
+                    trebleDb = if (threeBandEnabled) trebleDb else 0f,
+                    smartCurveEnabled = smartCurveEnabled,
+                    isSpeakerTarget = isSpeakerTarget,
+                    isBypassed = effectivelyBypassed,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(86.dp)
+                        .testTag("three_band_curve_canvas")
+                )
+
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -300,8 +508,8 @@ fun ThreeBandEqualizerCard(
                         gainDb = bassDb,
                         minDb = ThreeBandEqRanges.BASS_MIN_DB,
                         maxDb = ThreeBandEqRanges.BASS_MAX_DB,
-                        maxLabel = "+12",
-                        minLabel = "-12",
+                        maxLabel = "+7",
+                        minLabel = "-7",
                         isBypassed = effectivelyBypassed,
                         isInteractive = threeBandEnabled,
                         accentColor = SignalCoral,
@@ -320,8 +528,8 @@ fun ThreeBandEqualizerCard(
                         gainDb = midsDb,
                         minDb = ThreeBandEqRanges.MIDS_MIN_DB,
                         maxDb = ThreeBandEqRanges.MIDS_MAX_DB,
-                        maxLabel = "+12",
-                        minLabel = "-12",
+                        maxLabel = "+7",
+                        minLabel = "-7",
                         isBypassed = effectivelyBypassed,
                         isInteractive = threeBandEnabled,
                         accentColor = WarmAmber,
@@ -331,7 +539,7 @@ fun ThreeBandEqualizerCard(
                             .weight(1f)
                             .fillMaxHeight()
                             .testTag("three_band_mids_slider"),
-                        semanticsLabel = "Mid Band 250Hz to 4.7kHz Peaking at 1084Hz"
+                        semanticsLabel = "Mid Band 250Hz to 4.7kHz"
                     )
 
                     ThreeBandFaderColumn(
@@ -340,12 +548,12 @@ fun ThreeBandEqualizerCard(
                         gainDb = trebleDb,
                         minDb = ThreeBandEqRanges.TREBLE_MIN_DB,
                         maxDb = ThreeBandEqRanges.TREBLE_MAX_DB,
-                        maxLabel = "+12",
-                        minLabel = "-12",
+                        maxLabel = "+7",
+                        minLabel = "-7",
                         isBypassed = effectivelyBypassed,
                         isInteractive = threeBandEnabled,
-                        accentColor = AnalyzerCyan,
-                        accentGlowColor = AnalyzerCyan,
+                        accentColor = AppleBlue,
+                        accentGlowColor = AppleBlue,
                         onGainChange = onTrebleChange,
                         modifier = Modifier
                             .weight(1f)
@@ -356,10 +564,12 @@ fun ThreeBandEqualizerCard(
                 }
 
                 Text(
-                    text = if (threeBandEnabled) {
-                        "LOW (20Hz–250Hz) • MID (250Hz–4.7kHz) • HIGH (4.7kHz–20kHz) • Double-tap to reset (0.0 dB)"
-                    } else {
+                    text = if (!threeBandEnabled) {
                         "3-Band Tone EQ bypassed at 0 dB while 10-Band EQ shapes the audio"
+                    } else if (smartCurveEnabled) {
+                        "Smart Compensation: Mid + trims <250Hz & lifts >3.3kHz • Mid - adds V-curve • High + adds -0.15dB/dB warmth tilt"
+                    } else {
+                        "Linear Independent: Pure 250Hz Low / 1084Hz Mid / 4.7kHz High (-7.0 to +7.0 dB) • Double-tap to reset"
                     },
                     style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.5.sp),
                     color = TextMuted,
@@ -381,6 +591,202 @@ fun ThreeBandEqualizerCard(
                         }
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun ThreeBandInteractiveCurveCanvas(
+    bassDb: Float,
+    midsDb: Float,
+    trebleDb: Float,
+    smartCurveEnabled: Boolean,
+    isSpeakerTarget: Boolean,
+    isBypassed: Boolean,
+    modifier: Modifier = Modifier
+) {
+    // 60fps responsive spring interpolation so dragging sliders bends the iOS Blue curve smoothly
+    val animBass by animateFloatAsState(
+        targetValue = bassDb,
+        animationSpec = spring(dampingRatio = 0.86f, stiffness = 1100f),
+        label = "curve_bass"
+    )
+    val animMids by animateFloatAsState(
+        targetValue = midsDb,
+        animationSpec = spring(dampingRatio = 0.86f, stiffness = 1100f),
+        label = "curve_mids"
+    )
+    val animTreble by animateFloatAsState(
+        targetValue = trebleDb,
+        animationSpec = spring(dampingRatio = 0.86f, stiffness = 1100f),
+        label = "curve_treble"
+    )
+
+    val freqs = remember {
+        List(56) { idx ->
+            val t = idx / 55.0
+            20.0 * (20000.0 / 20.0).pow(t)
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(StudioBackground.copy(alpha = 0.86f))
+            .border(
+                1.dp,
+                if (isBypassed) StudioBorder else AppleBlue.copy(alpha = 0.42f),
+                RoundedCornerShape(12.dp)
+            )
+            .padding(horizontal = 8.dp, vertical = 6.dp)
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val w = size.width
+            val h = size.height
+            if (w <= 2f || h <= 2f) return@Canvas
+
+            val maxRangeDb = 9.0f
+            val zeroY = h * 0.5f
+
+            fun dbToY(db: Float): Float {
+                val norm = (db / maxRangeDb).coerceIn(-1f, 1f)
+                return (zeroY - norm * (h * 0.44f)).coerceIn(2f, h - 2f)
+            }
+
+            fun freqToX(freqHz: Double): Float {
+                val t = (ln(freqHz / 20.0) / ln(20000.0 / 20.0)).toFloat().coerceIn(0f, 1f)
+                return t * w
+            }
+
+            // Reference dB lines (+7, 0, -7)
+            drawLine(
+                color = GridLineSubtle,
+                start = Offset(0f, dbToY(7f)),
+                end = Offset(w, dbToY(7f)),
+                strokeWidth = 0.8.dp.toPx()
+            )
+            drawLine(
+                color = GridLineZero,
+                start = Offset(0f, zeroY),
+                end = Offset(w, zeroY),
+                strokeWidth = 1.1.dp.toPx()
+            )
+            drawLine(
+                color = GridLineSubtle,
+                start = Offset(0f, dbToY(-7f)),
+                end = Offset(w, dbToY(-7f)),
+                strokeWidth = 0.8.dp.toPx()
+            )
+
+            // Crossover guides at 250 Hz and 4.7 kHz
+            val x250 = freqToX(250.0)
+            val x4700 = freqToX(4700.0)
+            drawLine(
+                color = GridLineSubtle.copy(alpha = 0.65f),
+                start = Offset(x250, 0f),
+                end = Offset(x250, h),
+                strokeWidth = 0.8.dp.toPx()
+            )
+            drawLine(
+                color = GridLineSubtle.copy(alpha = 0.65f),
+                start = Offset(x4700, 0f),
+                end = Offset(x4700, h),
+                strokeWidth = 0.8.dp.toPx()
+            )
+
+            val points = freqs.map { f ->
+                val respDb = ThreeBandToneFilter.computeCombinedResponseDbAt(
+                    freqHz = f,
+                    bassDb = animBass,
+                    midsDb = animMids,
+                    trebleDb = animTreble,
+                    isSpeakerTarget = isSpeakerTarget,
+                    sampleRate = 48000,
+                    smartCurveEnabled = smartCurveEnabled
+                )
+                Offset(freqToX(f), dbToY(respDb))
+            }
+
+            val linePath = Path()
+            val fillPath = Path()
+            points.forEachIndexed { idx, pt ->
+                if (idx == 0) {
+                    linePath.moveTo(pt.x, pt.y)
+                    fillPath.moveTo(pt.x, zeroY)
+                    fillPath.lineTo(pt.x, pt.y)
+                } else {
+                    val prev = points[idx - 1]
+                    val midX = (prev.x + pt.x) * 0.5f
+                    linePath.cubicTo(midX, prev.y, midX, pt.y, pt.x, pt.y)
+                    fillPath.cubicTo(midX, prev.y, midX, pt.y, pt.x, pt.y)
+                }
+            }
+            fillPath.lineTo(points.last().x, zeroY)
+            fillPath.close()
+
+            val curveColor = if (isBypassed) TextMuted else AppleBlue
+            drawPath(
+                path = fillPath,
+                brush = Brush.verticalGradient(
+                    colors = listOf(
+                        curveColor.copy(alpha = 0.28f),
+                        curveColor.copy(alpha = 0.04f)
+                    )
+                )
+            )
+            drawPath(
+                path = linePath,
+                color = curveColor.copy(alpha = 0.25f),
+                style = Stroke(
+                    width = 5.dp.toPx(),
+                    cap = StrokeCap.Round,
+                    join = StrokeJoin.Round
+                )
+            )
+            drawPath(
+                path = linePath,
+                color = curveColor,
+                style = Stroke(
+                    width = 2.2.dp.toPx(),
+                    cap = StrokeCap.Round,
+                    join = StrokeJoin.Round
+                )
+            )
+        }
+
+        // Subtle overlay frequency landmarks
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.BottomCenter)
+                .padding(horizontal = 2.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "20Hz",
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp),
+                color = TextMuted
+            )
+            Text(
+                text = "250Hz",
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp),
+                color = TextMuted
+            )
+            Text(
+                text = "1kHz",
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp),
+                color = TextMuted
+            )
+            Text(
+                text = "4.7kHz",
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp),
+                color = TextMuted
+            )
+            Text(
+                text = "20kHz",
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp),
+                color = TextMuted
+            )
         }
     }
 }
@@ -479,7 +885,7 @@ private fun ThreeBandFaderColumn(
             // Left range labels aligned proportionally with the track (Max, 0 dB, Min)
             Box(
                 modifier = Modifier
-                    .width(26.dp)
+                    .width(24.dp)
                     .fillMaxHeight()
                     .padding(vertical = 8.dp)
             ) {
@@ -562,7 +968,6 @@ private fun ThreeBandFaderColumn(
                     val zeroNorm = ((0f - minDb) / (maxDb - minDb)).coerceIn(0f, 1f)
                     val zeroY = usableTop + usableH * (1f - zeroNorm)
 
-                    // Subtle tick marks + crisp 0 dB horizontal reference across the fader well
                     drawLine(
                         color = GridLineSubtle,
                         start = Offset(cx - 14.dp.toPx(), usableTop),
@@ -582,7 +987,6 @@ private fun ThreeBandFaderColumn(
                         strokeWidth = 0.8.dp.toPx()
                     )
 
-                    // Recessed vertical groove
                     drawRoundRect(
                         color = FaderTrackIdle,
                         topLeft = Offset(cx - trackW * 0.5f, usableTop),
@@ -593,7 +997,6 @@ private fun ThreeBandFaderColumn(
                     val norm = ((animatedGain - minDb) / (maxDb - minDb)).coerceIn(0f, 1f)
                     val knobY = usableTop + usableH * (1f - norm)
 
-                    // Active fill growing outward from true 0 dB line
                     val activeTop = minOf(zeroY, knobY)
                     val activeHeight = abs(knobY - zeroY)
                     if (activeHeight > 1f) {
@@ -611,7 +1014,6 @@ private fun ThreeBandFaderColumn(
                         )
                     }
 
-                    // Halo + Machined Circular Fader Cap
                     drawCircle(
                         color = if (isBypassed) Color.Transparent else accentColor.copy(alpha = 0.24f),
                         radius = capRadius + 3.dp.toPx(),

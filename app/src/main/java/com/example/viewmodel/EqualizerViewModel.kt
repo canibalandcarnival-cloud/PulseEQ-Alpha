@@ -194,7 +194,20 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             val initialTarget = if (stored.autoSwitchByDevice) hwRoute else stored.selectedTarget
             selectedTargetFlow.value = initialTarget
 
-            val active = stored.profiles[initialTarget] ?: OutputEqProfile(target = initialTarget)
+            val activeBase = stored.profiles[initialTarget] ?: OutputEqProfile(target = initialTarget)
+            val active = if (initialTarget == OutputTarget.HEADPHONES &&
+                activeBase.accommodationsAutoEngageHeadphones &&
+                !activeBase.accommodationsEnabled
+            ) {
+                val engaged = activeBase.copy(accommodationsEnabled = true, isBypassed = false)
+                profilesFlow.value = profilesFlow.value.toMutableMap().apply {
+                    put(OutputTarget.HEADPHONES, engaged)
+                }
+                repository.saveProfile(engaged)
+                engaged
+            } else {
+                activeBase
+            }
             applyToAudioEngine(active)
         }
 
@@ -212,8 +225,26 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun selectOutputTarget(target: OutputTarget) {
         selectedTargetFlow.value = target
-        val profile = profilesFlow.value[target] ?: OutputEqProfile(target = target)
-        applyToAudioEngine(profile)
+        val baseProfile = profilesFlow.value[target] ?: OutputEqProfile(target = target)
+        val autoEngage = baseProfile.accommodationsAutoEngageHeadphones ||
+            profilesFlow.value.values.any { it.accommodationsAutoEngageHeadphones }
+        val resolvedProfile = if (target == OutputTarget.HEADPHONES && autoEngage && !baseProfile.accommodationsEnabled) {
+            val engaged = baseProfile.copy(
+                accommodationsEnabled = true,
+                accommodationsAutoEngageHeadphones = true,
+                isBypassed = false
+            )
+            profilesFlow.value = profilesFlow.value.toMutableMap().apply {
+                put(target, engaged)
+            }
+            viewModelScope.launch {
+                repository.saveProfile(engaged)
+            }
+            engaged
+        } else {
+            baseProfile
+        }
+        applyToAudioEngine(resolvedProfile)
         viewModelScope.launch {
             repository.saveSelectedTarget(target)
         }
@@ -429,6 +460,10 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
         commitProfile(updated)
     }
 
+    fun applyInfinixHot60Compensator() {
+        commitProfile(currentProfile().withInfinixHot60Compensator())
+    }
+
     fun updateMasterVolume(rawPercent: Float) {
         val current = currentProfile()
         val snapped = ((rawPercent.coerceIn(0f, 1f) * 100f).roundToInt() / 100f).coerceIn(0f, 1f)
@@ -571,6 +606,8 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             threeBandBassDb = clamped,
             threeBandEnabled = true,
             tenBandEnabled = false,
+            threeBandRecommendedMode = false,
+            threeBandRecommendedBannerVisible = false,
             isBypassed = false
         )
         commitProfile(updated)
@@ -582,6 +619,8 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             threeBandMidsDb = clamped,
             threeBandEnabled = true,
             tenBandEnabled = false,
+            threeBandRecommendedMode = false,
+            threeBandRecommendedBannerVisible = false,
             isBypassed = false
         )
         commitProfile(updated)
@@ -593,6 +632,8 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             threeBandTrebleDb = clamped,
             threeBandEnabled = true,
             tenBandEnabled = false,
+            threeBandRecommendedMode = false,
+            threeBandRecommendedBannerVisible = false,
             isBypassed = false
         )
         commitProfile(updated)
@@ -609,6 +650,47 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
         commitProfile(updated)
     }
 
+    fun toggleThreeBandSmartCurve(smartCurve: Boolean) {
+        val current = currentProfile()
+        val updated = current.copy(
+            threeBandSmartCurveEnabled = smartCurve,
+            threeBandEnabled = true,
+            tenBandEnabled = false,
+            isBypassed = false
+        )
+        commitProfile(updated)
+    }
+
+    fun setThreeBandRecommendedMode(recommended: Boolean) {
+        val current = currentProfile()
+        val updated = if (recommended) {
+            current.copy(
+                threeBandEnabled = true,
+                tenBandEnabled = false,
+                threeBandRecommendedMode = true,
+                threeBandBassDb = 0f,
+                threeBandMidsDb = 0f,
+                threeBandTrebleDb = 0f,
+                isBypassed = false
+            )
+        } else {
+            current.copy(
+                threeBandEnabled = true,
+                tenBandEnabled = false,
+                threeBandRecommendedMode = false,
+                threeBandRecommendedBannerVisible = false,
+                isBypassed = false
+            )
+        }
+        commitProfile(updated)
+    }
+
+    fun dismissThreeBandRecommendedBanner() {
+        val current = currentProfile()
+        if (!current.threeBandRecommendedBannerVisible) return
+        commitProfile(current.copy(threeBandRecommendedBannerVisible = false))
+    }
+
     fun resetThreeBand() {
         val current = currentProfile()
         val updated = current.copy(
@@ -616,7 +698,8 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             tenBandEnabled = false,
             threeBandBassDb = 0f,
             threeBandMidsDb = 0f,
-            threeBandTrebleDb = 0f
+            threeBandTrebleDb = 0f,
+            threeBandRecommendedBannerVisible = false
         )
         commitProfile(updated)
     }
@@ -660,6 +743,33 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
         val current = currentProfile()
         val updated = current.copy(accommodationsApplyToVoice = !current.accommodationsApplyToVoice)
         commitProfile(updated)
+    }
+
+    fun toggleAccommodationsAutoEngage() {
+        val current = currentProfile()
+        val nextAutoEngage = !current.accommodationsAutoEngageHeadphones
+        val updatedMap = profilesFlow.value.mapValues { (target, prof) ->
+            if (target == OutputTarget.HEADPHONES && nextAutoEngage) {
+                prof.copy(
+                    accommodationsAutoEngageHeadphones = true,
+                    accommodationsEnabled = true,
+                    isBypassed = false
+                )
+            } else {
+                prof.copy(accommodationsAutoEngageHeadphones = nextAutoEngage)
+            }
+        }
+        profilesFlow.value = updatedMap
+        val activeUpdated = updatedMap[current.target] ?: current.copy(accommodationsAutoEngageHeadphones = nextAutoEngage)
+        applyToAudioEngine(activeUpdated)
+        viewModelScope.launch {
+            repository.saveAccommodationsAutoEngageHeadphones(nextAutoEngage)
+            if (nextAutoEngage && current.target == OutputTarget.HEADPHONES) {
+                repository.saveProfile(activeUpdated)
+            } else {
+                updatedMap[OutputTarget.HEADPHONES]?.let { repository.saveProfile(it) }
+            }
+        }
     }
 
     fun updateAccommodationsOutputGain(rawDb: Float) {
@@ -785,6 +895,19 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
         audioEngine.customAudioSetupEngine.chooseOptionForCurrentRound(slot)
     }
 
+    fun chooseWizardStep1Speech(preferVocalFocus: Boolean) {
+        audioEngine.customAudioSetupEngine.chooseStep1Speech(preferVocalFocus)
+    }
+
+    fun chooseWizardStep2Music(musicChoice: AccommodationToneProfile) {
+        audioEngine.customAudioSetupEngine.chooseStep2Music(musicChoice)
+    }
+
+    fun chooseWizardStep3SensitivityAndApply(intensity: SoftSoundIntensity) {
+        audioEngine.customAudioSetupEngine.chooseStep3Sensitivity(intensity)
+        applyCustomAudioSetupResult()
+    }
+
     fun restartCustomAudioSetup() {
         audioEngine.customAudioSetupEngine.restartWizard()
     }
@@ -796,6 +919,11 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             accommodationsEnabled = true,
             accommodationsToneProfile = wizardState.chosenProfile,
             accommodationsSoftIntensity = wizardState.softIntensity,
+            threeBandBassDb = 0f,
+            threeBandMidsDb = 0f,
+            threeBandTrebleDb = 0f,
+            threeBandRecommendedMode = true,
+            threeBandRecommendedBannerVisible = true,
             isBypassed = false
         )
         commitProfile(updated)
@@ -918,6 +1046,7 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             threeBandBassDb = profile.threeBandBassDb,
             threeBandMidsDb = profile.threeBandMidsDb,
             threeBandTrebleDb = profile.threeBandTrebleDb,
+            threeBandSmartCurveEnabled = profile.threeBandSmartCurveEnabled,
             accommodationsEnabled = profile.accommodationsEnabled,
             accommodationsToneProfile = profile.accommodationsToneProfile,
             accommodationsSoftIntensity = profile.accommodationsSoftIntensity,

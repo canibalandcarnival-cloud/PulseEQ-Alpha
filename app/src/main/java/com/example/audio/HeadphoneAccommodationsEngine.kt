@@ -36,19 +36,21 @@ import kotlin.math.sqrt
  * Inserted in the signal chain right BEFORE the main 10-band graphic EQ.
  *
  * Implements:
- * - 3 Official Apple Tone Profiles (Balanced Tone, Vocal Range with 100Hz HPF, Brightness)
- * - Boost Soft Sounds: dedicated DynamicRangeCompressor + makeup gain while scaling the
- *   Tone Profile EQ gains by 0.6x (Slight), 1.0x (Moderate), or 1.4x (Strong).
+ * - 3 Authentic Apple Tone Profiles (Balanced Tone, Vocal Range with 110Hz HPF, Brightness with neutral <1kHz)
+ *   scaled by Boost Soft Sounds intensity (Off 0.6x, Slight 0.8x, Moderate 1.0x, Strong 1.2x).
+ * - Frequency-Selective Parallel Upward Compression (1.2 kHz clarity HPF -> -38 dB / 3.5:1 / 4ms / 80ms compressor
+ *   + clean clarity gain blended back at 0% / 18% / 32% / 48% without squashing loud peaks downward).
  */
 class HeadphoneAccommodationsProcessor(private val sampleRate: Int = 44100) {
 
-    private val vocalHpf100 = StereoBiquad()
+    private val vocalHpf110 = StereoBiquad()
     private val mudCutBand = StereoBiquad()
     private val eqBand1 = StereoBiquad()
     private val eqBand2 = StereoBiquad()
     private val eqBand3 = StereoBiquad()
     private val eqBand4 = StereoBiquad()
 
+    private val parallelClarityHpf1200 = StereoBiquad()
     private val softSoundCompressor = DynamicRangeCompressor(sampleRate)
 
     @Volatile
@@ -58,10 +60,16 @@ class HeadphoneAccommodationsProcessor(private val sampleRate: Int = 44100) {
     private var vocalHpfEnabled: Boolean = false
 
     @Volatile
+    private var mudCutEnabled: Boolean = false
+
+    @Volatile
+    private var parallelLiftMix: Double = 0.0
+
+    @Volatile
     private var outputGainLinear: Double = 1.0
 
     val latestGainReductionDb: Float
-        get() = if (enabled) softSoundCompressor.latestGainReductionDb else 0f
+        get() = if (enabled && parallelLiftMix > 0.0) softSoundCompressor.latestGainReductionDb else 0f
 
     init {
         configure(
@@ -87,45 +95,55 @@ class HeadphoneAccommodationsProcessor(private val sampleRate: Int = 44100) {
             com.example.model.HeadphoneAccommodationsSpecs.OUTPUT_GAIN_MAX_DB
         )
         outputGainLinear = Math.pow(10.0, clampedOutDb / 20.0)
+        parallelLiftMix = intensity.parallelMix.toDouble().coerceIn(0.0, 0.75)
 
         when (profile) {
             AccommodationToneProfile.BALANCED_TONE -> {
                 vocalHpfEnabled = false
-                mudCutBand.setPeaking(sampleRate, 300.0, 1.3, -2.0)
-                eqBand1.setPeaking(sampleRate, 1000.0, 1.4, (1.0 * scale).coerceAtMost(3.0))
-                eqBand2.setPeaking(sampleRate, 3000.0, 1.4, (1.8 * scale).coerceAtMost(3.0))
-                eqBand3.setPeaking(sampleRate, 8000.0, 1.5, (2.1 * scale).coerceAtMost(3.0) * cappedHfScale)
-                eqBand4.setPeaking(sampleRate, 14000.0, 1.5, (1.5 * scale).coerceAtMost(3.0) * cappedHfScale)
+                mudCutEnabled = false
+                mudCutBand.reset()
+                eqBand1.setPeaking(sampleRate, 1000.0, 1.2, 1.5 * scale)
+                eqBand2.setPeaking(sampleRate, 3000.0, 1.4, 2.5 * scale)
+                eqBand3.setPeaking(sampleRate, 8000.0, 1.5, 3.2 * scale * cappedHfScale)
+                eqBand4.setPeaking(sampleRate, 12000.0, 1.5, 2.5 * scale * cappedHfScale)
             }
 
             AccommodationToneProfile.VOCAL_RANGE -> {
                 vocalHpfEnabled = true
-                vocalHpf100.setHighPass(sampleRate, 100.0, 0.7071)
-                mudCutBand.setPeaking(sampleRate, 250.0, 1.3, -2.0)
-                eqBand1.setPeaking(sampleRate, 1000.0, 1.4, (1.5 * scale).coerceAtMost(3.0))
-                eqBand2.setPeaking(sampleRate, 2500.0, 1.5, (2.1 * scale).coerceAtMost(3.0))
-                eqBand3.setPeaking(sampleRate, 4000.0, 1.5, (1.8 * scale).coerceAtMost(3.0) * cappedHfScale)
-                eqBand4.setPeaking(sampleRate, 8000.0, 1.5, 0.0)
+                vocalHpf110.setHighPass(sampleRate, 110.0, 0.60)
+                mudCutEnabled = true
+                mudCutBand.setPeaking(sampleRate, 280.0, 1.3, -2.0)
+                eqBand1.setPeaking(sampleRate, 1500.0, 1.4, 3.0 * scale)
+                eqBand2.setPeaking(sampleRate, 3000.0, 1.5, 3.8 * scale)
+                eqBand3.setPeaking(sampleRate, 6000.0, 1.6, 1.5 * scale * cappedHfScale)
+                eqBand4.setPeaking(sampleRate, 12000.0, 1.5, 0.0)
             }
 
             AccommodationToneProfile.BRIGHTNESS -> {
                 vocalHpfEnabled = false
-                mudCutBand.setPeaking(sampleRate, 300.0, 1.3, -2.0)
-                eqBand1.setPeaking(sampleRate, 4000.0, 2.4, (1.1 * scale).coerceAtMost(3.0) * cappedHfScale)
-                eqBand2.setPeaking(sampleRate, 8000.0, 2.4, (1.4 * scale).coerceAtMost(3.0) * cappedHfScale)
-                eqBand3.setPeaking(sampleRate, 12000.0, 2.4, (1.7 * scale).coerceAtMost(3.0) * cappedHfScale)
-                eqBand4.setPeaking(sampleRate, 16000.0, 2.4, (1.3 * scale).coerceAtMost(3.0) * cappedHfScale)
+                mudCutEnabled = false
+                mudCutBand.reset()
+                eqBand1.setPeaking(sampleRate, 4000.0, 1.8, 2.0 * scale * cappedHfScale)
+                eqBand2.setPeaking(sampleRate, 8000.0, 1.8, 3.8 * scale * cappedHfScale)
+                eqBand3.setPeaking(sampleRate, 14000.0, 1.6, 4.2 * scale * cappedHfScale)
+                eqBand4.setPeaking(sampleRate, 16000.0, 1.6, 0.0)
             }
         }
 
+        parallelClarityHpf1200.setHighPass(
+            sampleRate,
+            com.example.model.HeadphoneAccommodationsSpecs.PARALLEL_CLARITY_HPF_HZ,
+            com.example.model.HeadphoneAccommodationsSpecs.PARALLEL_CLARITY_HPF_Q
+        )
+
         softSoundCompressor.configureCustom(
-            isEnabled = isEnabled,
-            threshold = intensity.thresholdDb,
-            knee = intensity.kneeDb,
-            compRatio = intensity.ratio,
-            attackMs = 8f,
-            releaseMs = 160f,
-            makeupGainDb = intensity.makeupGainDb
+            isEnabled = isEnabled && intensity.parallelMix > 0f,
+            threshold = com.example.model.HeadphoneAccommodationsSpecs.PARALLEL_COMP_THRESHOLD_DB,
+            knee = com.example.model.HeadphoneAccommodationsSpecs.PARALLEL_COMP_KNEE_DB,
+            compRatio = com.example.model.HeadphoneAccommodationsSpecs.PARALLEL_COMP_RATIO,
+            attackMs = com.example.model.HeadphoneAccommodationsSpecs.PARALLEL_COMP_ATTACK_MS,
+            releaseMs = com.example.model.HeadphoneAccommodationsSpecs.PARALLEL_COMP_RELEASE_MS,
+            makeupGainDb = intensity.clarityGainDb
         )
     }
 
@@ -135,19 +153,35 @@ class HeadphoneAccommodationsProcessor(private val sampleRate: Int = 44100) {
         var l = inL
         var r = inR
         if (vocalHpfEnabled) {
-            val (hpL, hpR) = vocalHpf100.processStereo(l, r)
+            val (hpL, hpR) = vocalHpf110.processStereo(l, r)
             l = hpL
             r = hpR
         }
-        val (cutL, cutR) = mudCutBand.processStereo(l, r)
-        val (e1L, e1R) = eqBand1.processStereo(cutL, cutR)
+        if (mudCutEnabled) {
+            val (cutL, cutR) = mudCutBand.processStereo(l, r)
+            l = cutL
+            r = cutR
+        }
+        val (e1L, e1R) = eqBand1.processStereo(l, r)
         val (e2L, e2R) = eqBand2.processStereo(e1L, e1R)
         val (e3L, e3R) = eqBand3.processStereo(e2L, e2R)
-        val (e4L, e4R) = eqBand4.processStereo(e3L, e3R)
+        val (eqL, eqR) = eqBand4.processStereo(e3L, e3R)
 
-        val (compL, compR) = softSoundCompressor.processStereoSample(e4L, e4R)
-        val outL = normalizePeakHeadroom(compL * outputGainLinear)
-        val outR = normalizePeakHeadroom(compR * outputGainLinear)
+        val mix = parallelLiftMix
+        val mixedL: Double
+        val mixedR: Double
+        if (mix > 0.0001) {
+            val (clL, clR) = parallelClarityHpf1200.processStereo(eqL, eqR)
+            val (compL, compR) = softSoundCompressor.processStereoSample(clL, clR)
+            mixedL = eqL + compL * mix
+            mixedR = eqR + compR * mix
+        } else {
+            mixedL = eqL
+            mixedR = eqR
+        }
+
+        val outL = normalizePeakHeadroom(mixedL * outputGainLinear)
+        val outR = normalizePeakHeadroom(mixedR * outputGainLinear)
         return outL to outR
     }
 
@@ -164,9 +198,8 @@ class HeadphoneAccommodationsProcessor(private val sampleRate: Int = 44100) {
 
     companion object {
         /**
-         * Computes analytical EQ + HPF frequency response magnitude (in dB) for a given
-         * Tone Profile and Soft Sound Intensity scaling (0.6x / 1.0x / 1.4x),
-         * including the -2.0 dB 250Hz-350Hz headroom cut and +3.0 dB balanced boost ceiling.
+         * Computes analytical Tone Curve + HPF frequency response magnitude (in dB) for a given
+         * Tone Profile and Boost Soft Sounds intensity scaling (0.6x / 0.8x / 1.0x / 1.2x).
          */
         fun computeResponseDbAt(
             freqHz: Double,
@@ -187,47 +220,47 @@ class HeadphoneAccommodationsProcessor(private val sampleRate: Int = 44100) {
 
             when (profile) {
                 AccommodationToneProfile.BALANCED_TONE -> {
-                    mud.setPeaking(sampleRate, 300.0, 1.3, -2.0)
-                    b1.setPeaking(sampleRate, 1000.0, 1.4, (1.0 * scale).coerceAtMost(3.0))
-                    b2.setPeaking(sampleRate, 3000.0, 1.4, (1.8 * scale).coerceAtMost(3.0))
-                    b3.setPeaking(sampleRate, 8000.0, 1.5, (2.1 * scale).coerceAtMost(3.0) * cappedHfScale)
-                    b4.setPeaking(sampleRate, 14000.0, 1.5, (1.5 * scale).coerceAtMost(3.0) * cappedHfScale)
+                    b1.setPeaking(sampleRate, 1000.0, 1.2, 1.5 * scale)
+                    b2.setPeaking(sampleRate, 3000.0, 1.4, 2.5 * scale)
+                    b3.setPeaking(sampleRate, 8000.0, 1.5, 3.2 * scale * cappedHfScale)
+                    b4.setPeaking(sampleRate, 12000.0, 1.5, 2.5 * scale * cappedHfScale)
                 }
 
                 AccommodationToneProfile.VOCAL_RANGE -> {
-                    val hpf = StereoBiquad().apply { setHighPass(sampleRate, 100.0, 0.7071) }
-                    totalDb += hpf.magnitudeDbAt(sampleRate, freqHz).coerceAtLeast(-14.0)
-                    mud.setPeaking(sampleRate, 250.0, 1.3, -2.0)
-                    b1.setPeaking(sampleRate, 1000.0, 1.4, (1.5 * scale).coerceAtMost(3.0))
-                    b2.setPeaking(sampleRate, 2500.0, 1.5, (2.1 * scale).coerceAtMost(3.0))
-                    b3.setPeaking(sampleRate, 4000.0, 1.5, (1.8 * scale).coerceAtMost(3.0) * cappedHfScale)
-                    b4.setPeaking(sampleRate, 8000.0, 1.5, 0.0)
+                    val hpf = StereoBiquad().apply { setHighPass(sampleRate, 110.0, 0.60) }
+                    totalDb += hpf.magnitudeDbAt(sampleRate, freqHz).coerceAtLeast(-16.0)
+                    mud.setPeaking(sampleRate, 280.0, 1.3, -2.0)
+                    b1.setPeaking(sampleRate, 1500.0, 1.4, 3.0 * scale)
+                    b2.setPeaking(sampleRate, 3000.0, 1.5, 3.8 * scale)
+                    b3.setPeaking(sampleRate, 6000.0, 1.6, 1.5 * scale * cappedHfScale)
                 }
 
                 AccommodationToneProfile.BRIGHTNESS -> {
-                    mud.setPeaking(sampleRate, 300.0, 1.3, -2.0)
-                    b1.setPeaking(sampleRate, 4000.0, 2.4, (1.1 * scale).coerceAtMost(3.0) * cappedHfScale)
-                    b2.setPeaking(sampleRate, 8000.0, 2.4, (1.4 * scale).coerceAtMost(3.0) * cappedHfScale)
-                    b3.setPeaking(sampleRate, 12000.0, 2.4, (1.7 * scale).coerceAtMost(3.0) * cappedHfScale)
-                    b4.setPeaking(sampleRate, 16000.0, 2.4, (1.3 * scale).coerceAtMost(3.0) * cappedHfScale)
+                    b1.setPeaking(sampleRate, 4000.0, 1.8, 2.0 * scale * cappedHfScale)
+                    b2.setPeaking(sampleRate, 8000.0, 1.8, 3.8 * scale * cappedHfScale)
+                    b3.setPeaking(sampleRate, 14000.0, 1.6, 4.2 * scale * cappedHfScale)
                 }
             }
 
-            totalDb += mud.magnitudeDbAt(sampleRate, freqHz)
+            if (profile == AccommodationToneProfile.VOCAL_RANGE) {
+                totalDb += mud.magnitudeDbAt(sampleRate, freqHz)
+            }
             totalDb += b1.magnitudeDbAt(sampleRate, freqHz)
             totalDb += b2.magnitudeDbAt(sampleRate, freqHz)
             totalDb += b3.magnitudeDbAt(sampleRate, freqHz)
-            totalDb += b4.magnitudeDbAt(sampleRate, freqHz)
+            if (profile == AccommodationToneProfile.BALANCED_TONE) {
+                totalDb += b4.magnitudeDbAt(sampleRate, freqHz)
+            }
             return totalDb.toFloat()
         }
     }
 }
 
 /**
- * Interactive "Custom Audio Setup" A/B Wizard Engine:
- * Loops a speech + acoustic detail audition phrase and lets the user toggle live between
- * Standard vs. Custom Profile A / B (comparing Balanced Tone, Vocal Range, and Brightness)
- * before automatically applying the winning profile.
+ * Interactive 3-Step Apple "Custom Audio Setup" A/B Paired-Comparison Wizard Engine:
+ * - Step 1 (Speech Clarity Test): Standard vs. Vocal Focus (vocal sample).
+ * - Step 2 (Music Detail & Brightness Test): Balanced Tone vs. Brightness (full-range track).
+ * - Step 3 (Soft-Sound Sensitivity): Slight vs. Strong soft-sound upward lift, then applies winning combo.
  */
 class CustomAudioSetupAuditionEngine {
     private val sampleRate = StudioHiResSpecs.SAMPLE_RATE_HZ
@@ -241,14 +274,21 @@ class CustomAudioSetupAuditionEngine {
     val state: StateFlow<CustomAudioSetupUiState> = _state.asStateFlow()
 
     fun open(initialIntensity: SoftSoundIntensity) {
+        val auditionBaseIntensity = if (initialIntensity == SoftSoundIntensity.OFF) {
+            SoftSoundIntensity.MODERATE
+        } else {
+            initialIntensity
+        }
         _state.value = CustomAudioSetupUiState(
             isOpen = true,
             stepIndex = 0,
             optionA = AccommodationToneProfile.BALANCED_TONE,
             optionB = AccommodationToneProfile.VOCAL_RANGE,
-            activeAuditionSlot = SetupAuditionSlot.OPTION_A,
+            activeAuditionSlot = SetupAuditionSlot.STANDARD,
+            pickedVocalInStep1 = false,
+            musicChoiceInStep2 = AccommodationToneProfile.BALANCED_TONE,
             chosenProfile = AccommodationToneProfile.BALANCED_TONE,
-            softIntensity = initialIntensity,
+            softIntensity = auditionBaseIntensity,
             isCompleted = false
         )
         syncProcessorFromState()
@@ -258,46 +298,120 @@ class CustomAudioSetupAuditionEngine {
     fun selectAuditionSlot(slot: SetupAuditionSlot) {
         val cur = _state.value
         if (!cur.isOpen) return
-        _state.value = cur.copy(activeAuditionSlot = slot)
+        val nextIntensity = if (cur.stepIndex == 2) {
+            when (slot) {
+                SetupAuditionSlot.OPTION_A -> SoftSoundIntensity.SLIGHT
+                SetupAuditionSlot.OPTION_B -> SoftSoundIntensity.STRONG
+                SetupAuditionSlot.STANDARD -> cur.softIntensity
+            }
+        } else {
+            cur.softIntensity
+        }
+        _state.value = cur.copy(
+            activeAuditionSlot = slot,
+            softIntensity = nextIntensity
+        )
         syncProcessorFromState()
     }
 
     fun selectIntensity(intensity: SoftSoundIntensity) {
         val cur = _state.value
         if (!cur.isOpen) return
-        _state.value = cur.copy(softIntensity = intensity)
+        val nextSlot = if (cur.stepIndex == 2) {
+            when (intensity) {
+                SoftSoundIntensity.SLIGHT -> SetupAuditionSlot.OPTION_A
+                SoftSoundIntensity.STRONG -> SetupAuditionSlot.OPTION_B
+                else -> cur.activeAuditionSlot
+            }
+        } else {
+            cur.activeAuditionSlot
+        }
+        _state.value = cur.copy(
+            softIntensity = intensity,
+            activeAuditionSlot = nextSlot
+        )
+        syncProcessorFromState()
+    }
+
+    fun chooseStep1Speech(preferVocalFocus: Boolean) {
+        val cur = _state.value
+        if (!cur.isOpen || cur.isCompleted) return
+        val tentative = if (preferVocalFocus) {
+            AccommodationToneProfile.VOCAL_RANGE
+        } else {
+            AccommodationToneProfile.BALANCED_TONE
+        }
+        _state.value = cur.copy(
+            stepIndex = 1,
+            optionA = AccommodationToneProfile.BALANCED_TONE,
+            optionB = AccommodationToneProfile.BRIGHTNESS,
+            activeAuditionSlot = SetupAuditionSlot.OPTION_A,
+            pickedVocalInStep1 = preferVocalFocus,
+            chosenProfile = tentative
+        )
+        syncProcessorFromState()
+    }
+
+    fun chooseStep2Music(musicChoice: AccommodationToneProfile) {
+        val cur = _state.value
+        if (!cur.isOpen || cur.isCompleted) return
+        val normalizedMusic = if (musicChoice == AccommodationToneProfile.BRIGHTNESS) {
+            AccommodationToneProfile.BRIGHTNESS
+        } else {
+            AccommodationToneProfile.BALANCED_TONE
+        }
+        val combinedProfile = when {
+            normalizedMusic == AccommodationToneProfile.BRIGHTNESS -> AccommodationToneProfile.BRIGHTNESS
+            cur.pickedVocalInStep1 -> AccommodationToneProfile.VOCAL_RANGE
+            else -> AccommodationToneProfile.BALANCED_TONE
+        }
+        _state.value = cur.copy(
+            stepIndex = 2,
+            optionA = combinedProfile,
+            optionB = combinedProfile,
+            activeAuditionSlot = SetupAuditionSlot.OPTION_A,
+            musicChoiceInStep2 = normalizedMusic,
+            chosenProfile = combinedProfile,
+            softIntensity = SoftSoundIntensity.SLIGHT
+        )
+        syncProcessorFromState()
+    }
+
+    fun chooseStep3Sensitivity(intensity: SoftSoundIntensity) {
+        val cur = _state.value
+        if (!cur.isOpen) return
+        val chosenSlot = when (intensity) {
+            SoftSoundIntensity.SLIGHT -> SetupAuditionSlot.OPTION_A
+            SoftSoundIntensity.STRONG -> SetupAuditionSlot.OPTION_B
+            else -> cur.activeAuditionSlot
+        }
+        _state.value = cur.copy(
+            softIntensity = intensity,
+            activeAuditionSlot = chosenSlot,
+            isCompleted = true
+        )
         syncProcessorFromState()
     }
 
     fun chooseOptionForCurrentRound(slot: SetupAuditionSlot) {
         val cur = _state.value
         if (!cur.isOpen || cur.isCompleted) return
-
-        val pickedProfile = when (slot) {
-            SetupAuditionSlot.STANDARD -> AccommodationToneProfile.BALANCED_TONE
-            SetupAuditionSlot.OPTION_A -> cur.optionA
-            SetupAuditionSlot.OPTION_B -> cur.optionB
-        }
-
-        if (cur.stepIndex == 0) {
-            // Round 1 winner advances against Brightness in Round 2
-            _state.value = cur.copy(
-                stepIndex = 1,
-                optionA = pickedProfile,
-                optionB = AccommodationToneProfile.BRIGHTNESS,
-                activeAuditionSlot = SetupAuditionSlot.OPTION_A,
-                chosenProfile = pickedProfile
+        when (cur.stepIndex) {
+            0 -> chooseStep1Speech(preferVocalFocus = (slot == SetupAuditionSlot.OPTION_B))
+            1 -> chooseStep2Music(
+                if (slot == SetupAuditionSlot.OPTION_B) {
+                    AccommodationToneProfile.BRIGHTNESS
+                } else {
+                    AccommodationToneProfile.BALANCED_TONE
+                }
             )
-            syncProcessorFromState()
-        } else {
-            // Final winner chosen
-            _state.value = cur.copy(
-                stepIndex = 2,
-                chosenProfile = pickedProfile,
-                activeAuditionSlot = slot,
-                isCompleted = true
+            else -> chooseStep3Sensitivity(
+                if (slot == SetupAuditionSlot.OPTION_B) {
+                    SoftSoundIntensity.STRONG
+                } else {
+                    SoftSoundIntensity.SLIGHT
+                }
             )
-            syncProcessorFromState()
         }
     }
 
@@ -312,42 +426,74 @@ class CustomAudioSetupAuditionEngine {
 
     private fun syncProcessorFromState() {
         val st = _state.value
-        when (st.activeAuditionSlot) {
-            SetupAuditionSlot.STANDARD -> {
-                processor.configure(
-                    isEnabled = false,
-                    profile = st.chosenProfile,
-                    intensity = st.softIntensity
-                )
+        when (st.stepIndex) {
+            0 -> {
+                when (st.activeAuditionSlot) {
+                    SetupAuditionSlot.STANDARD -> processor.configure(
+                        isEnabled = false,
+                        profile = AccommodationToneProfile.BALANCED_TONE,
+                        intensity = st.softIntensity
+                    )
+                    SetupAuditionSlot.OPTION_A,
+                    SetupAuditionSlot.OPTION_B -> processor.configure(
+                        isEnabled = true,
+                        profile = AccommodationToneProfile.VOCAL_RANGE,
+                        intensity = st.softIntensity
+                    )
+                }
             }
 
-            SetupAuditionSlot.OPTION_A -> {
-                processor.configure(
-                    isEnabled = true,
-                    profile = if (st.isCompleted) st.chosenProfile else st.optionA,
-                    intensity = st.softIntensity
-                )
+            1 -> {
+                when (st.activeAuditionSlot) {
+                    SetupAuditionSlot.STANDARD -> processor.configure(
+                        isEnabled = false,
+                        profile = AccommodationToneProfile.BALANCED_TONE,
+                        intensity = st.softIntensity
+                    )
+                    SetupAuditionSlot.OPTION_A -> processor.configure(
+                        isEnabled = true,
+                        profile = AccommodationToneProfile.BALANCED_TONE,
+                        intensity = st.softIntensity
+                    )
+                    SetupAuditionSlot.OPTION_B -> processor.configure(
+                        isEnabled = true,
+                        profile = AccommodationToneProfile.BRIGHTNESS,
+                        intensity = st.softIntensity
+                    )
+                }
             }
 
-            SetupAuditionSlot.OPTION_B -> {
-                processor.configure(
-                    isEnabled = true,
-                    profile = if (st.isCompleted) st.chosenProfile else st.optionB,
-                    intensity = st.softIntensity
-                )
+            else -> {
+                when (st.activeAuditionSlot) {
+                    SetupAuditionSlot.STANDARD -> processor.configure(
+                        isEnabled = false,
+                        profile = st.chosenProfile,
+                        intensity = st.softIntensity
+                    )
+                    SetupAuditionSlot.OPTION_A -> processor.configure(
+                        isEnabled = true,
+                        profile = st.chosenProfile,
+                        intensity = if (st.isCompleted) st.softIntensity else SoftSoundIntensity.SLIGHT
+                    )
+                    SetupAuditionSlot.OPTION_B -> processor.configure(
+                        isEnabled = true,
+                        profile = st.chosenProfile,
+                        intensity = if (st.isCompleted) st.softIntensity else SoftSoundIntensity.STRONG
+                    )
+                }
             }
         }
     }
 
     private fun startAuditionLoop() {
         stopAuditionLoop()
-        val minBuf = AudioTrack.getMinBufferSize(
-            sampleRate,
-            AudioFormat.CHANNEL_OUT_STEREO,
-            AudioFormat.ENCODING_PCM_16BIT
-        ).coerceAtLeast(4096)
-
         val track = try {
+            val minBuf = AudioTrack.getMinBufferSize(
+                sampleRate,
+                AudioFormat.CHANNEL_OUT_STEREO,
+                AudioFormat.ENCODING_PCM_16BIT
+            ).coerceAtLeast(4096)
+
             AudioTrack.Builder()
                 .setAudioAttributes(
                     AudioAttributes.Builder()
@@ -388,29 +534,65 @@ class CustomAudioSetupAuditionEngine {
             var cursor = 0L
 
             while (isActive) {
+                val step = _state.value.stepIndex
                 for (i in 0 until frameCount) {
                     val t = cursor.toDouble() / sampleRate
                     val phraseTime = t % 3.2
 
-                    // Warm acoustic bed + quiet whisper/soft-detail chime + speech-like formant cadence
-                    val syllableGate = when {
-                        phraseTime in 0.15..0.55 -> sin(PI * (phraseTime - 0.15) / 0.40)
-                        phraseTime in 0.70..1.25 -> sin(PI * (phraseTime - 0.70) / 0.55)
-                        phraseTime in 1.45..1.90 -> sin(PI * (phraseTime - 1.45) / 0.45)
-                        phraseTime in 2.15..2.85 -> 0.35 * sin(PI * (phraseTime - 2.15) / 0.70) // soft detail passage
-                        else -> 0.08
+                    val rawL: Double
+                    val rawR: Double
+                    when (step) {
+                        // Step 1: Speech Clarity Test (vocal syllables + chest mud + speech formants)
+                        0 -> {
+                            val syllableGate = when {
+                                phraseTime in 0.12..0.52 -> sin(PI * (phraseTime - 0.12) / 0.40)
+                                phraseTime in 0.68..1.18 -> sin(PI * (phraseTime - 0.68) / 0.50)
+                                phraseTime in 1.38..1.86 -> sin(PI * (phraseTime - 1.38) / 0.48)
+                                phraseTime in 2.05..2.75 -> 0.55 * sin(PI * (phraseTime - 2.05) / 0.70)
+                                else -> 0.05
+                            }
+                            val pitch = 148.0 + 18.0 * sin(2.0 * PI * 0.8 * t)
+                            val chest = 0.11 * sin(2.0 * PI * pitch * t) * syllableGate
+                            val mud = 0.09 * sin(2.0 * PI * 280.0 * t) * syllableGate
+                            val formant1 = 0.12 * sin(2.0 * PI * 1450.0 * t) * syllableGate
+                            val formant2 = 0.09 * sin(2.0 * PI * 2950.0 * t) * syllableGate
+                            val breath = 0.03 * sin(2.0 * PI * 5800.0 * t) * syllableGate
+                            rawL = chest + mud + formant1 + formant2 + breath
+                            rawR = rawL
+                        }
+
+                        // Step 2: Music Detail & Brightness Test (full-range bass + chord + sparkling air)
+                        1 -> {
+                            val beatEnv = exp(-((t % 0.6) * 5.5))
+                            val subBass = 0.14 * sin(2.0 * PI * 64.0 * t) * beatEnv
+                            val bass = 0.13 * sin(2.0 * PI * 128.0 * t) * beatEnv
+                            val chord = (0.09 * sin(2.0 * PI * 261.63 * t) +
+                                0.08 * sin(2.0 * PI * 329.63 * t) +
+                                0.07 * sin(2.0 * PI * 523.25 * t))
+                            val airSparkle = (0.045 * sin(2.0 * PI * 4200.0 * t) +
+                                0.040 * sin(2.0 * PI * 8200.0 * t) +
+                                0.032 * sin(2.0 * PI * 13500.0 * t)) * (0.45 + 0.55 * beatEnv)
+                            val stereoSpread = 0.028 * sin(2.0 * PI * 6400.0 * t) * sin(2.0 * PI * 0.5 * t)
+                            rawL = subBass + bass + chord + airSparkle + stereoSpread
+                            rawR = subBass + bass + chord + airSparkle - stereoSpread
+                        }
+
+                        // Step 3: Soft-Sound Sensitivity (alternating quiet acoustic whisper & normal phrase)
+                        else -> {
+                            val isQuietDetail = phraseTime in 1.4..3.0
+                            val env = if (isQuietDetail) {
+                                0.09 * (0.6 + 0.4 * sin(2.0 * PI * 1.5 * t))
+                            } else {
+                                0.42 * (0.5 + 0.5 * exp(-((t % 0.45) * 6.0)))
+                            }
+                            val body = 0.20 * sin(2.0 * PI * 220.0 * t) * env
+                            val detailMid = 0.18 * sin(2.0 * PI * 1850.0 * t) * env
+                            val detailHigh = 0.14 * sin(2.0 * PI * 4600.0 * t) * env
+                            val shimmer = 0.09 * sin(2.0 * PI * 9200.0 * t) * env
+                            rawL = body + detailMid + detailHigh + shimmer
+                            rawR = body + detailMid + detailHigh - shimmer * 0.6
+                        }
                     }
-
-                    val rumble = 0.08 * sin(2.0 * PI * 68.0 * t)
-                    val warmFundamental = 0.14 * sin(2.0 * PI * 196.0 * t) * syllableGate
-                    val speechFormant1 = 0.13 * sin(2.0 * PI * 1050.0 * t) * syllableGate
-                    val speechFormant2 = 0.10 * sin(2.0 * PI * 2650.0 * t) * syllableGate
-                    val airChime = (0.045 * sin(2.0 * PI * 6200.0 * t) + 0.03 * sin(2.0 * PI * 11200.0 * t)) *
-                        (0.35 + 0.65 * exp(-((t % 0.8) * 6.0)))
-                    val stereoShimmer = 0.025 * sin(2.0 * PI * 4200.0 * t) * sin(2.0 * PI * 0.4 * t)
-
-                    val rawL = rumble + warmFundamental + speechFormant1 + speechFormant2 + airChime + stereoShimmer
-                    val rawR = rumble + warmFundamental + speechFormant1 + speechFormant2 + airChime - stereoShimmer
 
                     val (outL, outR) = processor.processStereoSample(rawL, rawR)
                     pcm[i * 2] = (outL.coerceIn(-0.98, 0.98) * 32767.0).toInt().toShort()

@@ -33,6 +33,7 @@ class EqPreferencesRepository(private val context: Context) {
         val AUTO_SWITCH = booleanPreferencesKey("auto_switch_by_device")
         val GLOBAL_MIX_FALLBACK = booleanPreferencesKey("global_mix_fallback")
         val VISUALIZER_MODE = stringPreferencesKey("visualizer_mode")
+        val ACCOMMODATIONS_AUTO_ENGAGE_HEADPHONES = booleanPreferencesKey("acc_auto_engage_headphones")
 
         fun gainsKey(target: OutputTarget) = stringPreferencesKey("gains_${target.id}")
         fun preampKey(target: OutputTarget) = floatPreferencesKey("preamp_${target.id}")
@@ -61,6 +62,9 @@ class EqPreferencesRepository(private val context: Context) {
         fun threeBandBassKey(target: OutputTarget) = floatPreferencesKey("three_band_bass_${target.id}")
         fun threeBandMidsKey(target: OutputTarget) = floatPreferencesKey("three_band_mids_${target.id}")
         fun threeBandTrebleKey(target: OutputTarget) = floatPreferencesKey("three_band_treble_${target.id}")
+        fun threeBandSmartCurveKey(target: OutputTarget) = booleanPreferencesKey("three_band_smart_curve_${target.id}")
+        fun threeBandRecommendedKey(target: OutputTarget) = booleanPreferencesKey("three_band_recommended_${target.id}")
+        fun threeBandRecommendedBannerKey(target: OutputTarget) = booleanPreferencesKey("three_band_rec_banner_${target.id}")
         fun accommodationsEnabledKey(target: OutputTarget) = booleanPreferencesKey("acc_enabled_${target.id}")
         fun accommodationsProfileKey(target: OutputTarget) = stringPreferencesKey("acc_profile_${target.id}")
         fun accommodationsSoftIntensityKey(target: OutputTarget) = stringPreferencesKey("acc_soft_${target.id}")
@@ -179,6 +183,9 @@ class EqPreferencesRepository(private val context: Context) {
                 threeBandBassDb = storedBass,
                 threeBandMidsDb = storedMids,
                 threeBandTrebleDb = storedTreble,
+                threeBandSmartCurveEnabled = prefs[Keys.threeBandSmartCurveKey(target)] ?: true,
+                threeBandRecommendedMode = prefs[Keys.threeBandRecommendedKey(target)] ?: false,
+                threeBandRecommendedBannerVisible = prefs[Keys.threeBandRecommendedBannerKey(target)] ?: false,
                 accommodationsEnabled = prefs[Keys.accommodationsEnabledKey(target)] ?: false,
                 accommodationsToneProfile = com.example.model.AccommodationToneProfile.entries.firstOrNull {
                     it.name == prefs[Keys.accommodationsProfileKey(target)]
@@ -188,6 +195,7 @@ class EqPreferencesRepository(private val context: Context) {
                 } ?: com.example.model.SoftSoundIntensity.MODERATE,
                 accommodationsApplyToMedia = prefs[Keys.accommodationsMediaKey(target)] ?: true,
                 accommodationsApplyToVoice = prefs[Keys.accommodationsVoiceKey(target)] ?: false,
+                accommodationsAutoEngageHeadphones = prefs[Keys.ACCOMMODATIONS_AUTO_ENGAGE_HEADPHONES] ?: false,
                 accommodationsOutputGainDb = (prefs[Keys.accommodationsOutputGainKey(target)] ?: 0f)
                     .coerceIn(
                         com.example.model.HeadphoneAccommodationsSpecs.OUTPUT_GAIN_MIN_DB,
@@ -242,6 +250,12 @@ class EqPreferencesRepository(private val context: Context) {
         }
     }
 
+    suspend fun saveAccommodationsAutoEngageHeadphones(enabled: Boolean) {
+        context.eqDataStore.edit { prefs ->
+            prefs[Keys.ACCOMMODATIONS_AUTO_ENGAGE_HEADPHONES] = enabled
+        }
+    }
+
     suspend fun saveVisualizerMode(mode: VisualizerMode) {
         context.eqDataStore.edit { prefs ->
             prefs[Keys.VISUALIZER_MODE] = mode.name
@@ -284,6 +298,9 @@ class EqPreferencesRepository(private val context: Context) {
             prefs[Keys.threeBandBassKey(profile.target)] = profile.threeBandBassDb
             prefs[Keys.threeBandMidsKey(profile.target)] = profile.threeBandMidsDb
             prefs[Keys.threeBandTrebleKey(profile.target)] = profile.threeBandTrebleDb
+            prefs[Keys.threeBandSmartCurveKey(profile.target)] = profile.threeBandSmartCurveEnabled
+            prefs[Keys.threeBandRecommendedKey(profile.target)] = profile.threeBandRecommendedMode
+            prefs[Keys.threeBandRecommendedBannerKey(profile.target)] = profile.threeBandRecommendedBannerVisible
             prefs[Keys.accommodationsEnabledKey(profile.target)] = profile.accommodationsEnabled
             prefs[Keys.accommodationsProfileKey(profile.target)] = profile.accommodationsToneProfile.name
             prefs[Keys.accommodationsSoftIntensityKey(profile.target)] = profile.accommodationsSoftIntensity.name

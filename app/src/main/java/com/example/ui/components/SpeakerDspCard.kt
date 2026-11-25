@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AutoFixHigh
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.RecordVoiceOver
 import androidx.compose.material.icons.rounded.SpeakerPhone
@@ -72,12 +73,14 @@ fun SpeakerDspCard(
     deviceIsLandscape: Boolean = false,
     proMaxBodyWarmthEnabled: Boolean = true,
     isBypassed: Boolean,
+    isInfinixHot60CompensatorActive: Boolean = false,
     onToggleSpeakerDsp: () -> Unit,
     onToggleVirtualBass: () -> Unit,
     onToggleLandscapeStereo: () -> Unit = {},
     onSelectTuningProfile: (SpeakerTuningProfile) -> Unit = {},
     onSelectOrientationMode: (PhoneOrientationMode) -> Unit = {},
     onToggleBodyWarmth: () -> Unit = {},
+    onApplyInfinixHot60Compensator: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val active = speakerDspEnabled && !isBypassed
@@ -179,6 +182,102 @@ fun SpeakerDspCard(
                     text = if (speakerDspEnabled) "ON" else "OFF",
                     style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                     color = if (speakerDspEnabled) RouteEmerald else TextSecondary
+                )
+            }
+        }
+
+        // One-Tap Dual Stereo Speaker Calibration Preset: Infinix Hot 60 5G Acoustic Compensator
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .defaultMinSize(minHeight = 48.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(
+                    if (isInfinixHot60CompensatorActive) {
+                        Brush.horizontalGradient(
+                            colors = listOf(WarmAmber.copy(alpha = 0.24f), RouteEmeraldSoft)
+                        )
+                    } else {
+                        Brush.horizontalGradient(
+                            colors = listOf(StudioBackground.copy(alpha = 0.78f), StudioSurfaceElevated.copy(alpha = 0.65f))
+                        )
+                    }
+                )
+                .border(
+                    width = 1.dp,
+                    color = if (isInfinixHot60CompensatorActive) WarmAmber.copy(alpha = 0.85f) else AppleGlassBorder,
+                    shape = RoundedCornerShape(14.dp)
+                )
+                .clickable(onClick = onApplyInfinixHot60Compensator)
+                .padding(horizontal = 12.dp, vertical = 9.dp)
+                .testTag("infinix_hot_60_compensator_btn"),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(9.dp))
+                        .background(if (isInfinixHot60CompensatorActive) WarmAmber.copy(alpha = 0.22f) else AppleGlassTile)
+                        .border(
+                            1.dp,
+                            if (isInfinixHot60CompensatorActive) WarmAmber.copy(alpha = 0.7f) else AppleGlassBorder,
+                            RoundedCornerShape(9.dp)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.AutoFixHigh,
+                        contentDescription = "Infinix Hot 60 5G Acoustic Compensator",
+                        tint = if (isInfinixHot60CompensatorActive) WarmAmber else AnalyzerCyan,
+                        modifier = Modifier.size(17.dp)
+                    )
+                }
+                Column {
+                    Text(
+                        text = "Infinix Hot 60 5G Acoustic Compensator",
+                        style = MaterialTheme.typography.labelLarge.copy(
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = if (isInfinixHot60CompensatorActive) WarmAmber else TextPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = "Dual stereo speakers • -22% 0.18ms 2nd-Order XTC • Mono-Bass <180Hz • 4.5k/7k Guard • +9.5dB • +2.5 Low / -2.0 High",
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                        color = if (isInfinixHot60CompensatorActive) TextPrimary.copy(alpha = 0.88f) else TextMuted,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .padding(start = 8.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (isInfinixHot60CompensatorActive) WarmAmber.copy(alpha = 0.25f) else StudioSurfaceElevated)
+                    .border(
+                        1.dp,
+                        if (isInfinixHot60CompensatorActive) WarmAmber else StudioBorder,
+                        RoundedCornerShape(8.dp)
+                    )
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Text(
+                    text = if (isInfinixHot60CompensatorActive) "APPLIED" else "APPLY",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = 8.5.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = if (isInfinixHot60CompensatorActive) WarmAmber else AnalyzerCyan
                 )
             }
         }
@@ -329,8 +428,8 @@ fun SpeakerDspCard(
                         !active -> "Stage Off"
                         isCinemaProfile -> "Cinema XTC: -26% 0.17ms + 0.34ms"
                         !landscapeStereoStage -> "Stage Off"
-                        resolvedLandscape -> "Landscape: -22% 0.19ms XTC"
-                        else -> "Portrait: Center Vocal + Balanced Bass"
+                        resolvedLandscape -> "Landscape: -22% 0.18ms 2nd-Order XTC"
+                        else -> "Portrait: Stereo + Center Vocal + Mono Bass"
                     },
                     style = MaterialTheme.typography.labelSmall.copy(
                         fontSize = 9.sp,
@@ -421,9 +520,9 @@ fun SpeakerDspCard(
                     )
                     Text(
                         text = if (resolvedLandscape) {
-                            "Landscape XTC Active • <180Hz centered • -22% 0.19ms wide"
+                            "Landscape 2nd-Order XTC • <180Hz centered • -22% 0.18ms wide"
                         } else {
-                            "Portrait Focus Active • Center vocal focus + L/R balanced bass"
+                            "Portrait Stereo + Vocal Focus • <180Hz centered • L/R balanced"
                         },
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
                         color = TextMuted
@@ -598,8 +697,8 @@ fun SpeakerDspCard(
             DspStageChip(
                 text = when {
                     isCinemaProfile -> "Cinema Landscape: -26% 2nd-Order XTC"
-                    resolvedLandscape -> "Landscape: -22% 0.19ms XTC"
-                    else -> "Portrait: Vocal Center + Mono Bass"
+                    resolvedLandscape -> "Landscape: -22% 0.18ms 2nd-Order XTC"
+                    else -> "Portrait: Stereo + Center Vocal + Mono Bass"
                 },
                 isActive = active && effectiveCinemaOrLandscapeXtc || (active && landscapeStereoStage),
                 highlightColor = AppleBlue,

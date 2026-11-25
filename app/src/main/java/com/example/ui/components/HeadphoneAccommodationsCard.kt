@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -84,6 +85,7 @@ fun HeadphoneAccommodationsCard(
     onOpenCustomAudioSetup: () -> Unit,
     onToggleApplyToMedia: () -> Unit,
     onToggleApplyToVoice: () -> Unit,
+    onToggleAutoEngageHeadphones: () -> Unit = {},
     onOutputGainChange: (Float) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -356,7 +358,7 @@ fun HeadphoneAccommodationsCard(
             }
         }
 
-        // 3. Boost Soft Sounds (3 Apple Intensity Levels: Slight 0.6x / Moderate 1.0x / Strong 1.4x)
+        // 3. Boost Soft Sounds (Parallel Upward Compression: Off 0% / Slight 18% / Moderate 32% / Strong 48%)
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -372,17 +374,21 @@ fun HeadphoneAccommodationsCard(
                     color = TextSecondary
                 )
                 val softSpec = profile.accommodationsSoftIntensity
+                val parallelPct = (softSpec.parallelMix * 100f).toInt()
                 Text(
-                    text = String.format(
-                        Locale.US,
-                        "%.0fdB • %.1f:1 • +%.1fdB • %.1fx EQ",
-                        softSpec.thresholdDb,
-                        softSpec.ratio,
-                        softSpec.makeupGainDb,
-                        softSpec.eqScale
-                    ),
+                    text = if (softSpec == SoftSoundIntensity.OFF) {
+                        "0% Lift • 1.2kHz Bypassed"
+                    } else {
+                        String.format(
+                            Locale.US,
+                            "1.2kHz HPF • %d%% Lift • +%.1fdB • %.1fx EQ",
+                            parallelPct,
+                            softSpec.clarityGainDb,
+                            softSpec.eqScale
+                        )
+                    },
                     style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
-                    color = if (active) AppleMint else TextMuted
+                    color = if (active && softSpec != SoftSoundIntensity.OFF) AppleMint else TextMuted
                 )
             }
 
@@ -397,9 +403,11 @@ fun HeadphoneAccommodationsCard(
             ) {
                 SoftSoundIntensity.entries.forEach { level ->
                     val selected = level == profile.accommodationsSoftIntensity
+                    val liftPct = (level.parallelMix * 100f).toInt()
                     Box(
                         modifier = Modifier
                             .weight(1f)
+                            .defaultMinSize(minHeight = 48.dp)
                             .clip(RoundedCornerShape(10.dp))
                             .background(
                                 if (selected) {
@@ -418,7 +426,7 @@ fun HeadphoneAccommodationsCard(
                                 shape = RoundedCornerShape(10.dp)
                             )
                             .clickable { onSelectSoftIntensity(level) }
-                            .padding(vertical = 7.dp, horizontal = 6.dp)
+                            .padding(vertical = 6.dp, horizontal = 4.dp)
                             .testTag("acc_soft_${level.id}"),
                         contentAlignment = Alignment.Center
                     ) {
@@ -426,32 +434,47 @@ fun HeadphoneAccommodationsCard(
                             Text(
                                 text = level.label,
                                 style = MaterialTheme.typography.labelSmall.copy(
-                                    fontSize = 11.sp,
+                                    fontSize = 10.5.sp,
                                     fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
                                 ),
                                 color = if (selected) {
                                     if (active) AppleMint else TextPrimary
                                 } else {
                                     TextMuted
-                                }
+                                },
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = "${level.eqScale}x • +${level.makeupGainDb}dB",
-                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.5.sp),
-                                color = if (selected) TextSecondary else TextMuted.copy(alpha = 0.8f)
+                                text = if (level == SoftSoundIntensity.OFF) {
+                                    "0% • 0dB"
+                                } else {
+                                    "$liftPct% • +${level.clarityGainDb}dB"
+                                },
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp),
+                                color = if (selected) TextSecondary else TextMuted.copy(alpha = 0.8f),
+                                maxLines = 1
                             )
                         }
                     }
                 }
             }
 
-            AnimatedVisibility(visible = active && profile.accommodationsApplyToMedia && telemetry.accommodationsGrDb < -0.1f) {
+            AnimatedVisibility(visible = active && profile.accommodationsApplyToMedia && profile.accommodationsSoftIntensity != SoftSoundIntensity.OFF) {
                 Text(
-                    text = String.format(
-                        Locale.US,
-                        "Soft-Sound Dynamics Active • Gain Reduction %.1f dB",
-                        telemetry.accommodationsGrDb
-                    ),
+                    text = if (telemetry.accommodationsGrDb < -0.1f) {
+                        String.format(
+                            Locale.US,
+                            "Parallel 1.2kHz Clarity Lift Active • Loud-Peak Comp %.1f dB",
+                            telemetry.accommodationsGrDb
+                        )
+                    } else {
+                        String.format(
+                            Locale.US,
+                            "Parallel 1.2kHz Upward Lift Armed (+%.1f dB Quiet Detail)",
+                            profile.accommodationsSoftIntensity.clarityGainDb
+                        )
+                    },
                     style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
                     color = AppleMint
                 )
@@ -598,7 +621,7 @@ fun HeadphoneAccommodationsCard(
                         color = TextPrimary
                     )
                     Text(
-                        text = "Guided A/B comparison • Standard vs Balanced, Vocal & Brightness",
+                        text = "3-step A/B wizard • Speech, Music Brightness & Soft-Sound Lift",
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.5.sp),
                         color = TextSecondary,
                         maxLines = 1,
@@ -663,12 +686,33 @@ fun HeadphoneAccommodationsCard(
 
             AppleGlassSwitchRow(
                 icon = Icons.Rounded.Mic,
-                title = "Apply to Voice/Mic Input",
+                title = "Apply to Phone / Voice (Mic Input)",
                 subtitle = voiceSubtitle,
                 checked = profile.accommodationsApplyToVoice,
                 accentColor = AppleMint,
                 onToggle = onToggleApplyToVoice,
                 testTag = "accommodations_apply_voice_toggle"
+            )
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(AppleGlassBorder.copy(alpha = 0.4f))
+            )
+
+            AppleGlassSwitchRow(
+                icon = Icons.Rounded.Headphones,
+                title = "Auto-Engage on Headphones",
+                subtitle = if (profile.accommodationsAutoEngageHeadphones) {
+                    "On • Auto-activates whenever Headphones Mode is selected"
+                } else {
+                    "Off • Manually toggle Headphone Accommodations per device"
+                },
+                checked = profile.accommodationsAutoEngageHeadphones,
+                accentColor = AppleBlue,
+                onToggle = onToggleAutoEngageHeadphones,
+                testTag = "accommodations_auto_engage_toggle"
             )
         }
     }

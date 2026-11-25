@@ -386,7 +386,7 @@ class DynamicRangeCompressor(private val sampleRate: Int = 44100) {
  *    - Surgical Chassis Boxiness Scoop: 350Hz (-3.5dB, Q=1.5)
  *    - Apple Sibilance & Harshness Guard: 3.0kHz (+2.0dB), 4.5kHz (-3.0dB, Q=1.8), 7.0kHz (-3.5dB, Q=2.5), 12kHz (+1.0dB)
  * 2. Hybrid Earpiece + Bottom Speaker Crossover Simulation:
- *    - Keeps bass (<180Hz) tight & centered while applying Orientation-Aware XTC (-22% @ 0.19ms)
+ *    - Keeps bass (<180Hz) tight & centered while applying Orientation-Aware 2nd-Order Transaural XTC (-22% @ 0.18ms + +4.84% @ 0.36ms)
  *      or Cinema Landscape 2nd-Order Transaural XTC (-26% @ 0.17ms + +12% @ 0.34ms, 4.5kHz head-shadow LPF).
  * 3. Apple Dynamic Excursion Protection (Smart Bass Limiter):
  *    - Dynamic low-end (<220Hz) limiter (Threshold -14dB, Ratio 6:1, Attack 3ms, Release 120ms)
@@ -433,9 +433,10 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
         setLowPass(sampleRate, FlagshipSpeakerSpecs.CINEMA_XTC_HEAD_SHADOW_LPF_HZ, 0.7071)
     }
     private val xtcDelaySamples: Double = FlagshipSpeakerSpecs.XTC_DELAY_SEC * sampleRate
+    private val xtcSecondaryDelaySamples: Double = FlagshipSpeakerSpecs.XTC_SECONDARY_DELAY_SEC * sampleRate
     private val cinemaPrimaryDelaySamples: Double = FlagshipSpeakerSpecs.CINEMA_XTC_PRIMARY_DELAY_SEC * sampleRate
     private val cinemaSecondaryDelaySamples: Double = FlagshipSpeakerSpecs.CINEMA_XTC_SECONDARY_DELAY_SEC * sampleRate
-    private val xtcBufSize = 64
+    private val xtcBufSize = 128
     private val xtcMask = xtcBufSize - 1
     private val xtcRingL = DoubleArray(xtcBufSize)
     private val xtcRingR = DoubleArray(xtcBufSize)
@@ -670,8 +671,8 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
 
         // Stage 4: Orientation-Aware & Cinema Landscape Hybrid Earpiece + Bottom Speaker Crossover Simulation
         // Always keeps <180Hz bass centered mono L=R for balanced vertical weight.
-        // - Portrait: focuses center vocals (2kHz) & trims >180Hz side width.
-        // - Landscape: widens horizontal stereo via -22% phase-inverted crossfeed delayed by 0.19ms.
+        // - Portrait: focuses center vocals (2kHz) & preserves stereo above 180Hz.
+        // - Landscape: widens horizontal stereo via 2nd-Order Transaural XTC (-22% @ 0.18ms + +4.84% @ 0.36ms).
         // - Cinema Landscape profile: engages 2nd-order transaural XTC (-26% @ 0.17ms + +12% @ 0.34ms, 4.5kHz shadow LPF).
         val isCinemaLandscape = profile == SpeakerTuningProfile.CINEMA_LANDSCAPE
         val mid = 0.5 * (l + r)
@@ -696,6 +697,8 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
 
         val delayedXtcL = readXtcDelayed(xtcRingL, xtcDelaySamples)
         val delayedXtcR = readXtcDelayed(xtcRingR, xtcDelaySamples)
+        val delayedSecXtcL = readXtcDelayed(xtcRingL, xtcSecondaryDelaySamples)
+        val delayedSecXtcR = readXtcDelayed(xtcRingR, xtcSecondaryDelaySamples)
         val cinemaPrimL = readXtcDelayed(cinemaRingL, cinemaPrimaryDelaySamples)
         val cinemaPrimR = readXtcDelayed(cinemaRingR, cinemaPrimaryDelaySamples)
         val cinemaSecL = readXtcDelayed(cinemaRingL, cinemaSecondaryDelaySamples)
@@ -711,8 +714,9 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
                 FlagshipSpeakerSpecs.CINEMA_XTC_SECONDARY_GAIN * cinemaSecR
         } else if (landscapeStereoEnabled) {
             val crossGain = FlagshipSpeakerSpecs.XTC_CROSSFEED_GAIN
-            l = centeredL - crossGain * delayedXtcR
-            r = centeredR - crossGain * delayedXtcL
+            val secondaryGain = FlagshipSpeakerSpecs.XTC_SECONDARY_GAIN
+            l = centeredL - crossGain * delayedXtcR + secondaryGain * delayedSecXtcL
+            r = centeredR - crossGain * delayedXtcL + secondaryGain * delayedSecXtcR
         } else {
             l = centeredL
             r = centeredR
@@ -862,22 +866,39 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
 }
 
 /**
- * Dedicated 3-Band Tone Equalizer:
- * 1. Low Band (20Hz – 250Hz): 250Hz lowshelf (Q = 0.707) + 20Hz sub-sonic high-pass guard (95Hz in Phone Speaker mode).
- * 2. Mid Band (250Hz – 4.7kHz): Peaking filter centered at geometric midpoint 1084Hz (Q = 0.35).
- * 3. High Band (4.7kHz – 20kHz): 4700Hz highshelf (Q = 0.707).
+ * Dedicated 3-Band Tone Equalizer (iOS 27 AirPods 3-Band Custom Equalizer & Linear Independent):
+ * - Range: -7.0 dB to +7.0 dB per band.
+ * - iOS 27 Smart Curve (smartCurveEnabled = true):
+ *   1. Low Band (20Hz – 250Hz): 250Hz lowshelf (Q = 0.707) without altering mids or highs.
+ *   2. Mid Band (250Hz – 4.7kHz):
+ *      - Mid > 0 dB: Vocal presence boost (600Hz–4.7kHz, fc = 1679.3Hz), automatic mud trim
+ *        (-0.4 dB <250Hz per +1 dB Mid boost), and crisp clarity (+0.5 dB >3.3kHz per +1 dB Mid boost).
+ *      - Mid < 0 dB: Boxy midrange cut (300Hz–2.6kHz, fc = 883.2Hz), automatic proportional V-curve
+ *        warmth (+0.7 dB <250Hz and +0.5 dB >3.3kHz per -1 dB Mid cut).
+ *   3. High Band (4.7kHz – 20kHz): 4700Hz highshelf + Apple inverse warmth tilt (-0.15 dB <2.5kHz per +1 dB High boost).
+ * - Linear Independent (smartCurveEnabled = false):
+ *   Clean independent Low (250Hz shelf), Mid (1084Hz Q=0.35 peaking), High (4700Hz shelf) with zero cross-band tilt.
  */
 class ThreeBandToneFilter(private val sampleRate: Int = 44100) {
     private val subSonicGuard = StereoBiquad()
     private val lowShelf = StereoBiquad()
     private val midPeaking = StereoBiquad()
+    private val smartClarityShelf = StereoBiquad()
+    private val inverseWarmthShelf = StereoBiquad()
     private val highShelf = StereoBiquad()
 
     @Volatile
     private var enabled: Boolean = true
 
     init {
-        configure(isEnabled = true, bassDb = 0f, midsDb = 0f, trebleDb = 0f, isSpeakerTarget = false)
+        configure(
+            isEnabled = true,
+            bassDb = 0f,
+            midsDb = 0f,
+            trebleDb = 0f,
+            isSpeakerTarget = false,
+            smartCurveEnabled = true
+        )
     }
 
     fun configure(
@@ -886,7 +907,8 @@ class ThreeBandToneFilter(private val sampleRate: Int = 44100) {
         midsDb: Float,
         trebleDb: Float,
         isSpeakerTarget: Boolean = false,
-        skipHighShelf: Boolean = false
+        skipHighShelf: Boolean = false,
+        smartCurveEnabled: Boolean = true
     ) {
         enabled = isEnabled
         val clampedBass = if (isEnabled) {
@@ -899,11 +921,12 @@ class ThreeBandToneFilter(private val sampleRate: Int = 44100) {
         } else {
             0.0
         }
-        val clampedTreble = if (isEnabled && !skipHighShelf) {
+        val clampedTrebleRaw = if (isEnabled) {
             trebleDb.coerceIn(ThreeBandEqRanges.TREBLE_MIN_DB, ThreeBandEqRanges.TREBLE_MAX_DB).toDouble()
         } else {
             0.0
         }
+        val clampedTreble = if (!skipHighShelf) clampedTrebleRaw else 0.0
 
         val guardFreq = if (isSpeakerTarget) 95.0 else 20.0
         if (isEnabled) {
@@ -912,8 +935,34 @@ class ThreeBandToneFilter(private val sampleRate: Int = 44100) {
             subSonicGuard.reset()
         }
 
-        lowShelf.setLowShelf(sampleRate, 250.0, 0.7071, clampedBass)
-        midPeaking.setPeaking(sampleRate, 1084.0, 0.35, clampedMids)
+        val midLowCompDb = if (!smartCurveEnabled) {
+            0.0
+        } else if (clampedMids >= 0.0) {
+            -0.4 * clampedMids
+        } else {
+            0.7 * (-clampedMids)
+        }
+
+        val midClarityDb = if (smartCurveEnabled) {
+            kotlin.math.abs(clampedMids) * 0.5
+        } else {
+            0.0
+        }
+
+        val trebleInverseWarmthDb = if (smartCurveEnabled && clampedTrebleRaw > 0.0) {
+            -0.15 * clampedTrebleRaw
+        } else {
+            0.0
+        }
+
+        lowShelf.setLowShelf(sampleRate, 250.0, 0.7071, clampedBass + midLowCompDb)
+        when {
+            !smartCurveEnabled -> midPeaking.setPeaking(sampleRate, 1084.0, 0.35, clampedMids)
+            clampedMids >= 0.0 -> midPeaking.setPeaking(sampleRate, 1679.3, 0.58, clampedMids)
+            else -> midPeaking.setPeaking(sampleRate, 883.2, 0.55, clampedMids)
+        }
+        smartClarityShelf.setHighShelf(sampleRate, 3300.0, 0.7071, midClarityDb)
+        inverseWarmthShelf.setLowShelf(sampleRate, 2500.0, 0.60, trebleInverseWarmthDb)
         highShelf.setHighShelf(sampleRate, 4700.0, 0.7071, clampedTreble)
     }
 
@@ -922,7 +971,9 @@ class ThreeBandToneFilter(private val sampleRate: Int = 44100) {
         val (gL, gR) = subSonicGuard.processStereo(inL, inR)
         val (lL, lR) = lowShelf.processStereo(gL, gR)
         val (mL, mR) = midPeaking.processStereo(lL, lR)
-        return highShelf.processStereo(mL, mR)
+        val (cL, cR) = smartClarityShelf.processStereo(mL, mR)
+        val (wL, wR) = inverseWarmthShelf.processStereo(cL, cR)
+        return highShelf.processStereo(wL, wR)
     }
 
     companion object {
@@ -932,21 +983,42 @@ class ThreeBandToneFilter(private val sampleRate: Int = 44100) {
             midsDb: Float,
             trebleDb: Float,
             isSpeakerTarget: Boolean = false,
-            sampleRate: Int = 44100
+            sampleRate: Int = 44100,
+            smartCurveEnabled: Boolean = true
         ): Float {
             val clampedBass = bassDb.coerceIn(ThreeBandEqRanges.BASS_MIN_DB, ThreeBandEqRanges.BASS_MAX_DB).toDouble()
             val clampedMids = midsDb.coerceIn(ThreeBandEqRanges.MIDS_MIN_DB, ThreeBandEqRanges.MIDS_MAX_DB).toDouble()
             val clampedTreble = trebleDb.coerceIn(ThreeBandEqRanges.TREBLE_MIN_DB, ThreeBandEqRanges.TREBLE_MAX_DB).toDouble()
 
+            val midLowCompDb = if (!smartCurveEnabled) {
+                0.0
+            } else if (clampedMids >= 0.0) {
+                -0.4 * clampedMids
+            } else {
+                0.7 * (-clampedMids)
+            }
+            val midClarityDb = if (smartCurveEnabled) kotlin.math.abs(clampedMids) * 0.5 else 0.0
+            val trebleInverseWarmthDb = if (smartCurveEnabled && clampedTreble > 0.0) -0.15 * clampedTreble else 0.0
+
             val guardFreq = if (isSpeakerTarget) 95.0 else 20.0
             val guard = StereoBiquad().apply { setHighPass(sampleRate, guardFreq, 0.7071) }
-            val low = StereoBiquad().apply { setLowShelf(sampleRate, 250.0, 0.7071, clampedBass) }
-            val mid = StereoBiquad().apply { setPeaking(sampleRate, 1084.0, 0.35, clampedMids) }
+            val low = StereoBiquad().apply { setLowShelf(sampleRate, 250.0, 0.7071, clampedBass + midLowCompDb) }
+            val mid = StereoBiquad().apply {
+                when {
+                    !smartCurveEnabled -> setPeaking(sampleRate, 1084.0, 0.35, clampedMids)
+                    clampedMids >= 0.0 -> setPeaking(sampleRate, 1679.3, 0.58, clampedMids)
+                    else -> setPeaking(sampleRate, 883.2, 0.55, clampedMids)
+                }
+            }
+            val clarity = StereoBiquad().apply { setHighShelf(sampleRate, 3300.0, 0.7071, midClarityDb) }
+            val inverseWarmth = StereoBiquad().apply { setLowShelf(sampleRate, 2500.0, 0.60, trebleInverseWarmthDb) }
             val high = StereoBiquad().apply { setHighShelf(sampleRate, 4700.0, 0.7071, clampedTreble) }
 
             return (guard.magnitudeDbAt(sampleRate, freqHz) +
                 low.magnitudeDbAt(sampleRate, freqHz) +
                 mid.magnitudeDbAt(sampleRate, freqHz) +
+                clarity.magnitudeDbAt(sampleRate, freqHz) +
+                inverseWarmth.magnitudeDbAt(sampleRate, freqHz) +
                 high.magnitudeDbAt(sampleRate, freqHz)).toFloat()
         }
     }
@@ -1375,6 +1447,7 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         threeBandBassDb: Float = 0f,
         threeBandMidsDb: Float = 0f,
         threeBandTrebleDb: Float = 0f,
+        threeBandSmartCurveEnabled: Boolean = true,
         accommodationsEnabled: Boolean = false,
         accommodationsToneProfile: AccommodationToneProfile = AccommodationToneProfile.BALANCED_TONE,
         accommodationsSoftIntensity: SoftSoundIntensity = SoftSoundIntensity.MODERATE,
@@ -1439,7 +1512,8 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             midsDb = if (activeThreeBand) threeBandMidsDb else 0f,
             trebleDb = if (activeThreeBand) threeBandTrebleDb else 0f,
             isSpeakerTarget = (outputTarget == OutputTarget.SPEAKER),
-            skipHighShelf = oversampledEqEnabled
+            skipHighShelf = oversampledEqEnabled,
+            smartCurveEnabled = threeBandSmartCurveEnabled
         )
         oversampledUpperEqStage.configure(
             isEnabled = oversampledEqEnabled && effectiveProcessing,
@@ -1518,7 +1592,8 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             0f
         }
         val accommodationsMatchBoost = if (accommodationsEnabled && accommodationsApplyToMedia) {
-            (accommodationsSoftIntensity.makeupGainDb + accommodationsOutputGainDb) * 0.65f +
+            (accommodationsSoftIntensity.clarityGainDb * accommodationsSoftIntensity.parallelMix +
+                accommodationsOutputGainDb) * 0.65f +
                 0.8f * accommodationsSoftIntensity.eqScale
         } else {
             0f
@@ -1757,6 +1832,7 @@ class TestAudioSynthesizer {
         threeBandBassDb: Float = 0f,
         threeBandMidsDb: Float = 0f,
         threeBandTrebleDb: Float = 0f,
+        threeBandSmartCurveEnabled: Boolean = true,
         accommodationsEnabled: Boolean = false,
         accommodationsToneProfile: AccommodationToneProfile = AccommodationToneProfile.BALANCED_TONE,
         accommodationsSoftIntensity: SoftSoundIntensity = SoftSoundIntensity.MODERATE,
@@ -1805,6 +1881,7 @@ class TestAudioSynthesizer {
             threeBandBassDb = threeBandBassDb,
             threeBandMidsDb = threeBandMidsDb,
             threeBandTrebleDb = threeBandTrebleDb,
+            threeBandSmartCurveEnabled = threeBandSmartCurveEnabled,
             accommodationsEnabled = accommodationsEnabled,
             accommodationsToneProfile = accommodationsToneProfile,
             accommodationsSoftIntensity = accommodationsSoftIntensity,

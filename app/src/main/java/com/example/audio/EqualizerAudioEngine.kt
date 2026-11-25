@@ -264,6 +264,10 @@ class EqualizerAudioEngine(private val context: Context) {
         private set
 
     @Volatile
+    var currentThreeBandSmartCurveEnabled: Boolean = true
+        private set
+
+    @Volatile
     var currentAccommodationsEnabled: Boolean = false
         private set
 
@@ -568,6 +572,7 @@ class EqualizerAudioEngine(private val context: Context) {
             threeBandBassDb = currentThreeBandBassDb,
             threeBandMidsDb = currentThreeBandMidsDb,
             threeBandTrebleDb = currentThreeBandTrebleDb,
+            threeBandSmartCurveEnabled = currentThreeBandSmartCurveEnabled,
             accommodationsEnabled = currentAccommodationsEnabled,
             accommodationsToneProfile = currentAccommodationsToneProfile,
             accommodationsSoftIntensity = currentAccommodationsSoftIntensity,
@@ -778,6 +783,7 @@ class EqualizerAudioEngine(private val context: Context) {
         threeBandBassDb: Float = currentThreeBandBassDb,
         threeBandMidsDb: Float = currentThreeBandMidsDb,
         threeBandTrebleDb: Float = currentThreeBandTrebleDb,
+        threeBandSmartCurveEnabled: Boolean = currentThreeBandSmartCurveEnabled,
         accommodationsEnabled: Boolean = currentAccommodationsEnabled,
         accommodationsToneProfile: AccommodationToneProfile = currentAccommodationsToneProfile,
         accommodationsSoftIntensity: SoftSoundIntensity = currentAccommodationsSoftIntensity,
@@ -829,6 +835,7 @@ class EqualizerAudioEngine(private val context: Context) {
         currentThreeBandBassDb = threeBandBassDb
         currentThreeBandMidsDb = threeBandMidsDb
         currentThreeBandTrebleDb = threeBandTrebleDb
+        currentThreeBandSmartCurveEnabled = threeBandSmartCurveEnabled
         currentAccommodationsEnabled = accommodationsEnabled
         currentAccommodationsToneProfile = accommodationsToneProfile
         currentAccommodationsSoftIntensity = accommodationsSoftIntensity
@@ -909,6 +916,7 @@ class EqualizerAudioEngine(private val context: Context) {
             threeBandBassDb = threeBandBassDb,
             threeBandMidsDb = threeBandMidsDb,
             threeBandTrebleDb = threeBandTrebleDb,
+            threeBandSmartCurveEnabled = threeBandSmartCurveEnabled,
             accommodationsEnabled = accommodationsEnabled,
             accommodationsToneProfile = accommodationsToneProfile,
             accommodationsSoftIntensity = accommodationsSoftIntensity,
@@ -1045,7 +1053,8 @@ class EqualizerAudioEngine(private val context: Context) {
                             0f
                         }
                         val accommodationsMatchBoost = if (currentAccommodationsEnabled && currentAccommodationsApplyToMedia) {
-                            (currentAccommodationsSoftIntensity.makeupGainDb + currentAccommodationsOutputGainDb) * 0.65f +
+                            (currentAccommodationsSoftIntensity.clarityGainDb * currentAccommodationsSoftIntensity.parallelMix +
+                                currentAccommodationsOutputGainDb) * 0.65f +
                                 0.8f * currentAccommodationsSoftIntensity.eqScale
                         } else {
                             0f
@@ -1092,7 +1101,9 @@ class EqualizerAudioEngine(private val context: Context) {
                                     freqHz = EqPresetsCatalog.BANDS[i].frequencyHz.toDouble(),
                                     bassDb = currentThreeBandBassDb,
                                     midsDb = currentThreeBandMidsDb,
-                                    trebleDb = currentThreeBandTrebleDb
+                                    trebleDb = currentThreeBandTrebleDb,
+                                    isSpeakerTarget = (currentTarget == OutputTarget.SPEAKER),
+                                    smartCurveEnabled = currentThreeBandSmartCurveEnabled
                                 )
                             } else {
                                 0f
@@ -1202,9 +1213,9 @@ class EqualizerAudioEngine(private val context: Context) {
                         dp.setPostEqAllChannelsTo(postEq)
 
                         // Mbc stage: 3-Band Adaptive Dynamic Tone Balancer (220Hz / 3.8kHz, 2.2:1, 6ms/85ms)
-                        // combined with Late Night / Boost Soft Sounds / Loudness / Excursion when active
-                        val strongGlobalComp = currentLateNightEnabled || accommodationsMediaActive || loudnessMaxActive || isSpeakerDspActive
-                        val compEnabled = strongGlobalComp || currentAdaptiveMultibandEnabled
+                        // combined with Late Night / Loudness / Excursion; Headphone Accommodations adds upward parallel clarity without serial downward squash
+                        val strongGlobalComp = currentLateNightEnabled || loudnessMaxActive || isSpeakerDspActive
+                        val compEnabled = strongGlobalComp || currentAdaptiveMultibandEnabled || accommodationsMediaActive
                         val mbc = DynamicsProcessing.Mbc(true, compEnabled, MBC_BAND_COUNT)
                         val mbcCutoffs = MBC_UPPER_CUTOFFS_HZ
                         val multibandThresholds = floatArrayOf(
@@ -1226,7 +1237,6 @@ class EqualizerAudioEngine(private val context: Context) {
                         }
                         val globalRatio = maxOf(
                             if (currentLateNightEnabled) currentNightIntensity.ratio else 1f,
-                            if (accommodationsMediaActive) currentAccommodationsSoftIntensity.ratio else 1f,
                             if (loudnessMaxActive) LoudnessMaximizerSpecs.RMS_RATIO else 1f,
                             if (isSpeakerDspActive) FlagshipSpeakerSpecs.EXCURSION_RATIO else 1f
                         )
@@ -1238,14 +1248,12 @@ class EqualizerAudioEngine(private val context: Context) {
                             currentLateNightEnabled -> currentNightIntensity.thresholdDb
                             loudnessMaxActive -> LoudnessMaximizerSpecs.RMS_THRESHOLD_DB
                             isSpeakerDspActive -> FlagshipSpeakerSpecs.EXCURSION_THRESHOLD_DB
-                            accommodationsMediaActive -> currentAccommodationsSoftIntensity.thresholdDb
                             else -> AdaptiveMultibandPhaseSpecs.MID_THRESHOLD_DB
                         }
                         val mbcKnee = when {
                             loudnessMaxActive -> LoudnessMaximizerSpecs.RMS_KNEE_DB
                             isSpeakerDspActive -> FlagshipSpeakerSpecs.EXCURSION_KNEE_DB
                             currentLateNightEnabled -> currentNightIntensity.kneeDb
-                            accommodationsMediaActive -> currentAccommodationsSoftIntensity.kneeDb
                             else -> AdaptiveMultibandPhaseSpecs.BAND_KNEE_DB
                         }
                         val loudnessMakeupDb = if (loudnessMaxActive) {
@@ -1254,12 +1262,14 @@ class EqualizerAudioEngine(private val context: Context) {
                             0f
                         }
                         val speakerMakeupDb = if (isSpeakerDspActive) FlagshipSpeakerSpecs.MAKEUP_GAIN_DB else 0f
+                        val accommodationsParallelClarityDb = if (accommodationsMediaActive) {
+                            currentAccommodationsSoftIntensity.clarityGainDb * currentAccommodationsSoftIntensity.parallelMix +
+                                currentAccommodationsOutputGainDb
+                        } else {
+                            0f
+                        }
                         val mbcMakeup = (if (currentLateNightEnabled) currentNightIntensity.makeupGainDb else 0f) +
-                            (if (accommodationsMediaActive) {
-                                currentAccommodationsSoftIntensity.makeupGainDb + currentAccommodationsOutputGainDb
-                            } else {
-                                0f
-                            }) +
+                            accommodationsParallelClarityDb +
                             loudnessMakeupDb +
                             speakerMakeupDb
 
@@ -1351,7 +1361,9 @@ class EqualizerAudioEngine(private val context: Context) {
                                     freqHz = centerHz.toDouble(),
                                     bassDb = currentThreeBandBassDb,
                                     midsDb = currentThreeBandMidsDb,
-                                    trebleDb = currentThreeBandTrebleDb
+                                    trebleDb = currentThreeBandTrebleDb,
+                                    isSpeakerTarget = (currentTarget == OutputTarget.SPEAKER),
+                                    smartCurveEnabled = currentThreeBandSmartCurveEnabled
                                 )
                             }
                             val mappedDb = activeEqDb + currentPreampDb * 0.5f + speakerOffset

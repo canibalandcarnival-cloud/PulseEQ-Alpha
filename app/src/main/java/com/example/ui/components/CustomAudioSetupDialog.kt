@@ -61,10 +61,10 @@ import com.example.ui.theme.TextSecondary
 fun CustomAudioSetupDialog(
     state: CustomAudioSetupUiState,
     onSelectAuditionSlot: (SetupAuditionSlot) -> Unit,
-    onSelectIntensity: (SoftSoundIntensity) -> Unit,
-    onChooseWinner: (SetupAuditionSlot) -> Unit,
+    onChooseStep1Speech: (Boolean) -> Unit,
+    onChooseStep2Music: (com.example.model.AccommodationToneProfile) -> Unit,
+    onChooseStep3AndApply: (SoftSoundIntensity) -> Unit,
     onRestart: () -> Unit,
-    onApply: () -> Unit,
     onClose: () -> Unit
 ) {
     if (!state.isOpen) return
@@ -91,7 +91,8 @@ fun CustomAudioSetupDialog(
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f)
                 ) {
                     Box(
                         modifier = Modifier
@@ -117,39 +118,58 @@ fun CustomAudioSetupDialog(
                             ),
                             color = TextPrimary
                         )
+                        val stepTitle = when (state.stepIndex) {
+                            0 -> "Step 1 of 3 • Speech Clarity Test"
+                            1 -> "Step 2 of 3 • Music Detail & Brightness"
+                            else -> "Step 3 of 3 • Soft-Sound Sensitivity"
+                        }
                         Text(
-                            text = if (state.isCompleted) {
-                                "Recommended Profile Ready"
-                            } else {
-                                "Comparison ${state.stepIndex + 1} of 2 • Looped Sample Playing"
-                            },
+                            text = stepTitle,
                             style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
                             color = AppleBlue
                         )
                     }
                 }
 
-                IconButton(
-                    onClick = onClose,
-                    modifier = Modifier.size(36.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Close,
-                        contentDescription = "Close Custom Audio Setup",
-                        tint = TextSecondary
-                    )
+                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    if (state.stepIndex > 0) {
+                        IconButton(
+                            onClick = onRestart,
+                            modifier = Modifier
+                                .size(48.dp)
+                                .testTag("wizard_restart_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Refresh,
+                                contentDescription = "Restart Custom Audio Setup",
+                                tint = TextSecondary
+                            )
+                        }
+                    }
+                    IconButton(
+                        onClick = onClose,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("wizard_close_btn")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Close,
+                            contentDescription = "Close Custom Audio Setup",
+                            tint = TextSecondary
+                        )
+                    }
                 }
             }
 
             LinearProgressIndicator(
                 progress = {
-                    when {
-                        state.isCompleted -> 1f
-                        state.stepIndex == 0 -> 0.4f
-                        else -> 0.8f
+                    when (state.stepIndex) {
+                        0 -> 0.34f
+                        1 -> 0.67f
+                        else -> 1.0f
                     }
                 },
-                color = if (state.isCompleted) AppleMint else AppleBlue,
+                color = if (state.stepIndex >= 2) AppleMint else AppleBlue,
                 trackColor = StudioSurfaceHighlight,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -174,235 +194,252 @@ fun CustomAudioSetupDialog(
                     tint = AppleMint,
                     modifier = Modifier.size(16.dp)
                 )
+                val promptText = when (state.stepIndex) {
+                    0 -> "Vocal sample playing. Toggle Standard vs. Vocal Focus to see which makes speech clearer."
+                    1 -> "Full-range track playing. Toggle Balanced Tone vs. Brightness for natural music detail."
+                    else -> "Quiet detail sample playing (${state.chosenProfile.label}). Pick Slight or Strong boost to apply."
+                }
                 Text(
-                    text = if (state.isCompleted) {
-                        "Listening to your match: ${state.chosenProfile.label} (${state.softIntensity.label} Soft Boost)"
-                    } else {
-                        "Tap Standard, A, or B below while listening to compare speech & treble clarity."
-                    },
+                    text = promptText,
                     style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
                     color = TextSecondary
                 )
             }
 
-            if (!state.isCompleted) {
-                // Live A / B / Standard Switcher Cards
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    AuditionCandidateCard(
-                        badge = "STD",
-                        title = "Standard (Original)",
-                        subtitle = "Unprocessed direct signal without Accommodations",
-                        selected = state.activeAuditionSlot == SetupAuditionSlot.STANDARD,
-                        accentColor = TextSecondary,
-                        onClick = { onSelectAuditionSlot(SetupAuditionSlot.STANDARD) },
-                        testTag = "wizard_audition_standard"
-                    )
+            when (state.stepIndex) {
+                // Step 1: Speech Clarity Test (Standard vs. Vocal Focus)
+                0 -> {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        AuditionCandidateCard(
+                            badge = "1",
+                            title = "Standard",
+                            subtitle = "Original unprocessed vocal sample without Accommodations",
+                            selected = state.activeAuditionSlot == SetupAuditionSlot.STANDARD,
+                            accentColor = TextSecondary,
+                            onClick = { onSelectAuditionSlot(SetupAuditionSlot.STANDARD) },
+                            testTag = "wizard_step1_standard"
+                        )
 
-                    AuditionCandidateCard(
-                        badge = "A",
-                        title = "Custom Profile A • ${state.optionA.label}",
-                        subtitle = "${state.optionA.shortSummary} (${state.optionA.detailBadge})",
-                        selected = state.activeAuditionSlot == SetupAuditionSlot.OPTION_A,
-                        accentColor = AppleBlue,
-                        onClick = { onSelectAuditionSlot(SetupAuditionSlot.OPTION_A) },
-                        testTag = "wizard_audition_a"
-                    )
+                        AuditionCandidateCard(
+                            badge = "2",
+                            title = "Vocal Focus",
+                            subtitle = "110Hz HPF • 280Hz -2dB • 1.5kHz +3dB • 3kHz +3.8dB speech clarity",
+                            selected = state.activeAuditionSlot != SetupAuditionSlot.STANDARD,
+                            accentColor = AppleMint,
+                            onClick = { onSelectAuditionSlot(SetupAuditionSlot.OPTION_B) },
+                            testTag = "wizard_step1_vocal_focus"
+                        )
+                    }
 
-                    AuditionCandidateCard(
-                        badge = "B",
-                        title = "Custom Profile B • ${state.optionB.label}",
-                        subtitle = "${state.optionB.shortSummary} (${state.optionB.detailBadge})",
-                        selected = state.activeAuditionSlot == SetupAuditionSlot.OPTION_B,
-                        accentColor = AppleMint,
-                        onClick = { onSelectAuditionSlot(SetupAuditionSlot.OPTION_B) },
-                        testTag = "wizard_audition_b"
-                    )
-                }
-
-                // Soft Sound Intensity selector inside wizard
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(AppleGlassTile)
-                        .padding(4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    SoftSoundIntensity.entries.forEach { level ->
-                        val selected = level == state.softIntensity
-                        Box(
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { onChooseStep1Speech(false) },
+                            shape = RoundedCornerShape(12.dp),
                             modifier = Modifier
                                 .weight(1f)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(if (selected) StudioSurfaceElevated else Color.Transparent)
-                                .border(
-                                    1.dp,
-                                    if (selected) AppleBlue.copy(alpha = 0.7f) else Color.Transparent,
-                                    RoundedCornerShape(8.dp)
-                                )
-                                .clickable { onSelectIntensity(level) }
-                                .padding(vertical = 6.dp),
-                            contentAlignment = Alignment.Center
+                                .height(48.dp)
+                                .testTag("wizard_choose_standard_btn")
                         ) {
                             Text(
-                                text = "${level.label} (${level.eqScale}x)",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontSize = 9.5.sp,
-                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
-                                ),
-                                color = if (selected) TextPrimary else TextMuted
+                                text = "Use Standard",
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                                color = TextPrimary,
+                                maxLines = 1
+                            )
+                        }
+
+                        Button(
+                            onClick = { onChooseStep1Speech(true) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = AppleMint,
+                                contentColor = StudioBackground
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .testTag("wizard_choose_vocal_btn")
+                        ) {
+                            Text(
+                                text = "Use Vocal Focus",
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                                maxLines = 1
                             )
                         }
                     }
                 }
 
-                // Round Decision Buttons
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = { onChooseWinner(SetupAuditionSlot.OPTION_A) },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = AppleBlue,
-                            contentColor = TextPrimary
-                        ),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(46.dp)
-                            .testTag("wizard_choose_a_btn")
-                    ) {
-                        Text(
-                            text = "Use Profile A",
-                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-                            maxLines = 1
+                // Step 2: Music Detail & Brightness Test (Balanced Tone vs. Brightness)
+                1 -> {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        AuditionCandidateCard(
+                            badge = "A",
+                            title = "Balanced Tone",
+                            subtitle = com.example.model.AccommodationToneProfile.BALANCED_TONE.detailBadge,
+                            selected = state.activeAuditionSlot != SetupAuditionSlot.OPTION_B,
+                            accentColor = AppleBlue,
+                            onClick = { onSelectAuditionSlot(SetupAuditionSlot.OPTION_A) },
+                            testTag = "wizard_step2_balanced"
+                        )
+
+                        AuditionCandidateCard(
+                            badge = "B",
+                            title = "Brightness",
+                            subtitle = com.example.model.AccommodationToneProfile.BRIGHTNESS.detailBadge,
+                            selected = state.activeAuditionSlot == SetupAuditionSlot.OPTION_B,
+                            accentColor = AppleMint,
+                            onClick = { onSelectAuditionSlot(SetupAuditionSlot.OPTION_B) },
+                            testTag = "wizard_step2_brightness"
                         )
                     }
 
-                    Button(
-                        onClick = { onChooseWinner(SetupAuditionSlot.OPTION_B) },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = AppleMint,
-                            contentColor = StudioBackground
-                        ),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(46.dp)
-                            .testTag("wizard_choose_b_btn")
-                    ) {
-                        Text(
-                            text = "Use Profile B",
-                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-                            maxLines = 1
-                        )
-                    }
-                }
-            } else {
-                // Completion Summary + Audition Compare Standard vs Winner
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(AppleMintSoft)
-                        .border(1.dp, AppleMint.copy(alpha = 0.75f), RoundedCornerShape(16.dp))
-                        .padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Rounded.CheckCircle,
-                            contentDescription = null,
-                            tint = AppleMint,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Text(
-                            text = "Best Match: ${state.chosenProfile.label}",
-                            style = MaterialTheme.typography.titleMedium.copy(
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold
+                        Button(
+                            onClick = { onChooseStep2Music(com.example.model.AccommodationToneProfile.BALANCED_TONE) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = AppleBlue,
+                                contentColor = TextPrimary
                             ),
-                            color = TextPrimary
-                        )
-                    }
-                    Text(
-                        text = "${state.chosenProfile.shortSummary} • ${state.chosenProfile.detailBadge}",
-                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                        color = TextSecondary
-                    )
-                    Text(
-                        text = "Boost Soft Sounds: ${state.softIntensity.label} (${state.softIntensity.eqScale}x EQ, +${state.softIntensity.makeupGainDb} dB)",
-                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                        color = AppleMint
-                    )
-                }
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .testTag("wizard_choose_balanced_btn")
+                        ) {
+                            Text(
+                                text = "Use Balanced",
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                                maxLines = 1
+                            )
+                        }
 
-                // Quick Standard vs Custom toggle right on the final screen
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = { onSelectAuditionSlot(SetupAuditionSlot.STANDARD) },
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text(
-                            text = if (state.activeAuditionSlot == SetupAuditionSlot.STANDARD) "● Standard" else "Hear Standard",
-                            color = if (state.activeAuditionSlot == SetupAuditionSlot.STANDARD) TextPrimary else TextSecondary,
-                            fontSize = 11.sp
-                        )
-                    }
-                    OutlinedButton(
-                        onClick = { onSelectAuditionSlot(SetupAuditionSlot.OPTION_A) },
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text(
-                            text = if (state.activeAuditionSlot != SetupAuditionSlot.STANDARD) "● Custom" else "Hear Custom",
-                            color = if (state.activeAuditionSlot != SetupAuditionSlot.STANDARD) AppleMint else TextSecondary,
-                            fontSize = 11.sp
-                        )
+                        Button(
+                            onClick = { onChooseStep2Music(com.example.model.AccommodationToneProfile.BRIGHTNESS) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = AppleMint,
+                                contentColor = StudioBackground
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .testTag("wizard_choose_brightness_btn")
+                        ) {
+                            Text(
+                                text = "Use Brightness",
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                                maxLines = 1
+                            )
+                        }
                     }
                 }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = onRestart,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.height(48.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Refresh,
-                            contentDescription = "Restart Wizard",
-                            tint = TextSecondary,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-
-                    Button(
-                        onClick = onApply,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = AppleBlue,
-                            contentColor = TextPrimary
-                        ),
-                        shape = RoundedCornerShape(12.dp),
+                // Step 3: Soft-Sound Sensitivity (Slight vs. Strong) -> Auto-Applies Winning Combination
+                else -> {
+                    Column(
                         modifier = Modifier
-                            .weight(1f)
-                            .height(48.dp)
-                            .testTag("wizard_apply_btn")
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(AppleMintSoft)
+                            .border(1.dp, AppleMint.copy(alpha = 0.65f), RoundedCornerShape(14.dp))
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.CheckCircle,
+                                contentDescription = null,
+                                tint = AppleMint,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "Selected Tone Curve: ${state.chosenProfile.label}",
+                                style = MaterialTheme.typography.labelLarge.copy(
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                color = TextPrimary
+                            )
+                        }
                         Text(
-                            text = "Use Custom Settings",
-                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+                            text = state.chosenProfile.detailBadge,
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.5.sp),
+                            color = TextSecondary
                         )
+                    }
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        AuditionCandidateCard(
+                            badge = "S",
+                            title = "Slight Soft-Sound Boost",
+                            subtitle = "18% parallel 1.2kHz upward lift (+2.0 dB clarity gain)",
+                            selected = state.activeAuditionSlot != SetupAuditionSlot.OPTION_B,
+                            accentColor = AppleBlue,
+                            onClick = { onSelectAuditionSlot(SetupAuditionSlot.OPTION_A) },
+                            testTag = "wizard_step3_slight"
+                        )
+
+                        AuditionCandidateCard(
+                            badge = "L",
+                            title = "Strong Soft-Sound Boost",
+                            subtitle = "48% parallel 1.2kHz upward lift (+5.5 dB quiet detail boost)",
+                            selected = state.activeAuditionSlot == SetupAuditionSlot.OPTION_B,
+                            accentColor = AppleMint,
+                            onClick = { onSelectAuditionSlot(SetupAuditionSlot.OPTION_B) },
+                            testTag = "wizard_step3_strong"
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = { onChooseStep3AndApply(SoftSoundIntensity.SLIGHT) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = AppleBlue,
+                                contentColor = TextPrimary
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .testTag("wizard_apply_slight_btn")
+                        ) {
+                            Text(
+                                text = "Apply Slight",
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                                maxLines = 1
+                            )
+                        }
+
+                        Button(
+                            onClick = { onChooseStep3AndApply(SoftSoundIntensity.STRONG) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = AppleMint,
+                                contentColor = StudioBackground
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .testTag("wizard_apply_strong_btn")
+                        ) {
+                            Text(
+                                text = "Apply Strong",
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                                maxLines = 1
+                            )
+                        }
                     }
                 }
             }
