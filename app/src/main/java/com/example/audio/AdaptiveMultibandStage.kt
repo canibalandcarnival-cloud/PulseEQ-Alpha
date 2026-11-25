@@ -17,35 +17,35 @@ class AdaptiveMultibandToneBalancer(private val sampleRate: Int = 44100) {
 
     // LR4 Split 1 @ 220 Hz
     private val lowLp1 = StereoBiquad().apply {
-        setLowPass(sampleRate, AdaptiveMultibandPhaseSpecs.LOW_CROSSOVER_HZ, 0.7071)
+        setLowPass(sampleRate, AdaptiveMultibandPhaseSpecs.LOW_CROSSOVER_HZ, StereoBiquad.BUTTERWORTH_Q)
     }
     private val lowLp2 = StereoBiquad().apply {
-        setLowPass(sampleRate, AdaptiveMultibandPhaseSpecs.LOW_CROSSOVER_HZ, 0.7071)
+        setLowPass(sampleRate, AdaptiveMultibandPhaseSpecs.LOW_CROSSOVER_HZ, StereoBiquad.BUTTERWORTH_Q)
     }
     private val lowHp1 = StereoBiquad().apply {
-        setHighPass(sampleRate, AdaptiveMultibandPhaseSpecs.LOW_CROSSOVER_HZ, 0.7071)
+        setHighPass(sampleRate, AdaptiveMultibandPhaseSpecs.LOW_CROSSOVER_HZ, StereoBiquad.BUTTERWORTH_Q)
     }
     private val lowHp2 = StereoBiquad().apply {
-        setHighPass(sampleRate, AdaptiveMultibandPhaseSpecs.LOW_CROSSOVER_HZ, 0.7071)
+        setHighPass(sampleRate, AdaptiveMultibandPhaseSpecs.LOW_CROSSOVER_HZ, StereoBiquad.BUTTERWORTH_Q)
     }
 
     // Allpass phase-matching filter at 3.8 kHz on Low band for LR4 3-way phase-coherent sum
     private val lowPhaseMatch3800 = StereoBiquad().apply {
-        setAllPass(sampleRate, AdaptiveMultibandPhaseSpecs.HIGH_CROSSOVER_HZ, 0.7071)
+        setAllPass(sampleRate, AdaptiveMultibandPhaseSpecs.HIGH_CROSSOVER_HZ, StereoBiquad.BUTTERWORTH_Q)
     }
 
     // LR4 Split 2 @ 3.8 kHz (splits >220Hz into Mid 220Hz-3.8kHz and High >3.8kHz)
     private val highLp1 = StereoBiquad().apply {
-        setLowPass(sampleRate, AdaptiveMultibandPhaseSpecs.HIGH_CROSSOVER_HZ, 0.7071)
+        setLowPass(sampleRate, AdaptiveMultibandPhaseSpecs.HIGH_CROSSOVER_HZ, StereoBiquad.BUTTERWORTH_Q)
     }
     private val highLp2 = StereoBiquad().apply {
-        setLowPass(sampleRate, AdaptiveMultibandPhaseSpecs.HIGH_CROSSOVER_HZ, 0.7071)
+        setLowPass(sampleRate, AdaptiveMultibandPhaseSpecs.HIGH_CROSSOVER_HZ, StereoBiquad.BUTTERWORTH_Q)
     }
     private val highHp1 = StereoBiquad().apply {
-        setHighPass(sampleRate, AdaptiveMultibandPhaseSpecs.HIGH_CROSSOVER_HZ, 0.7071)
+        setHighPass(sampleRate, AdaptiveMultibandPhaseSpecs.HIGH_CROSSOVER_HZ, StereoBiquad.BUTTERWORTH_Q)
     }
     private val highHp2 = StereoBiquad().apply {
-        setHighPass(sampleRate, AdaptiveMultibandPhaseSpecs.HIGH_CROSSOVER_HZ, 0.7071)
+        setHighPass(sampleRate, AdaptiveMultibandPhaseSpecs.HIGH_CROSSOVER_HZ, StereoBiquad.BUTTERWORTH_Q)
     }
 
     // Independent per-band compressors: Ratio 2.2:1, Attack 6ms, Release 85ms, 0dB makeup
@@ -148,16 +148,16 @@ class SpeakerPhaseAlignmentFilter(private val sampleRate: Int = 44100) {
 
     // 2.2 kHz LR4 split for upper-treble (>2.2 kHz) 0.14 ms micro-arrival offset
     private val trebleSplitLp1 = StereoBiquad().apply {
-        setLowPass(sampleRate, AdaptiveMultibandPhaseSpecs.TREBLE_MICRO_OFFSET_CUTOFF_HZ, 0.7071)
+        setLowPass(sampleRate, AdaptiveMultibandPhaseSpecs.TREBLE_MICRO_OFFSET_CUTOFF_HZ, StereoBiquad.BUTTERWORTH_Q)
     }
     private val trebleSplitLp2 = StereoBiquad().apply {
-        setLowPass(sampleRate, AdaptiveMultibandPhaseSpecs.TREBLE_MICRO_OFFSET_CUTOFF_HZ, 0.7071)
+        setLowPass(sampleRate, AdaptiveMultibandPhaseSpecs.TREBLE_MICRO_OFFSET_CUTOFF_HZ, StereoBiquad.BUTTERWORTH_Q)
     }
     private val trebleSplitHp1 = StereoBiquad().apply {
-        setHighPass(sampleRate, AdaptiveMultibandPhaseSpecs.TREBLE_MICRO_OFFSET_CUTOFF_HZ, 0.7071)
+        setHighPass(sampleRate, AdaptiveMultibandPhaseSpecs.TREBLE_MICRO_OFFSET_CUTOFF_HZ, StereoBiquad.BUTTERWORTH_Q)
     }
     private val trebleSplitHp2 = StereoBiquad().apply {
-        setHighPass(sampleRate, AdaptiveMultibandPhaseSpecs.TREBLE_MICRO_OFFSET_CUTOFF_HZ, 0.7071)
+        setHighPass(sampleRate, AdaptiveMultibandPhaseSpecs.TREBLE_MICRO_OFFSET_CUTOFF_HZ, StereoBiquad.BUTTERWORTH_Q)
     }
 
     private val microDelaySamples: Double =
@@ -192,10 +192,10 @@ class SpeakerPhaseAlignmentFilter(private val sampleRate: Int = 44100) {
                 freqHz = AdaptiveMultibandPhaseSpecs.PHASE_ALIGN_ALLPASS_HZ,
                 q = AdaptiveMultibandPhaseSpecs.PHASE_ALIGN_ALLPASS_Q
             )
-            trebleSplitLp1.setLowPass(sampleRate, AdaptiveMultibandPhaseSpecs.TREBLE_MICRO_OFFSET_CUTOFF_HZ, 0.7071)
-            trebleSplitLp2.setLowPass(sampleRate, AdaptiveMultibandPhaseSpecs.TREBLE_MICRO_OFFSET_CUTOFF_HZ, 0.7071)
-            trebleSplitHp1.setHighPass(sampleRate, AdaptiveMultibandPhaseSpecs.TREBLE_MICRO_OFFSET_CUTOFF_HZ, 0.7071)
-            trebleSplitHp2.setHighPass(sampleRate, AdaptiveMultibandPhaseSpecs.TREBLE_MICRO_OFFSET_CUTOFF_HZ, 0.7071)
+            trebleSplitLp1.setLowPass(sampleRate, AdaptiveMultibandPhaseSpecs.TREBLE_MICRO_OFFSET_CUTOFF_HZ, StereoBiquad.BUTTERWORTH_Q)
+            trebleSplitLp2.setLowPass(sampleRate, AdaptiveMultibandPhaseSpecs.TREBLE_MICRO_OFFSET_CUTOFF_HZ, StereoBiquad.BUTTERWORTH_Q)
+            trebleSplitHp1.setHighPass(sampleRate, AdaptiveMultibandPhaseSpecs.TREBLE_MICRO_OFFSET_CUTOFF_HZ, StereoBiquad.BUTTERWORTH_Q)
+            trebleSplitHp2.setHighPass(sampleRate, AdaptiveMultibandPhaseSpecs.TREBLE_MICRO_OFFSET_CUTOFF_HZ, StereoBiquad.BUTTERWORTH_Q)
             delayRingL.fill(0.0)
             delayRingR.fill(0.0)
             delayWriteIdx = 0

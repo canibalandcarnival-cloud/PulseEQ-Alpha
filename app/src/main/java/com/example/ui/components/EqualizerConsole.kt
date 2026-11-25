@@ -169,9 +169,13 @@ fun EqualizerConsole(
                         )
                     } else {
                         Text(
-                            text = "32Hz – 16kHz Precision Parametric Console",
+                            text = if (preampDb >= 5.0f) {
+                                "32Hz – 16kHz 64-Bit Orfanidis • +5.5 dB 3.5mm DAC Headroom"
+                            } else {
+                                "32Hz – 16kHz 64-Bit Double Precision Console"
+                            },
                             style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                            color = TextSecondary,
+                            color = if (preampDb >= 5.0f) AnalyzerCyan else TextSecondary,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )

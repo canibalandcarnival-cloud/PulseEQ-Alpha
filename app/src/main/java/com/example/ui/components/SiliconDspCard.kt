@@ -191,9 +191,10 @@ fun SiliconDspCard(
                     Text(
                         text = when {
                             abCompareHeld -> "A/B Hold Active • Loudness-Matched Original Bypass"
-                            !active -> "CS35L 48 kHz Silicon Post-EQ Core bypassed"
-                            isSpeaker -> "48 kHz 5ms Lookahead • CS35L Excursion/Thermal • -0.2 dBTP"
-                            else -> "48 kHz 5ms Lookahead • 24Hz SVF • Class-H • -0.2 dBTP"
+                            !active -> "CS35L 48 kHz 64-Bit Silicon Post-EQ Core bypassed"
+                            isSpeaker -> "64-Bit Double • 5ms Lookahead • CS35L Excursion/Thermal • -0.2 dBTP"
+                            outputTarget == OutputTarget.HEADPHONES -> "64-Bit Double • +5.5 dB 3.5mm DAC • 24Hz SVF • 4x -0.2 dBTP"
+                            else -> "64-Bit Double • 5ms Lookahead • 24Hz SVF • Class-H • -0.2 dBTP"
                         },
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.5.sp),
                         color = when {

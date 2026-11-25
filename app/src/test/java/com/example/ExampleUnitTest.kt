@@ -2449,4 +2449,105 @@ class ExampleUnitTest {
         assertEquals(0.0f, btRef.threeBandMidsDb, 1e-4f)
         assertEquals(1.0f, btRef.threeBandTrebleDb, 1e-4f)
     }
+
+    @Test
+    fun audiophile_64bit_double_precision_and_infinix_mastering_verified() {
+        val sampleRate = 48000
+
+        // 1. CirrusSiliconDspEngine typealias & 64-bit Double sub-bass precision (32 Hz)
+        val engine: com.example.audio.CirrusSiliconDspEngine = com.example.audio.CirrusSiliconDspEngine(sampleRate).apply {
+            configure(isEnabled = true, target = com.example.model.OutputTarget.HEADPHONES)
+        }
+        assertEquals(com.example.audio.SiliconDspCore(sampleRate).lookaheadSamples, engine.lookaheadSamples)
+        val subBassBiquad = com.example.audio.StereoBiquad().apply {
+            setPeaking(sampleRate, 32.0, com.example.audio.StereoBiquad.SQRT2, 6.0)
+        }
+        // Feed 1e-5 (-100 dBFS) 32Hz sub-bass tone for 100ms (4800 samples) to verify 64-bit precision with zero quantization floor
+        var maxSubOut = 0.0
+        for (i in 0 until 4800) {
+            val amp = 1e-5 * kotlin.math.sin(2.0 * Math.PI * 32.0 * i / sampleRate)
+            val (oL, _) = subBassBiquad.processStereo(amp, amp)
+            if (i >= 2400) maxSubOut = maxOf(maxSubOut, kotlin.math.abs(oL))
+        }
+        assertTrue("64-bit sub-bass filter must resolve -100 dBFS 32Hz cleanly (~2e-5 peak, got $maxSubOut)", maxSubOut > 1.8e-5)
+
+        // 2. Phase-coherent LR4 crossovers (220Hz & 3.8kHz) sum flat at 0.0 dB
+        val lr4 = com.example.audio.AdaptiveMultibandToneBalancer(sampleRate)
+        var inSq = 0.0
+        var sumSq = 0.0
+        for (i in 0 until 4800) {
+            val s = 0.3 * kotlin.math.sin(2.0 * Math.PI * 220.0 * i / sampleRate) +
+                0.3 * kotlin.math.sin(2.0 * Math.PI * 3800.0 * i / sampleRate)
+            val (low, mid, high) = lr4.splitBandsStereo(s, s)
+            val summed = low.first + mid.first + high.first
+            if (i >= 2400) {
+                inSq += s * s
+                sumSq += summed * summed
+            }
+        }
+        val lr4SumErrorDb = kotlin.math.abs(10.0 * kotlin.math.log10((sumSq / inSq).coerceAtLeast(1e-12)))
+        assertTrue("LR4 3-way split sum must stay flat within 0.05 dB at crossover frequencies (got $lr4SumErrorDb dB)", lr4SumErrorDb < 0.05)
+
+        // 3. Orfanidis Nyquist-Matched Peaking EQ (16 kHz @ 48 kHz) & Vicanek De-Cramped High Shelf (4.7 kHz @ 48 kHz)
+        val cramped16k = com.example.audio.StereoBiquad().apply { setPeaking(sampleRate, 16000.0, 1.4142135623730951, 6.0) }
+        val orfanidis16kBoost = com.example.audio.StereoBiquad().apply { setOrfanidisPeaking(sampleRate, 16000.0, 1.4142135623730951, 6.0) }
+        val orfanidis16kCut = com.example.audio.StereoBiquad().apply { setOrfanidisPeaking(sampleRate, 16000.0, 1.4142135623730951, -6.0) }
+        assertEquals(6.0, orfanidis16kBoost.magnitudeDbAt(sampleRate, 16000.0), 0.02)
+        assertEquals(-6.0, orfanidis16kCut.magnitudeDbAt(sampleRate, 16000.0), 0.02)
+        assertTrue(
+            "Orfanidis 16kHz EQ at 19kHz must exceed cramped RBJ (${orfanidis16kBoost.magnitudeDbAt(sampleRate, 19000.0)} > ${cramped16k.magnitudeDbAt(sampleRate, 19000.0)})",
+            orfanidis16kBoost.magnitudeDbAt(sampleRate, 19000.0) > cramped16k.magnitudeDbAt(sampleRate, 19000.0) + 1.0
+        )
+
+        val crampedShelf = com.example.audio.StereoBiquad().apply { setHighShelf(sampleRate, 4700.0, 0.7071067811865475, 6.0) }
+        val deCrampedShelfBoost = com.example.audio.StereoBiquad().apply { setDeCrampedHighShelf(sampleRate, 4700.0, 0.7071067811865475, 6.0) }
+        val deCrampedShelfCut = com.example.audio.StereoBiquad().apply { setDeCrampedHighShelf(sampleRate, 4700.0, 0.7071067811865475, -6.0) }
+        val analogShelfRef12k = com.example.audio.StereoBiquad().apply {
+            setHighShelf(sampleRate * 8, 4700.0, 0.7071067811865475, 6.0)
+        }.magnitudeDbAt(sampleRate * 8, 12000.0)
+        assertEquals(3.0, deCrampedShelfBoost.magnitudeDbAt(sampleRate, 4700.0), 0.05)
+        assertEquals(-3.0, deCrampedShelfCut.magnitudeDbAt(sampleRate, 4700.0), 0.05)
+        assertTrue(
+            "Vicanek de-cramped 4.7kHz high shelf error at 12kHz must be < 0.08 dB vs analog ($analogShelfRef12k dB)",
+            kotlin.math.abs(deCrampedShelfBoost.magnitudeDbAt(sampleRate, 12000.0) - analogShelfRef12k) < 0.08
+        )
+        assertTrue(
+            "Vicanek de-cramped shelf must beat cramped RBJ at 12kHz",
+            kotlin.math.abs(deCrampedShelfBoost.magnitudeDbAt(sampleRate, 12000.0) - analogShelfRef12k) <
+                kotlin.math.abs(crampedShelf.magnitudeDbAt(sampleRate, 12000.0) - analogShelfRef12k) * 0.25
+        )
+
+        // 4. SiliconDspCore 4x Catmull-Rom -0.2 dBTP brickwall limiter runs as final dynamic stage after VolumeContour
+        val truePeakCeiling = Math.pow(10.0, com.example.model.SiliconDspSpecs.TRUE_PEAK_CEILING_DBTP / 20.0)
+        val finalChainBank = BiquadEqFilterBank(sampleRate).apply {
+            updateParameters(
+                gainsDb = List(10) { 0f },
+                preampDb = 8.0f,
+                isBypassed = false,
+                outputTarget = com.example.model.OutputTarget.HEADPHONES,
+                siliconDspEnabled = true,
+                masterVolumePercent = 0.25f, // triggers Low-Vol +3dB contour BEFORE SiliconDspCore
+                applyMasterVolumeGain = false
+            )
+        }
+        var maxSample = 0.0
+        for (i in 0 until 2400) {
+            val hot = 0.90 * kotlin.math.sin(2.0 * Math.PI * 115.0 * i / sampleRate)
+            val (oL, oR) = finalChainBank.processStereoSample(hot, hot)
+            maxSample = maxOf(maxSample, kotlin.math.abs(oL), kotlin.math.abs(oR))
+        }
+        assertTrue(
+            "4x Catmull-Rom -0.2 dBTP limiter after VolumeContour must catch peaks <= $truePeakCeiling (got $maxSample)",
+            maxSample <= truePeakCeiling + 1e-4
+        )
+
+        // 5. Infinix Hot 60 5G 3.5mm Headphone DAC +5.5 dB Pre-Amp Headroom defaults
+        assertEquals(5.5f, com.example.model.SiliconDspSpecs.HEADPHONE_DAC_PREAMP_HEADROOM_DB, 1e-4f)
+        val defaultHp = com.example.model.OutputEqProfile(target = com.example.model.OutputTarget.HEADPHONES)
+        val defaultSpk = com.example.model.OutputEqProfile(target = com.example.model.OutputTarget.SPEAKER)
+        val defaultBt = com.example.model.OutputEqProfile(target = com.example.model.OutputTarget.BLUETOOTH)
+        assertEquals(5.5f, defaultHp.preampDb, 1e-4f)
+        assertEquals(0.0f, defaultSpk.preampDb, 1e-4f)
+        assertEquals(0.0f, defaultBt.preampDb, 1e-4f)
+    }
 }

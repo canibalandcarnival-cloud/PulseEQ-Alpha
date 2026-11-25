@@ -316,7 +316,11 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
         }
         val updated = current.copy(
             bandGainsDb = preset.gainsDb.toList(),
-            preampDb = preset.preampDb,
+            preampDb = if (preset.preampDb == 0f) {
+                OutputEqProfile.defaultPreampForTarget(current.target)
+            } else {
+                preset.preampDb
+            },
             isBypassed = false,
             selectedPresetId = preset.id,
             lateNightEnabled = isLateNightPreset,
@@ -984,7 +988,7 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
         preLateNightProfiles.remove(current.target)
         val updated = current.copy(
             bandGainsDb = List(10) { 0f },
-            preampDb = 0f,
+            preampDb = OutputEqProfile.defaultPreampForTarget(current.target),
             isBypassed = false,
             selectedPresetId = EqPresetsCatalog.FLAT_ID,
             lateNightEnabled = false

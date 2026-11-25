@@ -45,6 +45,7 @@ import kotlin.math.max
 import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.math.sqrt
+import kotlin.math.tan
 import kotlin.math.tanh
 
 /**
@@ -214,6 +215,176 @@ class StereoBiquad {
         a2 = na2 / na0
     }
 
+    /**
+     * Orfanidis (1997) Nyquist-Matched Peaking EQ:
+     * Computes exact 2nd-order digital peaking filter coefficients matching continuous-time
+     * analog center frequency, Q bandwidth, and Nyquist magnitude without bilinear frequency cramping.
+     */
+    fun setOrfanidisPeaking(sampleRate: Int, freqHz: Double, q: Double, gainDb: Double) {
+        if (abs(gainDb) < 1e-6) {
+            reset()
+            return
+        }
+        val safeFreq = freqHz.coerceIn(10.0, sampleRate * 0.495)
+        val safeQ = q.coerceAtLeast(0.05)
+
+        val g0 = 1.0
+        val g0Sq = 1.0
+        val g = 10.0.pow(gainDb / 20.0)
+        val gSq = g * g
+
+        val fNyq = sampleRate * 0.5
+        val uNyq = (fNyq / safeFreq) - (safeFreq / fNyq)
+        val uNyqSq = uNyq * uNyq
+        val qSq = safeQ * safeQ
+
+        val g1Sq = ((uNyqSq + g / qSq) / (uNyqSq + 1.0 / (g * qSq))).coerceAtLeast(1e-12)
+        val g1 = sqrt(g1Sq)
+
+        var gBSq = g
+        var uB = 1.0 / safeQ
+        val needsCustomBw = uNyq <= (1.0 / safeQ) ||
+            (g > 1.0 && gBSq <= g1Sq) ||
+            (g < 1.0 && gBSq >= g1Sq)
+        if (needsCustomBw) {
+            gBSq = 0.5 * (gSq + g1Sq)
+            val ratioTerm = ((g - gBSq / g) / (gBSq - 1.0)).coerceAtLeast(1e-9)
+            uB = (1.0 / safeQ) * sqrt(ratioTerm)
+        }
+
+        val w0 = 2.0 * PI * safeFreq / sampleRate
+        val dw = (w0 * uB).coerceIn(1e-5, PI * 0.92)
+
+        val halfTan = tan(w0 * 0.5)
+        val x0 = halfTan * halfTan
+        val wSq = sqrt(((gSq - g1Sq) / (gSq - g0Sq)).coerceAtLeast(1e-9)) * x0
+
+        val pRatio = sqrt(((gBSq - g0Sq) / (gBSq - g1Sq)).coerceAtLeast(1e-9))
+        val p = pRatio * wSq
+        val c = tan(dw * 0.5)
+        val sumSq = 2.0 * p + c * c * (1.0 + p) * (1.0 + p)
+
+        val r1 = 2.0 * (gSq - g1Sq) * x0 - 2.0 * (gSq - g0 * g1) * wSq
+        val r2 = (gBSq - g1Sq) * sumSq - 2.0 * (gBSq - g0 * g1) * wSq
+        val betaSq = (r2 - r1) / (gSq - gBSq)
+        val bgpSq = gSq * betaSq + r1
+
+        if (!betaSq.isFinite() || !bgpSq.isFinite() || betaSq <= 1e-12 || bgpSq <= 1e-12) {
+            setPeaking(sampleRate, freqHz, q, gainDb)
+            return
+        }
+
+        val beta = sqrt(betaSq)
+        val bgp = sqrt(bgpSq)
+
+        val nb0 = g1 + bgp + g0 * wSq
+        val nb1 = 2.0 * (g0 * wSq - g1)
+        val nb2 = g1 - bgp + g0 * wSq
+        val na0 = 1.0 + beta + wSq
+        val na1 = 2.0 * (wSq - 1.0)
+        val na2 = 1.0 - beta + wSq
+
+        b0 = nb0 / na0
+        b1 = nb1 / na0
+        b2 = nb2 / na0
+        a1 = na1 / na0
+        a2 = na2 / na0
+    }
+
+    /**
+     * Vicanek-style Nyquist De-Cramped 2nd-Order High Shelf:
+     * Preserves true analog upper-octave shelf slope and corner-frequency response up to 20 kHz at 48 kHz.
+     */
+    fun setDeCrampedHighShelf(sampleRate: Int, freqHz: Double, q: Double, gainDb: Double) {
+        if (abs(gainDb) < 1e-6) {
+            reset()
+            return
+        }
+        val absGainDb = abs(gainDb)
+        val safeFreq = freqHz.coerceIn(10.0, sampleRate * 0.49)
+        val safeQ = q.coerceAtLeast(0.1)
+
+        val a = 10.0.pow(absGainDb / 40.0)
+        val g = a * a
+        val wc = 2.0 * PI * safeFreq / sampleRate
+
+        val p0 = sqrt(a) * wc
+        val zeta = 1.0 / (2.0 * safeQ)
+        val na1: Double
+        val na2: Double
+        if (zeta <= 1.0) {
+            val r = exp(-zeta * p0)
+            val theta = p0 * sqrt(1.0 - zeta * zeta)
+            na1 = -2.0 * r * cos(theta)
+            na2 = r * r
+        } else {
+            val s = sqrt(zeta * zeta - 1.0)
+            val r1 = exp(-p0 * (zeta + s))
+            val r2 = exp(-p0 * (zeta - s))
+            na1 = -(r1 + r2)
+            na2 = r1 * r2
+        }
+
+        val sqrtA0 = 1.0 + na1 + na2
+        val a0Pow = sqrtA0 * sqrtA0
+        val sqrtA1 = 1.0 - na1 + na2
+        val a1Pow = sqrtA1 * sqrtA1
+
+        val sinHalf = sin(wc * 0.5)
+        val phi0 = sinHalf * sinHalf
+        val denomMagAtWc = a0Pow * (1.0 - phi0) + a1Pow * phi0 - 16.0 * na2 * phi0 * (1.0 - phi0)
+
+        val uNyq = (sampleRate * 0.5) / safeFreq
+        val uSq = uNyq * uNyq
+        val qSq = safeQ * safeQ
+        val numTerm = (1.0 - a * uSq)
+        val denTerm = (a - uSq)
+        val g1Sq = g * ((numTerm * numTerm + a * uSq / qSq) / (denTerm * denTerm + a * uSq / qSq))
+        val g1 = sqrt(g1Sq)
+
+        val b0Pow = a0Pow
+        val b1Pow = g1Sq * a1Pow
+        val sqrtB0 = sqrtA0
+        val sqrtB1 = g1 * sqrtA1
+
+        val pb = (b0Pow * (1.0 - phi0) + b1Pow * phi0 - g * denomMagAtWc) / (16.0 * phi0 * (1.0 - phi0))
+        val sPlus = 0.5 * (sqrtB0 + sqrtB1)
+        val nb1 = 0.5 * (sqrtB0 - sqrtB1)
+        val delta = sPlus * sPlus - 4.0 * pb
+
+        if (!delta.isFinite() || delta < 0.0) {
+            setHighShelf(sampleRate, freqHz, q, gainDb)
+            return
+        }
+
+        val sqrtDelta = sqrt(delta)
+        val nb0 = 0.5 * (sPlus + sqrtDelta)
+        val nb2 = 0.5 * (sPlus - sqrtDelta)
+
+        if (gainDb >= 0.0) {
+            b0 = nb0
+            b1 = nb1
+            b2 = nb2
+            a1 = na1
+            a2 = na2
+        } else {
+            if (nb0 <= 1e-12) {
+                setHighShelf(sampleRate, freqHz, q, gainDb)
+                return
+            }
+            b0 = 1.0 / nb0
+            b1 = na1 / nb0
+            b2 = na2 / nb0
+            a1 = nb1 / nb0
+            a2 = nb2 / nb0
+        }
+    }
+
+    companion object {
+        const val BUTTERWORTH_Q = 0.7071067811865475
+        const val SQRT2 = 1.4142135623730951
+    }
+
     fun magnitudeDbAt(sampleRate: Int, freqHz: Double): Double {
         val w = 2.0 * PI * freqHz / sampleRate
         val cosW = cos(w)
@@ -272,13 +443,13 @@ class DynamicRangeCompressor(private val sampleRate: Int = 44100) {
     private var enabled: Boolean = false
 
     @Volatile
-    private var thresholdDb: Float = NightIntensity.STANDARD.thresholdDb
+    private var thresholdDb: Double = NightIntensity.STANDARD.thresholdDb.toDouble()
 
     @Volatile
-    private var kneeDb: Float = NightIntensity.STANDARD.kneeDb
+    private var kneeDb: Double = NightIntensity.STANDARD.kneeDb.toDouble()
 
     @Volatile
-    private var ratio: Float = NightIntensity.STANDARD.ratio
+    private var ratio: Double = NightIntensity.STANDARD.ratio.toDouble()
 
     @Volatile
     private var makeupGainLinear: Double = 10.0.pow(NightIntensity.STANDARD.makeupGainDb / 20.0)
@@ -313,10 +484,10 @@ class DynamicRangeCompressor(private val sampleRate: Int = 44100) {
         makeupGainDb: Float
     ) {
         enabled = isEnabled
-        thresholdDb = threshold
-        kneeDb = knee
-        ratio = compRatio
-        makeupGainLinear = 10.0.pow(makeupGainDb / 20.0)
+        thresholdDb = threshold.toDouble()
+        kneeDb = knee.toDouble()
+        ratio = compRatio.toDouble()
+        makeupGainLinear = 10.0.pow(makeupGainDb.toDouble() / 20.0)
         attackCoeff = exp(-1.0 / ((attackMs.coerceAtLeast(0.1f) / 1000.0) * sampleRate))
         releaseCoeff = exp(-1.0 / ((releaseMs.coerceAtLeast(1f) / 1000.0) * sampleRate))
         if (!isEnabled) {
@@ -330,25 +501,52 @@ class DynamicRangeCompressor(private val sampleRate: Int = 44100) {
             return inL to inR
         }
 
-        val detectorAmp = max(abs(inL), abs(inR)).coerceAtLeast(1e-6)
+        val detectorAmp = max(abs(inL), abs(inR)).coerceAtLeast(1e-9)
         val inputDb = 20.0 * log10(detectorAmp)
 
         val coeff = if (inputDb > envelopeDb) attackCoeff else releaseCoeff
         envelopeDb = coeff * envelopeDb + (1.0 - coeff) * inputDb
 
-        val grDb = computeGainReductionDb(
-            inputDb = envelopeDb.toFloat(),
+        val grDb = computeGainReductionDbDouble(
+            inputDb = envelopeDb,
             thresholdDb = thresholdDb,
             kneeDb = kneeDb,
             ratio = ratio
         )
-        latestGainReductionDb = grDb
+        latestGainReductionDb = grDb.toFloat()
 
         val totalGainLinear = 10.0.pow(grDb / 20.0) * makeupGainLinear
         return (inL * totalGainLinear) to (inR * totalGainLinear)
     }
 
     companion object {
+        /**
+         * 64-bit Double precision soft-knee compression curve returning gain reduction in dB (<= 0.0).
+         */
+        fun computeGainReductionDbDouble(
+            inputDb: Double,
+            thresholdDb: Double,
+            kneeDb: Double,
+            ratio: Double
+        ): Double {
+            if (ratio <= 1.0) return 0.0
+            val halfKnee = kneeDb * 0.5
+            val over = inputDb - thresholdDb
+            val outputDb = when {
+                kneeDb > 0.0 && over > -halfKnee && over < halfKnee -> {
+                    val delta = inputDb - thresholdDb + halfKnee
+                    inputDb + ((1.0 / ratio) - 1.0) * (delta * delta) / (2.0 * kneeDb)
+                }
+
+                over >= halfKnee -> {
+                    thresholdDb + over / ratio
+                }
+
+                else -> inputDb
+            }
+            return (outputDb - inputDb).coerceAtMost(0.0)
+        }
+
         /**
          * Soft-knee compression curve returning gain reduction in dB (<= 0f).
          */
@@ -358,22 +556,12 @@ class DynamicRangeCompressor(private val sampleRate: Int = 44100) {
             kneeDb: Float,
             ratio: Float
         ): Float {
-            if (ratio <= 1f) return 0f
-            val halfKnee = kneeDb * 0.5f
-            val over = inputDb - thresholdDb
-            val outputDb = when {
-                kneeDb > 0f && over > -halfKnee && over < halfKnee -> {
-                    val delta = inputDb - thresholdDb + halfKnee
-                    inputDb + ((1f / ratio) - 1f) * (delta * delta) / (2f * kneeDb)
-                }
-
-                over >= halfKnee -> {
-                    thresholdDb + over / ratio
-                }
-
-                else -> inputDb
-            }
-            return (outputDb - inputDb).coerceAtMost(0f)
+            return computeGainReductionDbDouble(
+                inputDb = inputDb.toDouble(),
+                thresholdDb = thresholdDb.toDouble(),
+                kneeDb = kneeDb.toDouble(),
+                ratio = ratio.toDouble()
+            ).toFloat()
         }
     }
 }
@@ -429,10 +617,10 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
         setHighPass(sampleRate, FlagshipSpeakerSpecs.HYBRID_CROSSOVER_BASS_HZ, 1.3065630)
     }
     private val xtcHighPass180 = StereoBiquad().apply {
-        setHighPass(sampleRate, FlagshipSpeakerSpecs.HYBRID_CROSSOVER_BASS_HZ, 0.7071)
+        setHighPass(sampleRate, FlagshipSpeakerSpecs.HYBRID_CROSSOVER_BASS_HZ, StereoBiquad.BUTTERWORTH_Q)
     }
     private val cinemaHeadShadowLpf = StereoBiquad().apply {
-        setLowPass(sampleRate, FlagshipSpeakerSpecs.CINEMA_XTC_HEAD_SHADOW_LPF_HZ, 0.7071)
+        setLowPass(sampleRate, FlagshipSpeakerSpecs.CINEMA_XTC_HEAD_SHADOW_LPF_HZ, StereoBiquad.BUTTERWORTH_Q)
     }
     private val xtcDelaySamples: Double = FlagshipSpeakerSpecs.XTC_DELAY_SEC * sampleRate
     private val xtcSecondaryDelaySamples: Double = FlagshipSpeakerSpecs.XTC_SECONDARY_DELAY_SEC * sampleRate
@@ -448,7 +636,7 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
 
     // Stage 5a: Apple Dynamic Excursion Protection (fast dynamic low-end limiter < 220Hz)
     private val excursionLowPass = StereoBiquad().apply {
-        setLowPass(sampleRate, FlagshipSpeakerSpecs.EXCURSION_LOW_BAND_HZ, 0.7071)
+        setLowPass(sampleRate, FlagshipSpeakerSpecs.EXCURSION_LOW_BAND_HZ, StereoBiquad.BUTTERWORTH_Q)
     }
     private val excursionAttackCoeff: Double = exp(-1.0 / ((FlagshipSpeakerSpecs.EXCURSION_ATTACK_MS / 1000.0) * sampleRate))
     private val excursionReleaseCoeff: Double = exp(-1.0 / ((FlagshipSpeakerSpecs.EXCURSION_RELEASE_MS / 1000.0) * sampleRate))
@@ -600,7 +788,7 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
                     FlagshipSpeakerSpecs.DE_ESSER_Q,
                     FlagshipSpeakerSpecs.DE_ESSER_DB
                 )
-                crispAirShelf12000Hz.setHighShelf(sampleRate, 12000.0, 0.707, 0.5)
+                crispAirShelf12000Hz.setDeCrampedHighShelf(sampleRate, 12000.0, StereoBiquad.BUTTERWORTH_Q, 0.5)
             }
         }
 
@@ -746,13 +934,13 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
         val envCoeff = if (lowInputDb > excursionEnvDb) excursionAttackCoeff else excursionReleaseCoeff
         excursionEnvDb = envCoeff * excursionEnvDb + (1.0 - envCoeff) * lowInputDb
 
-        val excGrDb = DynamicRangeCompressor.computeGainReductionDb(
-            inputDb = excursionEnvDb.toFloat(),
-            thresholdDb = FlagshipSpeakerSpecs.EXCURSION_THRESHOLD_DB,
-            kneeDb = FlagshipSpeakerSpecs.EXCURSION_KNEE_DB,
-            ratio = FlagshipSpeakerSpecs.EXCURSION_RATIO
+        val excGrDb = DynamicRangeCompressor.computeGainReductionDbDouble(
+            inputDb = excursionEnvDb,
+            thresholdDb = FlagshipSpeakerSpecs.EXCURSION_THRESHOLD_DB.toDouble(),
+            kneeDb = FlagshipSpeakerSpecs.EXCURSION_KNEE_DB.toDouble(),
+            ratio = FlagshipSpeakerSpecs.EXCURSION_RATIO.toDouble()
         )
-        latestExcursionReductionDb = excGrDb
+        latestExcursionReductionDb = excGrDb.toFloat()
         val excGainLinear = 10.0.pow(excGrDb / 20.0)
 
         val protectedL = lowL * excGainLinear + highL
@@ -860,7 +1048,7 @@ class PhoneSpeakerDspChain(private val sampleRate: Int = 44100) {
                         FlagshipSpeakerSpecs.DE_ESSER_Q,
                         FlagshipSpeakerSpecs.DE_ESSER_DB
                     )
-                    air.setHighShelf(sampleRate, 12000.0, 0.707, 0.5)
+                    air.setDeCrampedHighShelf(sampleRate, 12000.0, StereoBiquad.BUTTERWORTH_Q, 0.5)
                 }
             }
 
@@ -944,7 +1132,7 @@ class ThreeBandToneFilter(private val sampleRate: Int = 44100) {
 
         val guardFreq = if (isSpeakerTarget) 95.0 else 20.0
         if (isEnabled) {
-            subSonicGuard.setHighPass(sampleRate, guardFreq, 0.7071)
+            subSonicGuard.setHighPass(sampleRate, guardFreq, StereoBiquad.BUTTERWORTH_Q)
         } else {
             subSonicGuard.reset()
         }
@@ -969,15 +1157,15 @@ class ThreeBandToneFilter(private val sampleRate: Int = 44100) {
             0.0
         }
 
-        lowShelf.setLowShelf(sampleRate, 250.0, 0.7071, clampedBass + midLowCompDb)
+        lowShelf.setLowShelf(sampleRate, 250.0, StereoBiquad.BUTTERWORTH_Q, clampedBass + midLowCompDb)
         when {
             !smartCurveEnabled -> midPeaking.setPeaking(sampleRate, 1084.0, 0.35, clampedMids)
             clampedMids >= 0.0 -> midPeaking.setPeaking(sampleRate, 1679.3, 0.58, clampedMids)
             else -> midPeaking.setPeaking(sampleRate, 883.2, 0.55, clampedMids)
         }
-        smartClarityShelf.setHighShelf(sampleRate, 3300.0, 0.7071, midClarityDb)
+        smartClarityShelf.setDeCrampedHighShelf(sampleRate, 3300.0, StereoBiquad.BUTTERWORTH_Q, midClarityDb)
         inverseWarmthShelf.setLowShelf(sampleRate, 2500.0, 0.60, trebleInverseWarmthDb)
-        highShelf.setHighShelf(sampleRate, 4700.0, 0.7071, clampedTreble)
+        highShelf.setDeCrampedHighShelf(sampleRate, 4700.0, StereoBiquad.BUTTERWORTH_Q, clampedTreble)
     }
 
     fun processStereoSample(inL: Double, inR: Double): Pair<Double, Double> {
@@ -1015,8 +1203,8 @@ class ThreeBandToneFilter(private val sampleRate: Int = 44100) {
             val trebleInverseWarmthDb = if (smartCurveEnabled && clampedTreble > 0.0) -0.15 * clampedTreble else 0.0
 
             val guardFreq = if (isSpeakerTarget) 95.0 else 20.0
-            val guard = StereoBiquad().apply { setHighPass(sampleRate, guardFreq, 0.7071) }
-            val low = StereoBiquad().apply { setLowShelf(sampleRate, 250.0, 0.7071, clampedBass + midLowCompDb) }
+            val guard = StereoBiquad().apply { setHighPass(sampleRate, guardFreq, StereoBiquad.BUTTERWORTH_Q) }
+            val low = StereoBiquad().apply { setLowShelf(sampleRate, 250.0, StereoBiquad.BUTTERWORTH_Q, clampedBass + midLowCompDb) }
             val mid = StereoBiquad().apply {
                 when {
                     !smartCurveEnabled -> setPeaking(sampleRate, 1084.0, 0.35, clampedMids)
@@ -1024,9 +1212,9 @@ class ThreeBandToneFilter(private val sampleRate: Int = 44100) {
                     else -> setPeaking(sampleRate, 883.2, 0.55, clampedMids)
                 }
             }
-            val clarity = StereoBiquad().apply { setHighShelf(sampleRate, 3300.0, 0.7071, midClarityDb) }
+            val clarity = StereoBiquad().apply { setDeCrampedHighShelf(sampleRate, 3300.0, StereoBiquad.BUTTERWORTH_Q, midClarityDb) }
             val inverseWarmth = StereoBiquad().apply { setLowShelf(sampleRate, 2500.0, 0.60, trebleInverseWarmthDb) }
-            val high = StereoBiquad().apply { setHighShelf(sampleRate, 4700.0, 0.7071, clampedTreble) }
+            val high = StereoBiquad().apply { setDeCrampedHighShelf(sampleRate, 4700.0, StereoBiquad.BUTTERWORTH_Q, clampedTreble) }
 
             return (guard.magnitudeDbAt(sampleRate, freqHz) +
                 low.magnitudeDbAt(sampleRate, freqHz) +
@@ -1192,7 +1380,7 @@ class IosVolumeContourAndDeHarshProcessor(private val sampleRate: Int = 44100) {
         }
 
         if (highFactor > 0.005) {
-            highVolSubFlatten85.setLowShelf(sampleRate, ProMaxHardwareRefinementSpecs.HIGH_VOL_SUB_FLATTEN_HZ, 0.7071, ProMaxHardwareRefinementSpecs.HIGH_VOL_SUB_FLATTEN_MAX_DB * highFactor)
+            highVolSubFlatten85.setLowShelf(sampleRate, ProMaxHardwareRefinementSpecs.HIGH_VOL_SUB_FLATTEN_HZ, StereoBiquad.BUTTERWORTH_Q, ProMaxHardwareRefinementSpecs.HIGH_VOL_SUB_FLATTEN_MAX_DB * highFactor)
             highVolMidProj1500.setPeaking(sampleRate, ProMaxHardwareRefinementSpecs.HIGH_VOL_MID_PROJ_HZ, 0.85, ProMaxHardwareRefinementSpecs.HIGH_VOL_MID_PROJ_MAX_DB * highFactor)
             highVolDeHarsh6500.setPeaking(sampleRate, ProMaxHardwareRefinementSpecs.HIGH_VOL_DEHARSH_HZ, ProMaxHardwareRefinementSpecs.HIGH_VOL_DEHARSH_Q, ProMaxHardwareRefinementSpecs.HIGH_VOL_DEHARSH_MAX_DB * highFactor)
         } else {
@@ -1242,7 +1430,7 @@ class IosVolumeContourAndDeHarshProcessor(private val sampleRate: Int = 44100) {
                 val highFactor = ((vol - ProMaxHardwareRefinementSpecs.HIGH_VOL_THRESHOLD) / (1.0f - ProMaxHardwareRefinementSpecs.HIGH_VOL_THRESHOLD)).coerceIn(0f, 1f).toDouble()
                 if (highFactor <= 0.005) return 0f
                 val sub = StereoBiquad().apply {
-                    setLowShelf(sampleRate, ProMaxHardwareRefinementSpecs.HIGH_VOL_SUB_FLATTEN_HZ, 0.7071, ProMaxHardwareRefinementSpecs.HIGH_VOL_SUB_FLATTEN_MAX_DB * highFactor)
+                    setLowShelf(sampleRate, ProMaxHardwareRefinementSpecs.HIGH_VOL_SUB_FLATTEN_HZ, StereoBiquad.BUTTERWORTH_Q, ProMaxHardwareRefinementSpecs.HIGH_VOL_SUB_FLATTEN_MAX_DB * highFactor)
                 }
                 val mid = StereoBiquad().apply {
                     setPeaking(sampleRate, ProMaxHardwareRefinementSpecs.HIGH_VOL_MID_PROJ_HZ, 0.85, ProMaxHardwareRefinementSpecs.HIGH_VOL_MID_PROJ_MAX_DB * highFactor)
@@ -1636,7 +1824,11 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
             // when 2x Oversampled EQ is active, 8kHz (8) and 16kHz (9) run at 96 kHz in oversampledUpperEqStage.
             val processedAt2x = oversampledEqEnabled && i >= 8
             val db = if (activeTenBand && effectiveProcessing && !processedAt2x) gainsDb.getOrElse(i) { 0f }.toDouble() else 0.0
-            bandFilters[i].setPeaking(sampleRate, freq, 1.414, db)
+            if (i >= 8) {
+                bandFilters[i].setOrfanidisPeaking(sampleRate, freq, StereoBiquad.SQRT2, db)
+            } else {
+                bandFilters[i].setPeaking(sampleRate, freq, StereoBiquad.SQRT2, db)
+            }
         }
     }
 
@@ -1679,15 +1871,15 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         val (phaseL, phaseR) = speakerPhaseAlignmentFilter.processStereoSample(spkL, spkR)
         val (maxL, maxR) = loudnessMaximizerChain.processStereoSample(phaseL, phaseR)
         val (mbL, mbR) = adaptiveMultibandBalancer.processStereoSample(maxL, maxR)
-        val (silL, silR) = siliconDspCore.processStereoSample(mbL, mbR)
-        val (lmL, lmR) = listeningModeProcessor.processMusicSample(silL, silR)
+        val (lmL, lmR) = listeningModeProcessor.processMusicSample(mbL, mbR)
         val (volL, volR) = volumeContourProcessor.processStereoSample(lmL, lmR)
+        val (silL, silR) = siliconDspCore.processStereoSample(volL, volR)
 
         // Final safety ceiling + Conversation Awareness auto-ducking -> Zero-Noise Gate (-75 dBFS) + TPDF Dither
         val (safeL, safeR) = if (loudnessMaximizerChain.enabled || speakerDspChain.speakerDspEnabled || siliconDspCore.enabled) {
-            (volL * duck).coerceIn(-0.99, 0.99) to (volR * duck).coerceIn(-0.99, 0.99)
+            (silL * duck).coerceIn(-0.99, 0.99) to (silR * duck).coerceIn(-0.99, 0.99)
         } else {
-            tanh(volL * duck * 0.92) to tanh(volR * duck * 0.92)
+            tanh(silL * duck * 0.92) to tanh(silR * duck * 0.92)
         }
         return noiseFloorGate.processStereoSample(safeL, safeR)
     }

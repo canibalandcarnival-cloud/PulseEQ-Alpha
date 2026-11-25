@@ -376,7 +376,7 @@ data class HearingCheckUiState(
 data class OutputEqProfile(
     val target: OutputTarget,
     val bandGainsDb: List<Float> = defaultGainsForTarget(target),
-    val preampDb: Float = 0f,
+    val preampDb: Float = defaultPreampForTarget(target),
     val isBypassed: Boolean = false,
     val selectedPresetId: String = defaultPresetIdForTarget(target),
     val lateNightEnabled: Boolean = false,
@@ -506,6 +506,12 @@ data class OutputEqProfile(
             // Full-range bass & crisp treble for headphones
             OutputTarget.HEADPHONES -> listOf(2.5f, 2.0f, 1.0f, 0.0f, 0.0f, 0.5f, 1.0f, 1.5f, 2.5f, 3.0f)
             OutputTarget.BLUETOOTH -> List(10) { 0f }
+        }
+
+        fun defaultPreampForTarget(target: OutputTarget): Float = when (target) {
+            OutputTarget.HEADPHONES -> SiliconDspSpecs.HEADPHONE_DAC_PREAMP_HEADROOM_DB
+            OutputTarget.SPEAKER,
+            OutputTarget.BLUETOOTH -> 0f
         }
 
         fun defaultPresetIdForTarget(target: OutputTarget): String = when (target) {
@@ -668,6 +674,7 @@ object SiliconDspSpecs {
     const val MICRO_AIR_HZ = 14500.0
     const val MICRO_AIR_GAIN_DB = 1.1
     const val TRUE_PEAK_CEILING_DBTP = -0.2
+    const val HEADPHONE_DAC_PREAMP_HEADROOM_DB = 5.5f
 }
 
 object TrebleGainStagingSpecs {

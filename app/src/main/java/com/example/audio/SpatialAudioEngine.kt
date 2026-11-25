@@ -151,10 +151,10 @@ class AppleStudioMicroAmbienceConvolver(private val sampleRate: Int = 48000) {
     private val histR = DoubleArray(histSize)
     private var writeIdx = 0
 
-    private val dampLpfL = StereoBiquad().apply { setLowPass(sampleRate, AtmosAsarSpecs.STUDIO_IR_LPF_HZ, 0.7071) }
-    private val dampLpfR = StereoBiquad().apply { setLowPass(sampleRate, AtmosAsarSpecs.STUDIO_IR_LPF_HZ, 0.7071) }
-    private val subBassCutL = StereoBiquad().apply { setHighPass(sampleRate, AtmosAsarSpecs.DRY_SUB_BASS_CUTOFF_HZ, 0.7071) }
-    private val subBassCutR = StereoBiquad().apply { setHighPass(sampleRate, AtmosAsarSpecs.DRY_SUB_BASS_CUTOFF_HZ, 0.7071) }
+    private val dampLpfL = StereoBiquad().apply { setLowPass(sampleRate, AtmosAsarSpecs.STUDIO_IR_LPF_HZ, StereoBiquad.BUTTERWORTH_Q) }
+    private val dampLpfR = StereoBiquad().apply { setLowPass(sampleRate, AtmosAsarSpecs.STUDIO_IR_LPF_HZ, StereoBiquad.BUTTERWORTH_Q) }
+    private val subBassCutL = StereoBiquad().apply { setHighPass(sampleRate, AtmosAsarSpecs.DRY_SUB_BASS_CUTOFF_HZ, StereoBiquad.BUTTERWORTH_Q) }
+    private val subBassCutR = StereoBiquad().apply { setHighPass(sampleRate, AtmosAsarSpecs.DRY_SUB_BASS_CUTOFF_HZ, StereoBiquad.BUTTERWORTH_Q) }
 
     init {
         val bundle = buildEarlyReflectionIr(sampleRate, irLengthSamples)
@@ -275,7 +275,7 @@ class AppleStudioMicroAmbienceConvolver(private val sampleRate: Int = 48000) {
             }
 
             // Bake 3.2kHz low-pass damping into the exported FloatArray IR as well
-            val lpf = StereoBiquad().apply { setLowPass(sampleRate, AtmosAsarSpecs.STUDIO_IR_LPF_HZ, 0.7071) }
+            val lpf = StereoBiquad().apply { setLowPass(sampleRate, AtmosAsarSpecs.STUDIO_IR_LPF_HZ, StereoBiquad.BUTTERWORTH_Q) }
             val irOutL = FloatArray(lengthSamples)
             val irOutR = FloatArray(lengthSamples)
             for (n in 0 until lengthSamples) {
@@ -310,7 +310,7 @@ class AcousticCrosstalkCanceller(private val sampleRate: Int = 48000) {
 
     // 4.5kHz physical head-shadowing low-pass on primary crossfeed path
     private val headShadowLpf = StereoBiquad().apply {
-        setLowPass(sampleRate, AtmosAsarSpecs.XTC_PRIMARY_LPF_HZ, 0.7071)
+        setLowPass(sampleRate, AtmosAsarSpecs.XTC_PRIMARY_LPF_HZ, StereoBiquad.BUTTERWORTH_Q)
     }
 
     private fun readDelayed(ring: DoubleArray, delaySamples: Double): Double {
@@ -394,8 +394,8 @@ class SpatialAudioEngine(sampleRate: Int = 48000) {
     )
 
     // <150Hz strict dry mono sub-bass protection on Side channel (LR4 24dB/oct @ 150Hz)
-    private val sideHpf150A = StereoBiquad().apply { setHighPass(sampleRate, AtmosAsarSpecs.DRY_SUB_BASS_CUTOFF_HZ, 0.7071) }
-    private val sideHpf150B = StereoBiquad().apply { setHighPass(sampleRate, AtmosAsarSpecs.DRY_SUB_BASS_CUTOFF_HZ, 0.7071) }
+    private val sideHpf150A = StereoBiquad().apply { setHighPass(sampleRate, AtmosAsarSpecs.DRY_SUB_BASS_CUTOFF_HZ, StereoBiquad.BUTTERWORTH_Q) }
+    private val sideHpf150B = StereoBiquad().apply { setHighPass(sampleRate, AtmosAsarSpecs.DRY_SUB_BASS_CUTOFF_HZ, StereoBiquad.BUTTERWORTH_Q) }
 
     // 1kHz–3.5kHz dry center vocal formant focus peaking filter (geometric center 1870Hz, Q=0.75, 100% dry)
     private val dryVocalFocusEq = StereoBiquad().apply {
@@ -403,14 +403,14 @@ class SpatialAudioEngine(sampleRate: Int = 48000) {
     }
 
     // Top Height channels high-passed at 2.8kHz
-    private val heightHighPass2800 = StereoBiquad().apply { setHighPass(sampleRate, AtmosAsarSpecs.HEIGHT_HPF_HZ, 0.7071) }
+    private val heightHighPass2800 = StereoBiquad().apply { setHighPass(sampleRate, AtmosAsarSpecs.HEIGHT_HPF_HZ, StereoBiquad.BUTTERWORTH_Q) }
 
     // Pinna Elevation Filter on Top Height channels: 6.8kHz notch -3.0dB + 11.8kHz air lift +2.5dB (budget-capped)
     private val pinnaNotch6800 = StereoBiquad().apply {
         setPeaking(sampleRate, AtmosAsarSpecs.PINNA_NOTCH_HZ, AtmosAsarSpecs.PINNA_NOTCH_Q, AtmosAsarSpecs.PINNA_NOTCH_DB)
     }
     private val pinnaAirShelf11800 = StereoBiquad().apply {
-        setHighShelf(sampleRate, AtmosAsarSpecs.PINNA_AIR_HZ, 0.7071, AtmosAsarSpecs.PINNA_AIR_DB.toDouble())
+        setDeCrampedHighShelf(sampleRate, AtmosAsarSpecs.PINNA_AIR_HZ, StereoBiquad.BUTTERWORTH_Q, AtmosAsarSpecs.PINNA_AIR_DB.toDouble())
     }
 
     // Procedural 18ms Studio Early-Reflection Impulse (3.2kHz LPF damped, 8% wet mix on diffuse component only)
@@ -463,10 +463,10 @@ class SpatialAudioEngine(sampleRate: Int = 48000) {
         this.vocalFocus = clampedFocus
         // Smoothly shapes dry 1–3.5kHz center vocal presence from -1.0 dB (0%) to +2.5 dB (100%)
         dryVocalFocusEq.setPeaking(sampleRateRef, 1870.0, 0.75, -1.0 + 3.5 * clampedFocus)
-        pinnaAirShelf11800.setHighShelf(
+        pinnaAirShelf11800.setDeCrampedHighShelf(
             sampleRateRef,
             AtmosAsarSpecs.PINNA_AIR_HZ,
-            0.7071,
+            StereoBiquad.BUTTERWORTH_Q,
             pinnaAirGainDb.coerceIn(0.0, AtmosAsarSpecs.PINNA_AIR_DB.toDouble())
         )
     }

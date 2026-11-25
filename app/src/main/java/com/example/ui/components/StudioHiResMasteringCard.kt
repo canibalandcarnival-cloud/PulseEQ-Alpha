@@ -148,7 +148,7 @@ fun StudioHiResMasteringCard(
                         text = when {
                             abCompareHeld -> "A/B Hold • Raw Original Comparison"
                             !active -> "Master Bypassed"
-                            else -> "48 kHz Playback Buffer • Raw Unprocessed Mic • TPDF Dither"
+                            else -> "48 kHz • 64-Bit Double Precision • Raw Mic • TPDF Dither"
                         },
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.5.sp),
                         color = when {
@@ -213,9 +213,9 @@ fun StudioHiResMasteringCard(
                 )
                 Text(
                     text = if (osActive) {
-                        "Nyquist De-Cramping active on 8kHz, 16kHz & 4.7kHz High Shelf"
+                        "Orfanidis & Vicanek Nyquist De-Cramping active (8k, 16k & 4.7kHz)"
                     } else {
-                        "Standard 1x 48 kHz bilinear shelves"
+                        "64-Bit Orfanidis/Vicanek 48 kHz mastering shelves"
                     },
                     style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
                     color = if (osActive) AnalyzerCyan else TextMuted,

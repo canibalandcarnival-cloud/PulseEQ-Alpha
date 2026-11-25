@@ -9,6 +9,7 @@ import kotlin.math.log10
 import kotlin.math.max
 import kotlin.math.pow
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 import kotlin.math.tan
 import kotlin.math.tanh
 
@@ -25,6 +26,8 @@ import kotlin.math.tanh
  * 4. Minimum-Phase Reconstruction (19.2 kHz 2-pole Butterworth LPF) + Micro-Air (+1.1 dB @ 14.5 kHz) Filter
  * 5. 4x Oversampled -0.2 dBTP Inter-Sample True-Peak Brickwall Limiter
  */
+typealias CirrusSiliconDspEngine = SiliconDspCore
+
 class SiliconDspCore(private val sampleRate: Int = 48000) {
 
     // Stage 1: True 5ms lookahead ring buffer (240 samples @ 48 kHz)
@@ -35,7 +38,7 @@ class SiliconDspCore(private val sampleRate: Int = 48000) {
 
     // Stage 2a: 0ms sidechain < 140Hz LPF + 2nd-order electromechanical spring-mass-damper (f0=92Hz, Qts=0.85)
     private val sidechainBassLpf = StereoBiquad().apply {
-        setLowPass(sampleRate, SiliconDspSpecs.SIDECHAIN_LPF_HZ, 0.7071)
+        setLowPass(sampleRate, SiliconDspSpecs.SIDECHAIN_LPF_HZ, StereoBiquad.BUTTERWORTH_Q)
     }
     private val omega0 = 2.0 * PI * SiliconDspSpecs.RESONANT_F0_HZ
     private val dampingFactor = omega0 / SiliconDspSpecs.QTS
@@ -72,11 +75,11 @@ class SiliconDspCore(private val sampleRate: Int = 48000) {
     // Stage 4: Minimum-Phase Reconstruction (19.2 kHz 2-pole Butterworth) & Micro-Air (+1.1 dB @ 14.5 kHz)
     private val reconLpf = StereoBiquad().apply {
         val safeCutoff = SiliconDspSpecs.RECON_LPF_HZ.coerceAtMost(sampleRate * 0.44)
-        setLowPass(sampleRate, safeCutoff, 0.7071)
+        setLowPass(sampleRate, safeCutoff, StereoBiquad.BUTTERWORTH_Q)
     }
     private val microAirShelf = StereoBiquad().apply {
         val safeAirHz = SiliconDspSpecs.MICRO_AIR_HZ.coerceAtMost(sampleRate * 0.42)
-        setHighShelf(sampleRate, safeAirHz, 0.7071, SiliconDspSpecs.MICRO_AIR_GAIN_DB)
+        setDeCrampedHighShelf(sampleRate, safeAirHz, StereoBiquad.BUTTERWORTH_Q, SiliconDspSpecs.MICRO_AIR_GAIN_DB)
     }
 
     // Stage 5: 4x Oversampled -0.2 dBTP Inter-Sample True-Peak Brickwall Limiter
@@ -123,10 +126,10 @@ class SiliconDspCore(private val sampleRate: Int = 48000) {
         enabled = isEnabled
         outputTarget = target
         val safeAirHz = SiliconDspSpecs.MICRO_AIR_HZ.coerceAtMost(sampleRate * 0.42)
-        microAirShelf.setHighShelf(
+        microAirShelf.setDeCrampedHighShelf(
             sampleRate,
             safeAirHz,
-            0.7071,
+            StereoBiquad.BUTTERWORTH_Q,
             microAirGainDb.coerceIn(0.0, SiliconDspSpecs.MICRO_AIR_GAIN_DB)
         )
         if (!isEnabled) {
@@ -146,7 +149,7 @@ class SiliconDspCore(private val sampleRate: Int = 48000) {
         ringR.fill(0.0)
         ringIdx = 0
         sidechainBassLpf.reset()
-        sidechainBassLpf.setLowPass(sampleRate, SiliconDspSpecs.SIDECHAIN_LPF_HZ, 0.7071)
+        sidechainBassLpf.setLowPass(sampleRate, SiliconDspSpecs.SIDECHAIN_LPF_HZ, StereoBiquad.BUTTERWORTH_Q)
         xPos = 0.0
         xVel = 0.0
         excursionEnv = 0.0
@@ -160,11 +163,11 @@ class SiliconDspCore(private val sampleRate: Int = 48000) {
         railEnvelope = 0.0
         prevSvfL = 0.0
         prevSvfR = 0.0
-        reconLpf.setLowPass(sampleRate, SiliconDspSpecs.RECON_LPF_HZ.coerceAtMost(sampleRate * 0.44), 0.7071)
-        microAirShelf.setHighShelf(
+        reconLpf.setLowPass(sampleRate, SiliconDspSpecs.RECON_LPF_HZ.coerceAtMost(sampleRate * 0.44), StereoBiquad.BUTTERWORTH_Q)
+        microAirShelf.setDeCrampedHighShelf(
             sampleRate,
             SiliconDspSpecs.MICRO_AIR_HZ.coerceAtMost(sampleRate * 0.42),
-            0.7071,
+            StereoBiquad.BUTTERWORTH_Q,
             SiliconDspSpecs.MICRO_AIR_GAIN_DB
         )
         tpHistL.fill(0.0)
@@ -215,7 +218,7 @@ class SiliconDspCore(private val sampleRate: Int = 48000) {
 
         // Cytomic TPT 2-pole State-Variable High-Pass Filter (zero zipper modulation)
         val g = tan(PI * smoothedSvfCutoffHz.coerceIn(18.0, 400.0) / sampleRate)
-        val k = 1.41421356 // 1 / 0.7071 Butterworth damping
+        val k = sqrt(2.0) // exact 1 / (1 / sqrt(2.0)) Butterworth damping
         val a1 = 1.0 / (1.0 + g * (g + k))
         val a2 = g * a1
         val a3 = g * a2

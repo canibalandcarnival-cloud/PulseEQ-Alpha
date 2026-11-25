@@ -151,7 +151,7 @@ class EqPreferencesRepository(private val context: Context) {
             OutputEqProfile(
                 target = target,
                 bandGainsDb = parsedGains,
-                preampDb = (prefs[Keys.preampKey(target)] ?: 0f)
+                preampDb = (prefs[Keys.preampKey(target)] ?: OutputEqProfile.defaultPreampForTarget(target))
                     .coerceIn(EqPresetsCatalog.MIN_GAIN_DB, EqPresetsCatalog.MAX_GAIN_DB),
                 isBypassed = prefs[Keys.bypassedKey(target)] ?: false,
                 selectedPresetId = prefs[Keys.presetKey(target)]

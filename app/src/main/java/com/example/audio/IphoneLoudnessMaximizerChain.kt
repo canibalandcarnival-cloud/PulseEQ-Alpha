@@ -129,32 +129,32 @@ class IphoneLoudnessMaximizerChain(private val sampleRate: Int = 44100) {
         val rmsCoeff = if (rmsInputDb > rmsEnvelopeDb) rmsAttackCoeff else rmsReleaseCoeff
         rmsEnvelopeDb = rmsCoeff * rmsEnvelopeDb + (1.0 - rmsCoeff) * rmsInputDb
 
-        val rmsGrDb = DynamicRangeCompressor.computeGainReductionDb(
-            inputDb = rmsEnvelopeDb.toFloat(),
-            thresholdDb = LoudnessMaximizerSpecs.RMS_THRESHOLD_DB,
-            kneeDb = LoudnessMaximizerSpecs.RMS_KNEE_DB,
-            ratio = LoudnessMaximizerSpecs.RMS_RATIO
+        val rmsGrDb = DynamicRangeCompressor.computeGainReductionDbDouble(
+            inputDb = rmsEnvelopeDb,
+            thresholdDb = LoudnessMaximizerSpecs.RMS_THRESHOLD_DB.toDouble(),
+            kneeDb = LoudnessMaximizerSpecs.RMS_KNEE_DB.toDouble(),
+            ratio = LoudnessMaximizerSpecs.RMS_RATIO.toDouble()
         )
-        latestRmsGrDb = rmsGrDb
+        latestRmsGrDb = rmsGrDb.toFloat()
 
         val stage3aGain = 10.0.pow(rmsGrDb / 20.0) * makeupGainLinear
         val boostedL = aL * stage3aGain
         val boostedR = aR * stage3aGain
 
         // Stage 3b: Zero-Clipping Brickwall Limiter (-0.3 dB, 20:1, 0.5ms / 40ms)
-        val peakAmp = max(abs(boostedL), abs(boostedR)).coerceAtLeast(1e-6)
+        val peakAmp = max(abs(boostedL), abs(boostedR)).coerceAtLeast(1e-9)
         val peakDb = 20.0 * log10(peakAmp)
         val bwCoeff = if (peakDb > brickwallEnvelopeDb) brickwallAttackCoeff else brickwallReleaseCoeff
         brickwallEnvelopeDb = bwCoeff * brickwallEnvelopeDb + (1.0 - bwCoeff) * peakDb
 
-        val bwGrDb = DynamicRangeCompressor.computeGainReductionDb(
-            inputDb = brickwallEnvelopeDb.toFloat(),
-            thresholdDb = LoudnessMaximizerSpecs.BRICKWALL_THRESHOLD_DB,
-            kneeDb = LoudnessMaximizerSpecs.BRICKWALL_KNEE_DB,
-            ratio = LoudnessMaximizerSpecs.BRICKWALL_RATIO
+        val bwGrDb = DynamicRangeCompressor.computeGainReductionDbDouble(
+            inputDb = brickwallEnvelopeDb,
+            thresholdDb = LoudnessMaximizerSpecs.BRICKWALL_THRESHOLD_DB.toDouble(),
+            kneeDb = LoudnessMaximizerSpecs.BRICKWALL_KNEE_DB.toDouble(),
+            ratio = LoudnessMaximizerSpecs.BRICKWALL_RATIO.toDouble()
         )
-        latestBrickwallGrDb = bwGrDb
-        isAntiClipActive = (bwGrDb < -0.15f) || (peakAmp > brickwallCeilingLinear)
+        latestBrickwallGrDb = bwGrDb.toFloat()
+        isAntiClipActive = (bwGrDb < -0.15) || (peakAmp > brickwallCeilingLinear)
 
         val bwGain = 10.0.pow(bwGrDb / 20.0)
         val outL = (boostedL * bwGain).coerceIn(-brickwallCeilingLinear, brickwallCeilingLinear)

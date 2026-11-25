@@ -158,7 +158,7 @@ class OversampledUpperEqStage(private val sampleRate: Int = StudioHiResSpecs.SAM
 
     // 2x Anti-aliasing halfband Butterworth LPF at 0.455 * sampleRate (~21.8 kHz at 48 kHz)
     private val antiAliasLpf2x = StereoBiquad().apply {
-        setLowPass(oversampleRate, sampleRate * StudioHiResSpecs.ANTI_ALIAS_LPF_RATIO, 0.7071)
+        setLowPass(oversampleRate, sampleRate * StudioHiResSpecs.ANTI_ALIAS_LPF_RATIO, StereoBiquad.BUTTERWORTH_Q)
     }
 
     private var prevInL = 0.0
@@ -214,9 +214,9 @@ class OversampledUpperEqStage(private val sampleRate: Int = StudioHiResSpecs.SAM
             0.0
         }
 
-        band8k2x.setPeaking(oversampleRate, 8000.0, 1.414, g8k)
-        band16k2x.setPeaking(oversampleRate, 16000.0, 1.414, g16k)
-        highShelf4700_2x.setHighShelf(oversampleRate, 4700.0, 0.7071, gThreeTreble)
+        band8k2x.setOrfanidisPeaking(oversampleRate, 8000.0, StereoBiquad.SQRT2, g8k)
+        band16k2x.setOrfanidisPeaking(oversampleRate, 16000.0, StereoBiquad.SQRT2, g16k)
+        highShelf4700_2x.setDeCrampedHighShelf(oversampleRate, 4700.0, StereoBiquad.BUTTERWORTH_Q, gThreeTreble)
     }
 
     fun processStereoSample(inL: Double, inR: Double): Pair<Double, Double> {
@@ -265,8 +265,8 @@ class OversampledUpperEqStage(private val sampleRate: Int = StudioHiResSpecs.SAM
             baseSampleRate: Int = StudioHiResSpecs.SAMPLE_RATE_HZ
         ): Double {
             val osRate = baseSampleRate * 2
-            val b8 = StereoBiquad().apply { setPeaking(osRate, 8000.0, 1.414, gain8kDb) }
-            val b16 = StereoBiquad().apply { setPeaking(osRate, 16000.0, 1.414, gain16kDb) }
+            val b8 = StereoBiquad().apply { setOrfanidisPeaking(osRate, 8000.0, StereoBiquad.SQRT2, gain8kDb) }
+            val b16 = StereoBiquad().apply { setOrfanidisPeaking(osRate, 16000.0, StereoBiquad.SQRT2, gain16kDb) }
             return b8.magnitudeDbAt(osRate, freqHz) + b16.magnitudeDbAt(osRate, freqHz)
         }
 
@@ -276,7 +276,7 @@ class OversampledUpperEqStage(private val sampleRate: Int = StudioHiResSpecs.SAM
             baseSampleRate: Int = StudioHiResSpecs.SAMPLE_RATE_HZ
         ): Double {
             val osRate = baseSampleRate * 2
-            val hs = StereoBiquad().apply { setHighShelf(osRate, 4700.0, 0.7071, trebleDb) }
+            val hs = StereoBiquad().apply { setDeCrampedHighShelf(osRate, 4700.0, StereoBiquad.BUTTERWORTH_Q, trebleDb) }
             return hs.magnitudeDbAt(osRate, freqHz)
         }
     }
@@ -297,10 +297,10 @@ class HarmonicSheenAndStereoFocusProcessor(private val sampleRate: Int = StudioH
         )
     }
     private val overtoneHpf = StereoBiquad().apply {
-        setHighPass(sampleRate, StudioHiResSpecs.HARMONIC_SHEEN_OVERTONE_HPF_HZ, 0.7071)
+        setHighPass(sampleRate, StudioHiResSpecs.HARMONIC_SHEEN_OVERTONE_HPF_HZ, StereoBiquad.BUTTERWORTH_Q)
     }
     private val overtoneLpf = StereoBiquad().apply {
-        setLowPass(sampleRate, StudioHiResSpecs.HARMONIC_SHEEN_OVERTONE_LPF_HZ.coerceAtMost(sampleRate * 0.44), 0.7071)
+        setLowPass(sampleRate, StudioHiResSpecs.HARMONIC_SHEEN_OVERTONE_LPF_HZ.coerceAtMost(sampleRate * 0.44), StereoBiquad.BUTTERWORTH_Q)
     }
     private val dcBlockerAlpha = exp(-2.0 * PI * 18.0 / sampleRate)
     private var dcPrevL = 0.0
