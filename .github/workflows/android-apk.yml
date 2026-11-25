@@ -28,7 +28,7 @@ jobs:
         with:
           node-version: 20
 
-     - name: Install dependencies and build web app
+      - name: Install dependencies and build web app
         working-directory: ${{ steps.root.outputs.dir }}
         run: |
           npm install --legacy-peer-deps
@@ -49,7 +49,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: 17
+          java-version: '17'
 
       - name: Build Debug APK
         working-directory: ${{ steps.root.outputs.dir }}/android
