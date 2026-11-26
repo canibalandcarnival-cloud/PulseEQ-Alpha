@@ -58,11 +58,13 @@ class AudioSessionReceiver : BroadcastReceiver() {
         when (action) {
             AudioEffect.ACTION_OPEN_AUDIO_EFFECT_CONTROL_SESSION -> {
                 AudioSessionRegistry.onSessionOpened(sessionId, packageName)
+                com.example.audio.GlobalSystemEqEngine.getInstance(context).attachSession(sessionId, packageName)
                 EqualizerService.notifySessionsUpdated(context)
             }
 
             AudioEffect.ACTION_CLOSE_AUDIO_EFFECT_CONTROL_SESSION -> {
                 AudioSessionRegistry.onSessionClosed(sessionId)
+                com.example.audio.GlobalSystemEqEngine.getInstance(context).detachSession(sessionId)
                 EqualizerService.notifySessionsUpdated(context)
             }
         }

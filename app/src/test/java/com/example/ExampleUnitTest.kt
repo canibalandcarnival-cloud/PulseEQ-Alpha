@@ -15,10 +15,13 @@ class ExampleUnitTest {
 
     @Test
     fun all_presets_including_late_night_have_10_valid_bands() {
-        assertEquals(23, EqPresetsCatalog.PRESETS.size)
+        assertEquals(24, EqPresetsCatalog.PRESETS.size)
         assertEquals(5, EqPresetsCatalog.PRESETS.count { it.group == PresetGroup.SET_1 })
         assertEquals(8, EqPresetsCatalog.PRESETS.count { it.group == PresetGroup.SET_2 })
         assertEquals(8, EqPresetsCatalog.PRESETS.count { it.group == PresetGroup.SET_3 })
+
+        val mlbbPreset = EqPresetsCatalog.findById(EqPresetsCatalog.MLBB_COMPETITIVE_CLARITY_ID)
+        assertEquals("MLBB Competitive Clarity", mlbbPreset?.name)
 
         val warmBalance = EqPresetsCatalog.findById(EqPresetsCatalog.WARM_IPHONE_BALANCE_ID)
         assertEquals("Warm iPhone Balance", warmBalance?.name)

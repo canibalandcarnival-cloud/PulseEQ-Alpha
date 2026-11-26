@@ -592,7 +592,10 @@ private fun CompactConsoleLayout(
             globalMixFallbackEnabled = uiState.globalMixFallbackEnabled,
             activeSessions = uiState.activeAudioSessions,
             onToggleService = viewModel::toggleBackgroundService,
-            onToggleGlobalMixFallback = viewModel::toggleGlobalMixFallback
+            onToggleGlobalMixFallback = viewModel::toggleGlobalMixFallback,
+            activeSessionsBadge = uiState.activeSessionsBadge,
+            isMlbbPresetActive = uiState.isMlbbPresetActive,
+            onApplyMlbbPreset = viewModel::applyMlbbCompetitiveClarity
         )
 
         Spacer(modifier = Modifier.height(6.dp))
@@ -689,7 +692,10 @@ private fun WideConsoleLayout(
                     globalMixFallbackEnabled = uiState.globalMixFallbackEnabled,
                     activeSessions = uiState.activeAudioSessions,
                     onToggleService = viewModel::toggleBackgroundService,
-                    onToggleGlobalMixFallback = viewModel::toggleGlobalMixFallback
+                    onToggleGlobalMixFallback = viewModel::toggleGlobalMixFallback,
+                    activeSessionsBadge = uiState.activeSessionsBadge,
+                    isMlbbPresetActive = uiState.isMlbbPresetActive,
+                    onApplyMlbbPreset = viewModel::applyMlbbCompetitiveClarity
                 )
             }
 

@@ -54,6 +54,9 @@ fun AudioRoutingServiceCard(
     activeSessions: Map<Int, String>,
     onToggleService: () -> Unit,
     onToggleGlobalMixFallback: () -> Unit,
+    activeSessionsBadge: String = "Active Sessions Hooked: 1 (Session 0 Global Mix)",
+    isMlbbPresetActive: Boolean = false,
+    onApplyMlbbPreset: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -69,6 +72,121 @@ fun AudioRoutingServiceCard(
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        // Row 0: Live System-Wide Session Hook Badge
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(StudioBackground)
+                .border(
+                    1.dp,
+                    if (activeSessionsBadge.contains("Hooked: 0")) StudioBorder else AnalyzerCyanSoft,
+                    RoundedCornerShape(10.dp)
+                )
+                .padding(horizontal = 10.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(9.dp)
+                        .clip(CircleShape)
+                        .background(if (activeSessionsBadge.contains("Hooked: 0")) TextMuted else RouteEmerald)
+                )
+                Text(
+                    text = activeSessionsBadge,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 11.sp
+                    ),
+                    color = if (activeSessionsBadge.contains("Hooked: 0")) TextMuted else TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+
+        // Row 0.5: One-Tap "MLBB Competitive Clarity" Gaming Preset Trigger
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(
+                    if (isMlbbPresetActive) {
+                        Brush.horizontalGradient(listOf(StudioSurfaceElevated, AnalyzerCyanSoft))
+                    } else {
+                        Brush.horizontalGradient(listOf(StudioBackground, StudioSurfaceElevated))
+                    }
+                )
+                .border(
+                    1.dp,
+                    if (isMlbbPresetActive) AnalyzerCyan else StudioBorder,
+                    RoundedCornerShape(12.dp)
+                )
+                .clickable(onClick = onApplyMlbbPreset)
+                .padding(horizontal = 10.dp, vertical = 8.dp)
+                .testTag("mlbb_preset_button"),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = "MLBB Competitive Clarity",
+                        style = MaterialTheme.typography.labelLarge.copy(
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = if (isMlbbPresetActive) AnalyzerCyan else TextPrimary
+                    )
+                    if (isMlbbPresetActive) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(AnalyzerCyan)
+                                .padding(horizontal = 5.dp, vertical = 1.dp)
+                        ) {
+                            Text(
+                                text = "ACTIVE",
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp, fontWeight = FontWeight.Bold),
+                                color = StudioBackground
+                            )
+                        }
+                    }
+                }
+                Text(
+                    text = "Low +1.5dB • Mid +2.5dB (Skill/Voice cues) • High +1.2dB • Limiter -0.3dBTP",
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                    color = TextSecondary
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(if (isMlbbPresetActive) AnalyzerCyan else StudioSurfaceElevated)
+                    .border(
+                        1.dp,
+                        if (isMlbbPresetActive) AnalyzerCyan else StudioBorder,
+                        RoundedCornerShape(999.dp)
+                    )
+                    .padding(horizontal = 9.dp, vertical = 4.dp)
+            ) {
+                Text(
+                    text = if (isMlbbPresetActive) "Applied" else "Apply",
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, fontWeight = FontWeight.Bold),
+                    color = if (isMlbbPresetActive) StudioBackground else TextPrimary
+                )
+            }
+        }
         // Row 1: Persistent Foreground Service Status
         Row(
             modifier = Modifier.fillMaxWidth(),

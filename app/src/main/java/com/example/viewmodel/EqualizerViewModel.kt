@@ -57,7 +57,9 @@ data class EqualizerUiState(
     val hearingCheckState: HearingCheckUiState = HearingCheckUiState(),
     val customAudioSetupState: CustomAudioSetupUiState = CustomAudioSetupUiState(),
     val abCompareHeld: Boolean = false,
-    val deviceIsLandscape: Boolean = false
+    val deviceIsLandscape: Boolean = false,
+    val activeSessionsBadge: String = "Active Sessions Hooked: 0 (Standby)",
+    val isMlbbPresetActive: Boolean = false
 ) {
     val activeProfile: OutputEqProfile
         get() = profiles[selectedTarget] ?: OutputEqProfile(target = selectedTarget)
@@ -78,6 +80,7 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val repository = EqPreferencesRepository(application)
     private val audioEngine = EqualizerEngineHolder.get(application)
+    private val globalEqEngine = com.example.audio.GlobalSystemEqEngine.getInstance(application)
 
     private val selectedTargetFlow = MutableStateFlow(OutputTarget.SPEAKER)
     private val autoSwitchFlow = MutableStateFlow(true)
@@ -116,7 +119,9 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             audioEngine.audioLabTelemetry,
             audioEngine.hearingCheckState,
             audioEngine.customAudioSetupState,
-            audioEngine.abCompareHeld
+            audioEngine.abCompareHeld,
+            globalEqEngine.activeSessionsBadge,
+            globalEqEngine.isMlbbPresetActive
         ) { arr ->
             @Suppress("UNCHECKED_CAST")
             RoutingAndLabState(
@@ -126,7 +131,9 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
                 labTelemetry = arr[3] as AudioLabTelemetry,
                 hearingCheck = arr[4] as HearingCheckUiState,
                 customAudioSetup = arr[5] as CustomAudioSetupUiState,
-                abHeld = arr[6] as Boolean
+                abHeld = arr[6] as Boolean,
+                activeSessionsBadge = arr[7] as String,
+                isMlbbPresetActive = arr[8] as Boolean
             )
         }
     ) { core, engine, routing ->
@@ -147,7 +154,9 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             hearingCheckState = routing.hearingCheck,
             customAudioSetupState = routing.customAudioSetup,
             abCompareHeld = routing.abHeld,
-            deviceIsLandscape = core.isLandscape
+            deviceIsLandscape = core.isLandscape,
+            activeSessionsBadge = routing.activeSessionsBadge,
+            isMlbbPresetActive = routing.isMlbbPresetActive
         )
     }.stateIn(
         scope = viewModelScope,
@@ -162,7 +171,9 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
         val labTelemetry: AudioLabTelemetry,
         val hearingCheck: HearingCheckUiState,
         val customAudioSetup: CustomAudioSetupUiState,
-        val abHeld: Boolean
+        val abHeld: Boolean,
+        val activeSessionsBadge: String,
+        val isMlbbPresetActive: Boolean
     )
 
     private data class CorePrefState(
@@ -314,6 +325,10 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
         if (isLateNightPreset && !current.lateNightEnabled) {
             preLateNightProfiles[current.target] = current
         }
+        val isMlbb = preset.id == EqPresetsCatalog.MLBB_COMPETITIVE_CLARITY_ID
+        if (isMlbb) {
+            globalEqEngine.applyMlbbPreset()
+        }
         val updated = current.copy(
             bandGainsDb = preset.gainsDb.toList(),
             preampDb = if (preset.preampDb == 0f) {
@@ -328,6 +343,11 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             threeBandEnabled = false
         )
         commitProfile(updated)
+    }
+
+    fun applyMlbbCompetitiveClarity() {
+        applyPreset(EqPresetsCatalog.MLBB_COMPETITIVE_CLARITY_PRESET)
+        globalEqEngine.applyMlbbPreset()
     }
 
     fun selectEqMode(useThreeBand: Boolean) {
@@ -1077,6 +1097,16 @@ class EqualizerViewModel(application: Application) : AndroidViewModel(applicatio
             listeningMode = profile.listeningMode,
             ambientPassThroughPercent = profile.ambientPassThroughPercent
         )
+
+        // Sync system-wide EQ engine (Session 0 + active MLBB/media sessions)
+        if (profile.selectedPresetId == EqPresetsCatalog.MLBB_COMPETITIVE_CLARITY_ID) {
+            globalEqEngine.applyMlbbPreset()
+        } else {
+            globalEqEngine.apply10BandGains(profile.bandGainsDb.toFloatArray())
+            globalEqEngine.setPreamp(profile.preampDb)
+            globalEqEngine.setLimiterThreshold(-0.3f)
+            globalEqEngine.setEnabled(!profile.isBypassed)
+        }
     }
 
     private fun commitProfile(profile: OutputEqProfile) {

@@ -9,13 +9,14 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import com.example.audio.GlobalSystemEqEngine
 import com.example.audio.MediaPlaybackForegroundService
 import com.example.ui.EqualizerScreen
 import com.example.ui.theme.PulseEqTheme
 
 class MainActivity : ComponentActivity() {
 
-    private var globalDynamicsProcessing: DynamicsProcessing? = null
+    private lateinit var globalEqEngine: GlobalSystemEqEngine
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -24,7 +25,14 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT)
         )
 
-        // Start Foreground Media Service for Infinix Hot 60 5G XOS battery saver protection
+        // Initialize Global System EQ Engine with maximum priority (Session 0 + MLBB/media sessions)
+        globalEqEngine = GlobalSystemEqEngine.getInstance(this)
+        globalEqEngine.start()
+
+        // Start Persistent Foreground Equalizer Service for Infinix Hot 60 5G battery saver & background protection
+        EqualizerService.start(this)
+
+        // Start Foreground Media Service for continuous background playback protection
         try {
             val serviceIntent = Intent(this, MediaPlaybackForegroundService::class.java).apply {
                 action = MediaPlaybackForegroundService.ACTION_PLAY
@@ -45,39 +53,24 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Optional Global System-Wide Equalizer Hook (DynamicsProcessing Session 0)
-     * mirroring active EQ and limiter settings to other apps (Spotify / YouTube / TikTok) on API 28+.
+     * Dual-Target Global System-Wide Equalizer Hook (DynamicsProcessing Session 0 + Active Game Sessions)
+     * mirroring active EQ and limiter settings to MLBB, Spotify, YouTube, etc.
      */
-    fun toggleGlobalSystemWideEq(enabled: Boolean, preampDb: Float, limiterThresholdDb: Float) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return
-        try {
-            if (enabled) {
-                if (globalDynamicsProcessing == null) {
-                    // Safe global system-wide audio effect initialization
-                    globalDynamicsProcessing = null
-                }
-                globalDynamicsProcessing?.enabled = true
-            } else {
-                globalDynamicsProcessing?.enabled = false
-                globalDynamicsProcessing?.release()
-                globalDynamicsProcessing = null
-            }
-        } catch (_: Throwable) {
-            globalDynamicsProcessing = null
-        }
+    fun toggleGlobalSystemWideEq(enabled: Boolean, preampDb: Float = 0f, limiterThresholdDb: Float = -0.3f) {
+        globalEqEngine.setEnabled(enabled)
+        globalEqEngine.setPreamp(preampDb)
+        globalEqEngine.setLimiterThreshold(limiterThresholdDb)
+    }
+
+    /**
+     * One-tap Mobile Legends: Bang Bang Competitive Clarity trigger
+     */
+    fun applyMlbbCompetitiveClarity() {
+        globalEqEngine.applyMlbbPreset()
     }
 
     override fun onDestroy() {
-        try {
-            globalDynamicsProcessing?.enabled = false
-            globalDynamicsProcessing?.release()
-            globalDynamicsProcessing = null
-            val stopIntent = Intent(this, MediaPlaybackForegroundService::class.java).apply {
-                action = MediaPlaybackForegroundService.ACTION_PAUSE
-            }
-            startService(stopIntent)
-        } catch (_: Throwable) {
-        }
+        // Note: GlobalSystemEqEngine remains alive inside EqualizerService while in the background
         super.onDestroy()
     }
 }

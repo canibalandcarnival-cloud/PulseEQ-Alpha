@@ -880,6 +880,7 @@ object EqPresetsCatalog {
     const val CUSTOM_ID = "custom"
     const val LATE_NIGHT_ID = "late_night"
     const val WARM_IPHONE_BALANCE_ID = "warm_iphone_balance"
+    const val MLBB_COMPETITIVE_CLARITY_ID = "mlbb_competitive_clarity"
 
     val BANDS: List<EqBand> = listOf(
         EqBand(0, 32, "32", "32Hz"),
@@ -902,6 +903,14 @@ object EqPresetsCatalog {
         gainsDb = List(10) { 0f }
     )
 
+    val MLBB_COMPETITIVE_CLARITY_PRESET = EqPreset(
+        id = MLBB_COMPETITIVE_CLARITY_ID,
+        name = "MLBB Competitive Clarity",
+        group = PresetGroup.ALL,
+        subtitle = "Tuned for Mobile Legends skill audio cues, ultimate voicelines & footsteps (-0.3 dBTP)",
+        gainsDb = listOf(1.2f, 1.5f, 1.5f, 1.8f, 2.3f, 2.5f, 2.5f, 2.0f, 1.2f, 1.0f)
+    )
+
     val WARM_IPHONE_BALANCE_PRESET = EqPreset(
         id = WARM_IPHONE_BALANCE_ID,
         name = "Warm iPhone Balance",
@@ -919,12 +928,10 @@ object EqPresetsCatalog {
     )
 
     /**
-     * 21 presets mapped from the 3 reference preset images + Warm iPhone Balance + Late Night:
-     * Image 1: Small Speakers, Spoken Word, Rock, Pop, Reduce Bass
-     * Image 2: Jazz, Increase Vocals, Loudness, Lounge, Latin, R&B, Piano, Reduce Treble
-     * Image 3: Acoustic, Classical, Dance, Deep, Hip-Hop, Electronic, Increase Bass, Increase Treble
+     * Presets mapped from reference presets + MLBB Competitive Clarity + Warm iPhone Balance + Late Night
      */
     val PRESETS: List<EqPreset> = listOf(
+        MLBB_COMPETITIVE_CLARITY_PRESET,
         WARM_IPHONE_BALANCE_PRESET,
         LATE_NIGHT_PRESET,
         // --- Image 1 ---

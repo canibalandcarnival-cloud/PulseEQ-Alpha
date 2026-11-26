@@ -48,22 +48,22 @@ class EqualizerService : Service() {
         startInForeground(buildNotification("10-Band EQ & Dynamics active"))
         _isRunning.value = true
 
+        val globalEqEngine = com.example.audio.GlobalSystemEqEngine.getInstance(this)
+        globalEqEngine.start()
+
         serviceScope.launch {
             combine(
                 AudioSessionRegistry.activeSessions,
                 audioEngine.dspStatusLabel,
-                audioEngine.connectedDevices
-            ) { sessions, status, devices ->
-                Triple(sessions, status, devices)
-            }.collect { (sessions, status, devices) ->
-                val sessionDesc = if (sessions.isEmpty()) {
-                    if (audioEngine.globalMixFallbackEnabled.value) "Global Mix (Session 0)" else "Waiting for media app"
-                } else {
-                    sessions.values.distinct().joinToString(", ") { pkg ->
-                        pkg.substringAfterLast('.')
-                    }
-                }
-                val content = "${devices.activeRoute.label} • $status • $sessionDesc"
+                audioEngine.connectedDevices,
+                globalEqEngine.activeSessionsBadge
+            ) { sessions, status, devices, badge ->
+                listOf(sessions, status, devices, badge)
+            }.collect {
+                val devices = audioEngine.connectedDevices.value
+                val status = audioEngine.dspStatusLabel.value
+                val badge = globalEqEngine.activeSessionsBadge.value
+                val content = "${devices.activeRoute.label} • $status • $badge"
                 updateNotification(content)
             }
         }
@@ -119,6 +119,11 @@ class EqualizerService : Service() {
 
             ACTION_SESSIONS_UPDATED -> {
                 audioEngine.reconcileAttachedSessions()
+                com.example.audio.GlobalSystemEqEngine.getInstance(this).attachSession0()
+            }
+
+            ACTION_APPLY_MLBB_PRESET -> {
+                com.example.audio.GlobalSystemEqEngine.getInstance(this).applyMlbbPreset()
             }
         }
         return START_STICKY
@@ -129,6 +134,7 @@ class EqualizerService : Service() {
     override fun onDestroy() {
         _isRunning.value = false
         unregisterSessionReceiver()
+        com.example.audio.GlobalSystemEqEngine.getInstance(this).stop()
         serviceScope.cancel()
         super.onDestroy()
     }
@@ -239,9 +245,20 @@ class EqualizerService : Service() {
         const val ACTION_STOP = "com.example.ACTION_STOP_EQ_SERVICE"
         const val ACTION_TOGGLE_BYPASS = "com.example.ACTION_TOGGLE_EQ_BYPASS"
         const val ACTION_SESSIONS_UPDATED = "com.example.ACTION_SESSIONS_UPDATED"
+        const val ACTION_APPLY_MLBB_PRESET = "com.example.ACTION_APPLY_MLBB_PRESET"
 
         private val _isRunning = MutableStateFlow(false)
         val isRunning: StateFlow<Boolean> = _isRunning.asStateFlow()
+
+        fun applyMlbbPreset(context: Context) {
+            val intent = Intent(context, EqualizerService::class.java).apply {
+                action = ACTION_APPLY_MLBB_PRESET
+            }
+            try {
+                context.startService(intent)
+            } catch (_: Throwable) {
+            }
+        }
 
         fun start(context: Context) {
             val intent = Intent(context, EqualizerService::class.java)
