@@ -1592,6 +1592,11 @@ class BiquadEqFilterBank(private val sampleRate: Int = 44100) {
         return noiseFloorGate.quantize16BitPcm(sample, isLeft)
     }
 
+    fun resetSiliconDsp() {
+        siliconDspCore.reset()
+        noiseFloorGate.reset()
+    }
+
     init {
         updateParameters(
             gainsDb = List(10) { 0f },
@@ -2127,7 +2132,12 @@ class TestAudioSynthesizer {
         desiredSource = TestAudioSource.OFF
         _currentSource.value = TestAudioSource.OFF
         _visualizerFrame.value = VisualizerFrame()
+        filterBank.resetSiliconDsp()
         reconcileSignal.trySend(Unit)
+    }
+
+    fun resetDspEngine() {
+        filterBank.resetSiliconDsp()
     }
 
     private suspend fun reconcilePlayback() {
@@ -2154,6 +2164,7 @@ class TestAudioSynthesizer {
             job?.cancelAndJoin()
         } catch (_: Throwable) {
         }
+        filterBank.resetSiliconDsp()
     }
 
     private fun startPlayback(source: TestAudioSource) {
