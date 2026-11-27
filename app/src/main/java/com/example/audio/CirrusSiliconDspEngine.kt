@@ -149,8 +149,7 @@ class CirrusSiliconDspEngine(private val sampleRate: Int = 48000) {
     private val microAirShelf = StereoBiquad()
     private var currentMicroAirGainDb: Double = SiliconDspSpecs.MICRO_AIR_GAIN_DB
 
-    // Multi-Band Lookahead Loudness Maximizer (+10.5 dB Clean Gain into 4x Catmull-Rom -0.2 dBTP Brickwall Limiter)
-    private val speakerMakeupGainLinear = 10.0.pow(10.5 / 20.0)
+    // Multi-Band Lookahead Loudness Maximizer (Master Boost 0.0..22.0 dB, default 13.5 dB into -0.2 dBTP Brickwall Limiter)
     private val truePeakCeilingLinear = 10.0.pow(SiliconDspSpecs.TRUE_PEAK_CEILING_DBTP / 20.0)
     private val tpHistL = DoubleArray(4)
     private val tpHistR = DoubleArray(4)
@@ -165,6 +164,9 @@ class CirrusSiliconDspEngine(private val sampleRate: Int = 48000) {
     @Volatile
     var outputTarget: OutputTarget = OutputTarget.SPEAKER
         private set
+
+    @Volatile
+    var masterBoostDb: Float = DEFAULT_MASTER_BOOST_DB
 
     @Volatile
     var latestExcursionPercent: Float = 0f
@@ -193,10 +195,12 @@ class CirrusSiliconDspEngine(private val sampleRate: Int = 48000) {
     fun configure(
         isEnabled: Boolean,
         target: OutputTarget,
-        microAirGainDb: Double = SiliconDspSpecs.MICRO_AIR_GAIN_DB
+        microAirGainDb: Double = SiliconDspSpecs.MICRO_AIR_GAIN_DB,
+        masterBoostDb: Float = this.masterBoostDb
     ) {
         enabled = isEnabled
         outputTarget = target
+        this.masterBoostDb = masterBoostDb.coerceIn(MIN_MASTER_BOOST_DB, MAX_MASTER_BOOST_DB)
         currentMicroAirGainDb = microAirGainDb.coerceIn(0.0, SiliconDspSpecs.MICRO_AIR_GAIN_DB)
         val safeAirHz = SiliconDspSpecs.MICRO_AIR_HZ.coerceAtMost(sampleRate * 0.42)
         microAirShelf.setDeCrampedHighShelf(
@@ -481,8 +485,11 @@ class CirrusSiliconDspEngine(private val sampleRate: Int = 48000) {
             val frac = step * 0.25
             val osInL = prevPostThermalL + deltaL * frac
             val osInR = prevPostThermalR + deltaR * frac
-            val shapedL = softKneeTransfer(osInL)
-            val shapedR = softKneeTransfer(osInR)
+            // +4.0 dB (1.58x) clean digital input drive right before Class-H soft-knee saturation
+            val drivenL = osInL * PRE_LIMITER_INPUT_DRIVE_LINEAR
+            val drivenR = osInR * PRE_LIMITER_INPUT_DRIVE_LINEAR
+            val shapedL = softKneeTransfer(drivenL)
+            val shapedR = softKneeTransfer(drivenR)
             // Unconditionally stable 2nd-order Butterworth LPF at 20,000 Hz (fs = 192,000.0 Hz, Q = 0.7071)
             satL = satAntiAliasLpf192kL.process(shapedL)
             satR = satAntiAliasLpf192kR.process(shapedR)
@@ -495,11 +502,24 @@ class CirrusSiliconDspEngine(private val sampleRate: Int = 48000) {
         val (recon2L, recon2R) = reconApodizingStage2.processStereo(recon1L, recon1R)
         val (airL, airR) = microAirShelf.processStereo(recon2L, recon2R)
 
-        // --- Stage 7: +10.5 dB Makeup Gain into 4x Catmull-Rom -0.2 dBTP Brickwall Limiter ---
-        val makeL = airL * (if (isSpeaker) speakerMakeupGainLinear else 1.0)
-        val makeR = airR * (if (isSpeaker) speakerMakeupGainLinear else 1.0)
+        if (isSampleAnomalous(airL) || isSampleAnomalous(airR)) {
+            resetAllFilterStates()
+            configureAllFilters()
+            tpHistL.fill(0.0)
+            tpHistR.fill(0.0)
+            tpGainLinear = 1.0
+            outStereo[0] = 0.0
+            outStereo[1] = 0.0
+            return
+        }
 
-        if (isSampleAnomalous(makeL) || isSampleAnomalous(makeR)) {
+        // --- Stage 7: Master Output Boost (0.0..22.0 dB, default 13.5 dB) into 4x Catmull-Rom -0.2 dBTP Brickwall Limiter ---
+        val clampedMasterBoostDb = masterBoostDb.coerceIn(MIN_MASTER_BOOST_DB, MAX_MASTER_BOOST_DB)
+        val masterMakeupGainLinear = 10.0.pow(clampedMasterBoostDb.toDouble() / 20.0)
+        val makeL = airL * masterMakeupGainLinear
+        val makeR = airR * masterMakeupGainLinear
+
+        if (!makeL.isFinite() || !makeR.isFinite()) {
             resetAllFilterStates()
             configureAllFilters()
             tpHistL.fill(0.0)
@@ -727,5 +747,9 @@ class CirrusSiliconDspEngine(private val sampleRate: Int = 48000) {
         const val XTC_CROSSFEED_GAIN = 0.22
         const val XTC_HEAD_SHADOW_HZ = 4500.0
         const val XTC_SIDE_HPF_HZ = 150.0
+        const val DEFAULT_MASTER_BOOST_DB = 13.5f
+        const val MIN_MASTER_BOOST_DB = 0.0f
+        const val MAX_MASTER_BOOST_DB = 22.0f
+        const val PRE_LIMITER_INPUT_DRIVE_LINEAR = 1.5848931924611136 // +4.0 dB (~1.58x)
     }
 }
